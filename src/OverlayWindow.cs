@@ -124,8 +124,16 @@ internal sealed class OverlayWindow : Form
 
     private async Task InitializeWebViewAsync()
     {
+        // CommonApplicationData (%ProgramData%) instead of LocalApplicationData
+        // because qos-overlay is spawned by the SYSTEM service. For SYSTEM,
+        // LocalApplicationData resolves to C:\Windows\System32\config\
+        // systemprofile\AppData\Local\, which WebView2 refuses to use - it
+        // surfaces a "Microsoft Edge can't read and write to its data
+        // directory" dialog and aborts init. ProgramData is writable by both
+        // SYSTEM and the user, so the choice is forward-compatible if the
+        // overlay ever runs in user-mode (e.g., a future broker split).
         var userDataDir = System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "Qos", "DesktopWebView2");
         var options = new CoreWebView2EnvironmentOptions
         {
