@@ -12,14 +12,14 @@ namespace Qos.Overlay;
 /// <c>/preferences</c> for initial Z-order. Anything else flows through
 /// the SPA + WebSocket inside the WebView2.
 /// </summary>
-internal sealed class qOSApi
+internal sealed class QosApi
 {
     public string ServiceOrigin { get; }
     public string Token { get; private set; } = "";
 
     private readonly HttpClient _http;
 
-    public qOSApi(string origin)
+    public QosApi(string origin)
     {
         ServiceOrigin = origin.TrimEnd('/');
         _http = new HttpClient

@@ -13,7 +13,7 @@ internal static class Program
     private const string ServiceOrigin = "http://localhost:9400";
 
     private static readonly List<OverlayWindow> Overlays = new();
-    private static qOSApi? _api;
+    private static QosApi? _api;
     private static System.Windows.Forms.Timer? _prefsTimer;
 
     /// <summary>
@@ -52,7 +52,7 @@ internal static class Program
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
-        _api = new qOSApi(ServiceOrigin);
+        _api = new QosApi(ServiceOrigin);
 
         // Pair + initial prefs synchronously before the message loop starts.
         // If the service isn't up, exit and let the launcher retry us.

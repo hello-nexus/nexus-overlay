@@ -52,7 +52,7 @@ internal sealed class OverlayWindow : Form
         StartPosition = FormStartPosition.Manual;
         BackColor = FormStubBackColor;
         TopMost = false;
-        Text = $"qOS Overlay ({monitor.Index})";
+        Text = $"Qos Overlay ({monitor.Index})";
 
         var bounds = monitor.Bounds;
         Location = new Point(bounds.Left, bounds.Top);
@@ -126,7 +126,7 @@ internal sealed class OverlayWindow : Form
     {
         var userDataDir = System.IO.Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "qOS", "DesktopWebView2");
+            "Qos", "DesktopWebView2");
         var options = new CoreWebView2EnvironmentOptions
         {
             // Force every WebView2 in this process into one renderer process.

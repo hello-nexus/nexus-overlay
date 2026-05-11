@@ -6,13 +6,13 @@ namespace Qos.Overlay;
 /// <summary>
 /// File-only logger. Service spawns us with no console attached and we have
 /// no UI surface for diagnostic output, so trace lands at
-/// %LOCALAPPDATA%\qOS\desktop-host.log.
+/// %LOCALAPPDATA%\Qos\desktop-host.log.
 /// </summary>
 internal static class Log
 {
     private static readonly string LogPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "qOS", "desktop-host.log");
+        "Qos", "desktop-host.log");
     private static readonly object Sync = new();
 
     public static void Info(string message)
