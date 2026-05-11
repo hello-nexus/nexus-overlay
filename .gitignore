@@ -1,0 +1,23 @@
+# .NET
+bin/
+obj/
+publish/
+publish-*/
+*.user
+*.suo
+.vs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+
+# Logs
+*.log
+
+# Local agent / build scratch
+CHANGELOG.md
+.deep-build/

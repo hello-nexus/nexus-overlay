@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
+    <EnableWindowsTargeting Condition="!$([MSBuild]::IsOSPlatform('Windows'))">true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Qos.Overlay</RootNamespace>
+    <AssemblyName>qos-overlay</AssemblyName>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- WinForms doesn't support trimming/AOT in .NET 10 (NETSDK1175). The
+         service stays AOT; the desktop host ships self-contained Release
+         until we either rewrite on plain Win32 or WinForms gets AOT
+         support. -->
+    <PublishAot>false</PublishAot>
+    <SelfContained>true</SelfContained>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2792.45" />
+  </ItemGroup>
+
+  <!-- Microsoft.Web.WebView2 ships WinForms + WPF + Core sub-assemblies; we
+       only use WinForms + Core. Strip the WPF assembly and the XML doc files
+       from publish so the deploy directory stays minimal. -->
+  <Target Name="StripUnusedWebView2Assets" AfterTargets="Publish">
+    <ItemGroup>
+      <_StripFromPublish Include="$(PublishDir)Microsoft.Web.WebView2.Wpf.dll" />
+      <_StripFromPublish Include="$(PublishDir)Microsoft.Web.WebView2.Wpf.xml" />
+      <_StripFromPublish Include="$(PublishDir)Microsoft.Web.WebView2.WinForms.xml" />
+      <_StripFromPublish Include="$(PublishDir)Microsoft.Web.WebView2.Core.xml" />
+    </ItemGroup>
+    <Delete Files="@(_StripFromPublish)" />
+  </Target>
+
+</Project>
