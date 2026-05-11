@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace Qos.Overlay.Win32;
@@ -14,76 +16,74 @@ namespace Qos.Overlay.Win32;
 internal sealed class MonitorInfo
 {
     public int Index { get; init; }
-    public Native.Rect Bounds { get; init; }
-    public Native.Rect WorkArea { get; init; }
+    public Native.RECT Bounds { get; init; }
+    public Native.RECT WorkArea { get; init; }
     public bool Primary { get; init; }
 }
 
-internal static class Monitors
+internal static unsafe class Monitors
 {
+    // EnumDisplayMonitors callback cannot capture closures (must be a
+    // static [UnmanagedCallersOnly] for AOT). Stash the collecting list
+    // and a count in a thread-static so the callback can append.
+    [ThreadStatic] private static List<MonitorInfo>? _collected;
+    [ThreadStatic] private static int _invocations;
+
     public static IReadOnlyList<MonitorInfo> Enumerate()
     {
-        var collected = new List<MonitorInfo>();
-        var callbackInvocations = 0;
-
-        Native.MonitorEnumProc proc = OnMonitor;
-        var ok = Native.EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, proc, IntPtr.Zero);
-        GC.KeepAlive(proc);
-
-        Qos.Overlay.Log.Info($"EnumDisplayMonitors returned ok={ok} callbacks={callbackInvocations}");
-
-        // Fallback: if EnumDisplayMonitors didn't surface anything (rare,
-        // sometimes happens when the GDI session is in an odd state right
-        // after logon), construct a single virtual screen rect from
-        // SystemInformation. Better one rectangle than zero overlays.
-        if (collected.Count == 0)
+        _collected = new List<MonitorInfo>();
+        _invocations = 0;
+        try
         {
-            var screen = System.Windows.Forms.Screen.PrimaryScreen;
-            if (screen is not null)
+            var ok = Native.EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, &OnMonitor, IntPtr.Zero);
+            Log.Info($"EnumDisplayMonitors returned ok={ok} callbacks={_invocations}");
+
+            // Fallback: if EnumDisplayMonitors didn't surface anything (rare,
+            // sometimes happens when the GDI session is in an odd state right
+            // after logon), construct a single virtual screen rect from
+            // SystemMetrics. Better one rectangle than zero overlays.
+            if (_collected.Count == 0)
             {
-                Qos.Overlay.Log.Warn("falling back to System.Windows.Forms.Screen.PrimaryScreen");
-                collected.Add(new MonitorInfo
+                var w = Native.GetSystemMetrics(Native.SM_CXSCREEN);
+                var h = Native.GetSystemMetrics(Native.SM_CYSCREEN);
+                if (w > 0 && h > 0)
                 {
-                    Index = 0,
-                    Bounds = new Native.Rect
+                    Log.Warn($"falling back to GetSystemMetrics primary screen {w}x{h}");
+                    _collected.Add(new MonitorInfo
                     {
-                        Left = screen.Bounds.Left,
-                        Top = screen.Bounds.Top,
-                        Right = screen.Bounds.Right,
-                        Bottom = screen.Bounds.Bottom,
-                    },
-                    WorkArea = new Native.Rect
-                    {
-                        Left = screen.WorkingArea.Left,
-                        Top = screen.WorkingArea.Top,
-                        Right = screen.WorkingArea.Right,
-                        Bottom = screen.WorkingArea.Bottom,
-                    },
-                    Primary = true,
-                });
+                        Index = 0,
+                        Bounds = new Native.RECT { Left = 0, Top = 0, Right = w, Bottom = h },
+                        WorkArea = new Native.RECT { Left = 0, Top = 0, Right = w, Bottom = h },
+                        Primary = true,
+                    });
+                }
             }
+            return _collected;
         }
-
-        return collected;
-
-        bool OnMonitor(IntPtr hMonitor, IntPtr hdcMonitor, ref Native.Rect lprcMonitor, IntPtr dwData)
+        finally
         {
-            callbackInvocations++;
-            var info = new Native.MonitorInfo
-            {
-                cbSize = Marshal.SizeOf<Native.MonitorInfo>(),
-            };
-            if (Native.GetMonitorInfo(hMonitor, ref info))
-            {
-                collected.Add(new MonitorInfo
-                {
-                    Index = collected.Count,
-                    Bounds = info.rcMonitor,
-                    WorkArea = info.rcWork,
-                    Primary = (info.dwFlags & 1) != 0,
-                });
-            }
-            return true;
+            _collected = null;
         }
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnMonitor(IntPtr hMonitor, IntPtr hdcMonitor, Native.RECT* lprcMonitor, IntPtr dwData)
+    {
+        _invocations++;
+        var info = new Native.MonitorInfoNative
+        {
+            cbSize = sizeof(Native.MonitorInfoNative),
+        };
+        if (Native.GetMonitorInfoW(hMonitor, ref info) && _collected is not null)
+        {
+            _collected.Add(new MonitorInfo
+            {
+                Index = _collected.Count,
+                Bounds = info.rcMonitor,
+                WorkArea = info.rcWork,
+                Primary = (info.dwFlags & 1) != 0,
+            });
+        }
+        return 1; // TRUE - continue enumeration
     }
 }

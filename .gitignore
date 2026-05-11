@@ -21,3 +21,6 @@ Thumbs.db
 # Local agent / build scratch
 CHANGELOG.md
 .deep-build/
+.spike/
+.spike-rs/
+target/

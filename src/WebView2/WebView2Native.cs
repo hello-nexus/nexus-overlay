@@ -1,0 +1,67 @@
+using System;
+using System.Runtime.InteropServices;
+
+namespace Qos.Overlay.WebView2;
+
+/// <summary>
+/// Single export from <c>WebView2Loader.dll</c> we consume. Everything else
+/// is reached through COM vtables on the returned interface pointers.
+/// </summary>
+internal static unsafe class WebView2Native
+{
+    [DllImport("WebView2Loader.dll", CharSet = CharSet.Unicode)]
+    public static extern int CreateCoreWebView2EnvironmentWithOptions(
+        char* browserExecutableFolder,
+        char* userDataFolder,
+        IntPtr environmentOptions,
+        IntPtr environmentCreatedHandler);
+
+    // ===================== IIDs =====================
+    // From WebView2.idl. Kept centralized so the slot map in WebView2Vtable
+    // and the GUIDs here move in lockstep when we bump SDK versions.
+
+    public static readonly Guid IID_IUnknown =
+        new("00000000-0000-0000-C000-000000000046");
+
+    public static readonly Guid IID_ICoreWebView2EnvironmentOptions =
+        new("2fde08a8-1e9a-4766-8c05-95a9ceb9d1c5");
+
+    public static readonly Guid IID_ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler =
+        new("4e8a3389-c9d8-4bd2-b6b5-124fee6cc14d");
+
+    public static readonly Guid IID_ICoreWebView2Environment =
+        new("b96d755e-0319-4e92-a296-23436f46a1fc");
+
+    public static readonly Guid IID_ICoreWebView2CreateCoreWebView2ControllerCompletedHandler =
+        new("6c4819f3-c9b7-4260-8127-c9f5bde7f68c");
+
+    public static readonly Guid IID_ICoreWebView2Controller =
+        new("4d00c0d1-9434-4eb6-8078-8697a560334f");
+
+    public static readonly Guid IID_ICoreWebView2 =
+        new("76eceacb-0462-4d94-ac83-423a6793775e");
+
+    public static readonly Guid IID_ICoreWebView2Settings =
+        new("e562e4f0-d7fa-43ac-8d71-c05150499f00");
+
+    public static readonly Guid IID_ICoreWebView2WebMessageReceivedEventHandler =
+        new("57213f19-00e6-49fa-8e07-898ea01ecbd2");
+
+    public static readonly Guid IID_ICoreWebView2WebMessageReceivedEventArgs =
+        new("0f99a40c-e962-4207-9e92-e3d542eff849");
+
+    public static readonly Guid IID_ICoreWebView2NavigationCompletedEventHandler =
+        new("d33a35bf-1c49-4f98-93ab-006e0533fe1c");
+
+    public static readonly Guid IID_ICoreWebView2NavigationCompletedEventArgs =
+        new("30d68b7d-20d9-4752-a9ca-ec8448fbb5c1");
+
+    // ===================== HRESULTs =====================
+
+    public const int S_OK = 0;
+    public const int E_NOINTERFACE = unchecked((int)0x80004002);
+    public const int E_POINTER = unchecked((int)0x80004003);
+
+    public static bool Failed(int hr) => hr < 0;
+    public static bool Succeeded(int hr) => hr >= 0;
+}

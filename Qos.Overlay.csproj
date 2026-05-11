@@ -9,34 +9,56 @@
     <RootNamespace>Qos.Overlay</RootNamespace>
     <AssemblyName>qos-overlay</AssemblyName>
     <OutputType>WinExe</OutputType>
-    <UseWindowsForms>true</UseWindowsForms>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <!-- WinForms doesn't support trimming/AOT in .NET 10 (NETSDK1175). The
-         service stays AOT; the desktop host ships self-contained Release
-         until we either rewrite on plain Win32 or WinForms gets AOT
-         support. -->
-    <PublishAot>false</PublishAot>
-    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
+    <IlcOptimizationPreference>Size</IlcOptimizationPreference>
+    <!-- WebView2.Core uses classic COM interop, which NativeAOT trims by
+         default. We don't use the managed wrapper - we P/Invoke
+         WebView2Loader.dll directly and walk vtables - so this is moot for
+         the chosen architecture. Kept off; turning it on would re-include
+         classic-COM marshalling and bloat the binary. -->
+    <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
+    <!-- AOT publish output ships symbols as a 20+ MB pdb by default.
+         The installer copies whatever is in the publish dir; without these,
+         Qos-Setup.exe drops from ~23 MB to ~20 MB. Field crashes are still
+         actionable via the host log and the AOT exe stacktrace addresses. -->
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
-    <DefineConstants>$(DefineConstants);WINDOWS</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2792.45" />
+    <!-- Exclude the test project tree - it has its own csproj and would
+         otherwise be pulled into the SDK's default Compile glob and try
+         to link xunit packages into the AOT exe. -->
+    <Compile Remove="tests/**/*.cs" />
+    <None Remove="tests/**/*" />
   </ItemGroup>
 
-  <!-- Microsoft.Web.WebView2 ships WinForms + WPF + Core sub-assemblies; we
-       only use WinForms + Core. Strip the WPF assembly and the XML doc files
-       from publish so the deploy directory stays minimal. -->
+  <ItemGroup>
+    <!-- We only use Microsoft.Web.WebView2 for the native WebView2Loader.dll
+         it ships under runtimes/win-x64/native/. The managed wrapper
+         assemblies (.WinForms, .Wpf, .Core) are NOT used by our code; the
+         post-publish target below strips them so the deploy is minimal. -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2792.45" />
+    <InternalsVisibleTo Include="Qos.Overlay.Tests" />
+  </ItemGroup>
+
   <Target Name="StripUnusedWebView2Assets" AfterTargets="Publish">
     <ItemGroup>
+      <_StripFromPublish Include="$(PublishDir)Microsoft.Web.WebView2.WinForms.dll" />
       <_StripFromPublish Include="$(PublishDir)Microsoft.Web.WebView2.Wpf.dll" />
-      <_StripFromPublish Include="$(PublishDir)Microsoft.Web.WebView2.Wpf.xml" />
+      <_StripFromPublish Include="$(PublishDir)Microsoft.Web.WebView2.Core.dll" />
       <_StripFromPublish Include="$(PublishDir)Microsoft.Web.WebView2.WinForms.xml" />
+      <_StripFromPublish Include="$(PublishDir)Microsoft.Web.WebView2.Wpf.xml" />
       <_StripFromPublish Include="$(PublishDir)Microsoft.Web.WebView2.Core.xml" />
+      <!-- ILC emits a 20+ MB pdb regardless of DebugType=none. Strip it
+           from the publish dir explicitly so the installer doesn't bundle
+           debug symbols into Qos-Setup.exe. -->
+      <_StripFromPublish Include="$(PublishDir)qos-overlay.pdb" />
     </ItemGroup>
     <Delete Files="@(_StripFromPublish)" />
   </Target>

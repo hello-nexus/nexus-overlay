@@ -83,6 +83,12 @@ internal sealed class UiPrefs
     public bool OverlayWidgetsEnabled { get; set; }
     [JsonPropertyName("overlayWidgetsAlwaysOnTop")]
     public bool OverlayWidgetsAlwaysOnTop { get; set; }
+    /// <summary>
+    /// Monitor index (zero-based) where the single overlay should render.
+    /// -1 = "use the primary monitor" (sentinel for unset / first-run).
+    /// </summary>
+    [JsonPropertyName("overlayWidgetsMonitor")]
+    public int OverlayWidgetsMonitor { get; set; } = -1;
 }
 
 [JsonSerializable(typeof(PairResponse))]

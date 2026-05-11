@@ -1,5 +1,6 @@
 using System;
-using System.Text;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 
 namespace Qos.Overlay.Win32;
 
@@ -12,41 +13,42 @@ namespace Qos.Overlay.Win32;
 /// 2. EnumWindows for top-level WorkerW windows whose first child is NOT
 ///    SHELLDLL_DefView - the WorkerW with that child hosts the icons; the
 ///    one without is the empty layer between wallpaper and icons.
+///
+/// Currently dormant - the overlay sits at HWND_BOTTOM instead of parenting
+/// to WorkerW. Kept on disk for any future "true wallpaper layer" mode.
 /// </summary>
-internal static class WorkerW
+internal static unsafe class WorkerW
 {
+    [ThreadStatic] private static IntPtr _foundWorkerW;
+
     public static IntPtr FindOrSpawn()
     {
         var progman = Native.FindWindow("Progman", null);
         if (progman == IntPtr.Zero) return IntPtr.Zero;
 
-        // Returns 0/null when the WorkerW already exists. Either way, after
-        // this call the empty WorkerW is enumerable.
-        Native.SendMessageTimeout(
-            progman, 0x052C, new IntPtr(0xD), new IntPtr(0x1),
+        Native.SendMessageTimeoutW(progman, 0x052C, new IntPtr(0xD), new IntPtr(0x1),
             Native.SMTO_NORMAL, 1000, out _);
 
-        IntPtr workerW = IntPtr.Zero;
-        Native.EnumWindows((hwnd, _) =>
+        _foundWorkerW = IntPtr.Zero;
+        Native.EnumWindows(&EnumProc, IntPtr.Zero);
+        return _foundWorkerW;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int EnumProc(IntPtr hwnd, IntPtr lParam)
+    {
+        var defView = Native.FindWindowEx(hwnd, IntPtr.Zero, "SHELLDLL_DefView", null);
+        if (defView != IntPtr.Zero) return 1;
+
+        const int bufLen = 64;
+        var buf = stackalloc char[bufLen];
+        Native.GetClassNameW(hwnd, buf, bufLen);
+        var name = new string(buf);
+        if (name == "WorkerW")
         {
-            // The WorkerW we want is one whose first child is NOT
-            // SHELLDLL_DefView. There are typically two WorkerW siblings
-            // of Progman after the magic message - one hosts the icons,
-            // one is empty.
-            var defView = Native.FindWindowEx(hwnd, IntPtr.Zero, "SHELLDLL_DefView", null);
-            if (defView != IntPtr.Zero) return true;
-
-            var sb = new StringBuilder(64);
-            Native.GetClassName(hwnd, sb, sb.Capacity);
-            if (sb.ToString() == "WorkerW")
-            {
-                // Empty WorkerW: parent of nothing, sits behind icons.
-                workerW = hwnd;
-                return false;
-            }
-            return true;
-        }, IntPtr.Zero);
-
-        return workerW;
+            _foundWorkerW = hwnd;
+            return 0; // FALSE - stop enumerating
+        }
+        return 1;
     }
 }
