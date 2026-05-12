@@ -56,6 +56,24 @@ internal static unsafe class WebView2Native
     public static readonly Guid IID_ICoreWebView2NavigationCompletedEventArgs =
         new("30d68b7d-20d9-4752-a9ca-ec8448fbb5c1");
 
+    public static readonly Guid IID_ICoreWebView2NavigationStartingEventHandler =
+        new("9adbe429-f36d-432b-9ddc-f8881fbd76e3");
+
+    public static readonly Guid IID_ICoreWebView2NavigationStartingEventArgs =
+        new("5b495469-e119-438a-9b18-7604f25f2e49");
+
+    public static readonly Guid IID_ICoreWebView2NewWindowRequestedEventHandler =
+        new("d4c185fe-c81c-4989-97af-2d3fa7ab5651");
+
+    public static readonly Guid IID_ICoreWebView2NewWindowRequestedEventArgs =
+        new("34acb11c-fc37-4418-9132-f9c21d1eafb9");
+
+    public static readonly Guid IID_ICoreWebView2PermissionRequestedEventHandler =
+        new("15e1c6a3-c72a-4df3-91d7-d097fbec6bfd");
+
+    public static readonly Guid IID_ICoreWebView2PermissionRequestedEventArgs =
+        new("973ae2ef-ff18-4894-8fb2-3c758f046810");
+
     // ===================== HRESULTs =====================
 
     public const int S_OK = 0;

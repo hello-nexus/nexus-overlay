@@ -32,7 +32,7 @@ internal static unsafe class Win32Window
 
     private static readonly ConcurrentDictionary<string, bool> RegisteredClasses = new();
 
-    public static void EnsureClassRegistered(string className)
+    public static void EnsureClassRegistered(string className, IntPtr hbrBackground = default, IntPtr hIcon = default)
     {
         if (RegisteredClasses.ContainsKey(className)) return;
         fixed (char* cn = className)
@@ -44,7 +44,9 @@ internal static unsafe class Win32Window
                 lpfnWndProc = &WndProc,
                 hInstance = Native.GetModuleHandleW(null),
                 hCursor = Native.LoadCursorW(IntPtr.Zero, (IntPtr)32512 /* IDC_ARROW */),
-                hbrBackground = IntPtr.Zero,
+                hbrBackground = hbrBackground,
+                hIcon = hIcon,
+                hIconSm = hIcon,
                 lpszClassName = (IntPtr)cn,
             };
             var atom = Native.RegisterClassExW(&wc);
@@ -61,12 +63,17 @@ internal static unsafe class Win32Window
     /// Creates a top-level window and registers the owner against its
     /// HWND before <c>CreateWindowExW</c> returns - this lets the owner
     /// receive WM_NCCREATE / WM_CREATE messages that fire synchronously
-    /// during the call.
+    /// during the call. Pass a non-default <paramref name="hbrBackground"/>
+    /// to avoid the unpainted flash that visible top-level windows show
+    /// before the first WM_PAINT - the overlay uses default (no brush)
+    /// because its layered/transparent compositing makes the brush moot,
+    /// but a normal opaque window wants COLOR_WINDOW+1 or similar.
     /// </summary>
     public static IntPtr Create(string className, string title, uint style, uint exStyle,
-        int x, int y, int width, int height, IWin32WindowOwner owner)
+        int x, int y, int width, int height, IWin32WindowOwner owner,
+        IntPtr hbrBackground = default, IntPtr hIcon = default)
     {
-        EnsureClassRegistered(className);
+        EnsureClassRegistered(className, hbrBackground, hIcon);
         _pendingOwner = owner;
         try
         {

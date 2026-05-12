@@ -167,4 +167,76 @@ internal static unsafe class WebView2Callbacks
         *ppv = IntPtr.Zero;
         return WebView2Native.E_NOINTERFACE;
     }
+
+    // ============== NavigationStarting event handler ==============
+
+    public static IntPtr CreateNavigationStartingHandler(
+        delegate* unmanaged[Stdcall]<IntPtr, IntPtr, IntPtr, int> onInvoke)
+    {
+        var vt = AllocVtable4((IntPtr)onInvoke, &NavStartingQI);
+        return AllocObject((IntPtr)vt);
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int NavStartingQI(IntPtr self, Guid* iid, IntPtr* ppv)
+    {
+        if (iid == null) return WebView2Native.E_POINTER;
+        if (*iid == WebView2Native.IID_IUnknown ||
+            *iid == WebView2Native.IID_ICoreWebView2NavigationStartingEventHandler)
+        {
+            *ppv = self;
+            AddRefInternal(self);
+            return WebView2Native.S_OK;
+        }
+        *ppv = IntPtr.Zero;
+        return WebView2Native.E_NOINTERFACE;
+    }
+
+    // ============== NewWindowRequested event handler ==============
+
+    public static IntPtr CreateNewWindowRequestedHandler(
+        delegate* unmanaged[Stdcall]<IntPtr, IntPtr, IntPtr, int> onInvoke)
+    {
+        var vt = AllocVtable4((IntPtr)onInvoke, &NewWindowQI);
+        return AllocObject((IntPtr)vt);
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int NewWindowQI(IntPtr self, Guid* iid, IntPtr* ppv)
+    {
+        if (iid == null) return WebView2Native.E_POINTER;
+        if (*iid == WebView2Native.IID_IUnknown ||
+            *iid == WebView2Native.IID_ICoreWebView2NewWindowRequestedEventHandler)
+        {
+            *ppv = self;
+            AddRefInternal(self);
+            return WebView2Native.S_OK;
+        }
+        *ppv = IntPtr.Zero;
+        return WebView2Native.E_NOINTERFACE;
+    }
+
+    // ============== PermissionRequested event handler ==============
+
+    public static IntPtr CreatePermissionRequestedHandler(
+        delegate* unmanaged[Stdcall]<IntPtr, IntPtr, IntPtr, int> onInvoke)
+    {
+        var vt = AllocVtable4((IntPtr)onInvoke, &PermissionQI);
+        return AllocObject((IntPtr)vt);
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int PermissionQI(IntPtr self, Guid* iid, IntPtr* ppv)
+    {
+        if (iid == null) return WebView2Native.E_POINTER;
+        if (*iid == WebView2Native.IID_IUnknown ||
+            *iid == WebView2Native.IID_ICoreWebView2PermissionRequestedEventHandler)
+        {
+            *ppv = self;
+            AddRefInternal(self);
+            return WebView2Native.S_OK;
+        }
+        *ppv = IntPtr.Zero;
+        return WebView2Native.E_NOINTERFACE;
+    }
 }

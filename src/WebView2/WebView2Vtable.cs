@@ -72,6 +72,9 @@ internal static class WebView2Vtable
     public const int Wv2_PostWebMessageAsString = 33;
     public const int Wv2_add_WebMessageReceived = 34;
     public const int Wv2_remove_WebMessageReceived = 35;
+    // 36..43 skipped (CallDevToolsProtocolMethod, BrowserProcessId, history, etc.)
+    public const int Wv2_add_NewWindowRequested = 44;
+    public const int Wv2_remove_NewWindowRequested = 45;
 
     // ICoreWebView2Settings (own methods 3..). Subset we use:
     public const int Settings_get_IsScriptEnabled = 3;
@@ -107,4 +110,31 @@ internal static class WebView2Vtable
     public const int NavCompletedArgs_get_IsSuccess = 3;
     public const int NavCompletedArgs_get_WebErrorStatus = 4;
     public const int NavCompletedArgs_get_NavigationId = 5;
+
+    // ICoreWebView2NavigationStartingEventArgs (own methods 3..).
+    public const int NavStartingArgs_get_Uri = 3;
+    public const int NavStartingArgs_get_IsUserInitiated = 4;
+    public const int NavStartingArgs_get_IsRedirected = 5;
+    public const int NavStartingArgs_get_RequestHeaders = 6;
+    public const int NavStartingArgs_get_Cancel = 7;
+    public const int NavStartingArgs_put_Cancel = 8;
+    public const int NavStartingArgs_get_NavigationId = 9;
+
+    // ICoreWebView2NewWindowRequestedEventArgs (own methods 3..).
+    public const int NewWindowArgs_get_Uri = 3;
+    public const int NewWindowArgs_put_NewWindow = 4;
+    public const int NewWindowArgs_get_NewWindow = 5;
+    public const int NewWindowArgs_put_Handled = 6;
+    public const int NewWindowArgs_get_Handled = 7;
+    public const int NewWindowArgs_get_IsUserInitiated = 8;
+    public const int NewWindowArgs_GetDeferral = 9;
+    public const int NewWindowArgs_get_WindowFeatures = 10;
+
+    // ICoreWebView2PermissionRequestedEventArgs (own methods 3..).
+    public const int PermissionArgs_get_Uri = 3;
+    public const int PermissionArgs_get_PermissionKind = 4;
+    public const int PermissionArgs_get_IsUserInitiated = 5;
+    public const int PermissionArgs_get_State = 6;
+    public const int PermissionArgs_put_State = 7;
+    public const int PermissionArgs_GetDeferral = 8;
 }

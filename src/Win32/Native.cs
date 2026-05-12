@@ -22,14 +22,31 @@ internal static unsafe class Native
     // Window styles.
     public const uint WS_POPUP = 0x80000000u;
     public const uint WS_VISIBLE = 0x10000000u;
+    public const uint WS_CAPTION = 0x00C00000u;
+    public const uint WS_SYSMENU = 0x00080000u;
+    public const uint WS_THICKFRAME = 0x00040000u;
+    public const uint WS_MINIMIZEBOX = 0x00020000u;
+    public const uint WS_MAXIMIZEBOX = 0x00010000u;
+    public const uint WS_CLIPCHILDREN = 0x02000000u;
+    public const uint WS_CLIPSIBLINGS = 0x04000000u;
+    public const uint WS_OVERLAPPEDWINDOW =
+        WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
 
     // ShowWindow.
     public const int SW_HIDE = 0;
+    public const int SW_SHOWNORMAL = 1;
+    public const int SW_SHOWMINIMIZED = 2;
     public const int SW_SHOWNOACTIVATE = 4;
     public const int SW_SHOW = 5;
+    public const int SW_RESTORE = 9;
 
     public const uint LWA_COLORKEY = 0x00000001;
     public const uint LWA_ALPHA = 0x00000002;
+
+    // GetSysColor / hbrBackground index for "Window" - HBRUSH for a
+    // window class is `(IntPtr)(COLOR_WINDOW + 1)` per the WNDCLASSEXW
+    // documented quirk.
+    public const int COLOR_WINDOW = 5;
 
     public const uint SWP_NOMOVE = 0x0002;
     public const uint SWP_NOSIZE = 0x0001;
@@ -50,10 +67,50 @@ internal static unsafe class Native
 
     // Window messages.
     public const uint WM_DESTROY = 0x0002;
+    public const uint WM_MOVE = 0x0003;
     public const uint WM_SIZE = 0x0005;
+    public const uint WM_CLOSE = 0x0010;
+    public const uint WM_GETMINMAXINFO = 0x0024;
     public const uint WM_TIMER = 0x0113;
     public const uint WM_DPICHANGED = 0x02E0;
     public const uint WM_USER = 0x0400;
+
+    // GetWindowLong / SetWindowLong indices for the standard window data.
+    public const int GWL_STYLE = -16;
+    public const int GWLP_HINSTANCE = -6;
+
+    // WM_SIZE wParam values.
+    public const int SIZE_RESTORED = 0;
+    public const int SIZE_MINIMIZED = 1;
+    public const int SIZE_MAXIMIZED = 2;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT
+    {
+        public int x;
+        public int y;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MINMAXINFO
+    {
+        public POINT ptReserved;
+        public POINT ptMaxSize;
+        public POINT ptMaxPosition;
+        public POINT ptMinTrackSize;
+        public POINT ptMaxTrackSize;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WINDOWPLACEMENT
+    {
+        public uint length;
+        public uint flags;
+        public uint showCmd;
+        public POINT ptMinPosition;
+        public POINT ptMaxPosition;
+        public RECT rcNormalPosition;
+    }
 
     // SystemMetrics indices.
     public const int SM_CXSCREEN = 0;
@@ -123,6 +180,9 @@ internal static unsafe class Native
     [DllImport("user32.dll")]
     public static extern bool IsWindow(IntPtr hWnd);
 
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool GetMessageW(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
 
@@ -181,6 +241,43 @@ internal static unsafe class Native
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr LoadCursorW(IntPtr hInstance, IntPtr lpCursorName);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr LoadIconW(IntPtr hInstance, IntPtr lpIconName);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool AdjustWindowRectEx(ref RECT lpRect, uint dwStyle, bool bMenu, uint dwExStyle);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool BringWindowToTop(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool SetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SendMessageW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("shell32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern IntPtr ShellExecuteW(IntPtr hwnd, string? lpOperation, string lpFile,
+        string? lpParameters, string? lpDirectory, int nShowCmd);
+
+    // DWM attribute that paints the title bar in the user's chosen
+    // light/dark theme. The ordinal moved between Windows builds, so
+    // try the current one first and fall back to the older one.
+    public const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
+    public const int DWMWA_USE_IMMERSIVE_DARK_MODE_LEGACY = 19;
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, in int pvAttribute, int cbAttribute);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);

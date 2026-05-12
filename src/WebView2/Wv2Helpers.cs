@@ -127,6 +127,51 @@ internal static unsafe class Wv2
         return hr;
     }
 
+    public static int Wv2_add_NavigationStarting(IntPtr wv2, IntPtr handler, out long token)
+    {
+        long t;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, long*, int>)Slot(wv2, WebView2Vtable.Wv2_add_NavigationStarting);
+        var hr = fn(wv2, handler, &t);
+        token = t;
+        return hr;
+    }
+
+    public static int Wv2_add_NewWindowRequested(IntPtr wv2, IntPtr handler, out long token)
+    {
+        long t;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, long*, int>)Slot(wv2, WebView2Vtable.Wv2_add_NewWindowRequested);
+        var hr = fn(wv2, handler, &t);
+        token = t;
+        return hr;
+    }
+
+    public static int Wv2_add_PermissionRequested(IntPtr wv2, IntPtr handler, out long token)
+    {
+        long t;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, long*, int>)Slot(wv2, WebView2Vtable.Wv2_add_PermissionRequested);
+        var hr = fn(wv2, handler, &t);
+        token = t;
+        return hr;
+    }
+
+    public static int Wv2_remove_NavigationStarting(IntPtr wv2, long token)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, long, int>)Slot(wv2, WebView2Vtable.Wv2_remove_NavigationStarting);
+        return fn(wv2, token);
+    }
+
+    public static int Wv2_remove_NewWindowRequested(IntPtr wv2, long token)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, long, int>)Slot(wv2, WebView2Vtable.Wv2_remove_NewWindowRequested);
+        return fn(wv2, token);
+    }
+
+    public static int Wv2_remove_PermissionRequested(IntPtr wv2, long token)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, long, int>)Slot(wv2, WebView2Vtable.Wv2_remove_PermissionRequested);
+        return fn(wv2, token);
+    }
+
     // ===================== ICoreWebView2Settings =====================
 
     public static int Settings_put_AreDefaultContextMenusEnabled(IntPtr s, bool v) =>
@@ -174,5 +219,60 @@ internal static unsafe class Wv2
         var hr = fn(args, &s);
         status = s;
         return hr;
+    }
+
+    // ===================== NavigationStarting args =====================
+
+    public static int NavStartingArgs_get_Uri(IntPtr args, out string? uri)
+    {
+        IntPtr p;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(args, WebView2Vtable.NavStartingArgs_get_Uri);
+        var hr = fn(args, &p);
+        if (WebView2Native.Failed(hr) || p == IntPtr.Zero) { uri = null; return hr; }
+        uri = Marshal.PtrToStringUni(p);
+        Marshal.FreeCoTaskMem(p);
+        return hr;
+    }
+
+    public static int NavStartingArgs_put_Cancel(IntPtr args, bool cancel)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(args, WebView2Vtable.NavStartingArgs_put_Cancel);
+        return fn(args, cancel ? 1 : 0);
+    }
+
+    // ===================== NewWindowRequested args =====================
+
+    public static int NewWindowArgs_get_Uri(IntPtr args, out string? uri)
+    {
+        IntPtr p;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(args, WebView2Vtable.NewWindowArgs_get_Uri);
+        var hr = fn(args, &p);
+        if (WebView2Native.Failed(hr) || p == IntPtr.Zero) { uri = null; return hr; }
+        uri = Marshal.PtrToStringUni(p);
+        Marshal.FreeCoTaskMem(p);
+        return hr;
+    }
+
+    public static int NewWindowArgs_put_Handled(IntPtr args, bool handled)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(args, WebView2Vtable.NewWindowArgs_put_Handled);
+        return fn(args, handled ? 1 : 0);
+    }
+
+    // ===================== PermissionRequested args =====================
+
+    public static int PermissionArgs_get_PermissionKind(IntPtr args, out int kind)
+    {
+        int k;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int*, int>)Slot(args, WebView2Vtable.PermissionArgs_get_PermissionKind);
+        var hr = fn(args, &k);
+        kind = k;
+        return hr;
+    }
+
+    public static int PermissionArgs_put_State(IntPtr args, int state)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(args, WebView2Vtable.PermissionArgs_put_State);
+        return fn(args, state);
     }
 }
