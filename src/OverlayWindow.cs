@@ -153,6 +153,23 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
                     Wv2.Ctrl_put_Bounds(_controller, rc);
                 }
                 return IntPtr.Zero;
+            case Native.WM_DPICHANGED:
+                // lParam points to a RECT* with the OS-suggested new bounds
+                // for the window at the new DPI. Honoring it keeps the
+                // overlay correctly sized when the user drags between
+                // monitors with different scale factors, or replaces a
+                // display. WM_SIZE fires from the resulting SetWindowPos
+                // and the existing handler reflows the WebView2 controller;
+                // the SPA's reportLayout naturally re-emits and refreshes
+                // the SetWindowRgn carve-out for the new client area.
+                if (lParam != IntPtr.Zero)
+                {
+                    var sug = *(Native.RECT*)lParam;
+                    Native.SetWindowPos(hwnd, IntPtr.Zero,
+                        sug.Left, sug.Top, sug.Width, sug.Height,
+                        Native.SWP_NOACTIVATE | Native.SWP_NOZORDER);
+                }
+                return IntPtr.Zero;
             case Native.WM_DESTROY:
                 Dispose();
                 return IntPtr.Zero;
