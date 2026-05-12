@@ -357,7 +357,9 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
                 && root.TryGetProperty("value", out var valueEl)
                 && (valueEl.ValueKind == JsonValueKind.True || valueEl.ValueKind == JsonValueKind.False))
             {
-                Program.SetAllAlwaysOnTop(valueEl.GetBoolean());
+                var v = valueEl.GetBoolean();
+                Log.Info($"webMsg setAlwaysOnTop={v}");
+                Program.SetAllAlwaysOnTop(v);
             }
             else if (type == "setMonitor"
                 && root.TryGetProperty("value", out var monEl)
