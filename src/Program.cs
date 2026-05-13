@@ -17,10 +17,10 @@ internal static class Program
     private static readonly UIntPtr TIMER_PREFS_POLL = new(1);
     private static readonly UIntPtr TIMER_IDLE_EXIT = new(2);
     // Grace window after going idle (no widgets, dashboard hidden) before
-    // the process exits. Gives the user a comfortable margin to flip
-    // widgets back on or reopen the dashboard without paying the cold-
-    // start cost of relaunching qos-overlay + a fresh WebView2 tree.
-    private const uint IdleExitDelayMs = 30_000;
+    // the process exits. Just long enough to absorb the tray's
+    // launch -> ShowDashboard message race at startup; not meant as a
+    // user-facing "keep around in case they come back" window.
+    private const uint IdleExitDelayMs = 3_000;
 
     private static readonly List<OverlayWindow> Overlays = new();
     private static DashboardWindow? _dashboard;
@@ -31,9 +31,15 @@ internal static class Program
     private static IntPtr _marshalerHwnd;
     private static MarshalerOwner? _marshalerOwner;
     private static Win32SynchronizationContext? _syncContext;
-    private static bool _lastPolledEnabled;
+    // "Should we be showing overlay widgets right now?" — enabled toggle
+    // AND at least one widget pinned. Either condition flipping false
+    // is treated identically: tear down + idle.
+    private static bool _lastPolledShouldShow;
     private static bool _lastPolledAlwaysOnTop;
     private static int _lastPolledMonitorIndex = -1;
+
+    private static bool ShouldShowOverlays(UiPrefs p)
+        => p.OverlayWidgetsEnabled && p.OverlayLayout.Count > 0;
 
     public static void SetAllAlwaysOnTop(bool value)
     {
@@ -101,8 +107,8 @@ internal static class Program
         Log.Info($"paired ok token len={_pairedToken.Length}");
 
         var prefs = _api.GetPreferencesAsync().GetAwaiter().GetResult();
-        Log.Info($"prefs enabled={prefs.OverlayWidgetsEnabled} alwaysOnTop={prefs.OverlayWidgetsAlwaysOnTop} monitor={prefs.OverlayWidgetsMonitor}");
-        _lastPolledEnabled = prefs.OverlayWidgetsEnabled;
+        Log.Info($"prefs enabled={prefs.OverlayWidgetsEnabled} pinned={prefs.OverlayLayout.Count} alwaysOnTop={prefs.OverlayWidgetsAlwaysOnTop} monitor={prefs.OverlayWidgetsMonitor}");
+        _lastPolledShouldShow = ShouldShowOverlays(prefs);
         _lastPolledAlwaysOnTop = prefs.OverlayWidgetsAlwaysOnTop;
         _lastPolledMonitorIndex = prefs.OverlayWidgetsMonitor;
 
@@ -136,23 +142,17 @@ internal static class Program
         _prefsChangedMsg = Native.RegisterWindowMessageW(PrefsChangedMessageName);
         Log.Info($"registered PrefsChanged msg=0x{_prefsChangedMsg:X}");
 
-        // Overlay widgets only spawn when the user has them enabled. The
-        // process always stays resident so the tray's "Open Qos" can post
-        // ShowDashboard to the marshaler without paying a Chromium cold
-        // start, and so the dashboard window can share the WebView2 process
-        // tree with any active overlay widgets.
-        if (prefs.OverlayWidgetsEnabled)
+        // Overlay widgets only spawn when the toggle is on AND at least
+        // one widget is pinned. With either condition false we stay
+        // resident only long enough for the tray's "Open Qos" to post
+        // ShowDashboard; otherwise we idle out after the grace window.
+        if (_lastPolledShouldShow)
         {
             CreateOverlay(prefs.OverlayWidgetsMonitor, prefs.OverlayWidgetsAlwaysOnTop);
         }
         else
         {
-            Log.Info("desktop widgets disabled; staying resident for on-demand dashboard");
-            // Start the idle clock. If the tray is launching us for a
-            // dashboard open, the ShowDashboard message arrives within
-            // a few hundred ms and disarms it. If we got launched purely
-            // by SCM/auto-start with widgets off and nothing follows,
-            // we exit after the grace window.
+            Log.Info($"no overlay widgets to show (enabled={prefs.OverlayWidgetsEnabled} pinned={prefs.OverlayLayout.Count}); staying resident for on-demand dashboard");
             MaybeArmIdleExitTimer();
         }
 
@@ -336,30 +336,23 @@ internal static class Program
         {
             var latest = await _api.GetPreferencesAsync();
 
-            // Enabled toggle: the service no longer kills the overlay
-            // process when widgets are disabled (the dashboard window
-            // lives here too). We tear down or recreate widget HWNDs
-            // in-process. The marshaler and dashboard window are
-            // untouched.
-            if (latest.OverlayWidgetsEnabled != _lastPolledEnabled)
+            // "Should overlays be visible?" = toggle on AND at least one
+            // pinned widget. The service no longer kills this process
+            // when overlays go away (the dashboard window lives here
+            // too); we tear down widget HWNDs in-process and idle out.
+            var nowShouldShow = ShouldShowOverlays(latest);
+            if (nowShouldShow != _lastPolledShouldShow)
             {
-                Log.Info($"prefs poll: enabled changed {_lastPolledEnabled} -> {latest.OverlayWidgetsEnabled}");
-                _lastPolledEnabled = latest.OverlayWidgetsEnabled;
-                if (!latest.OverlayWidgetsEnabled)
+                Log.Info($"prefs poll: shouldShow changed {_lastPolledShouldShow} -> {nowShouldShow} (enabled={latest.OverlayWidgetsEnabled} pinned={latest.OverlayLayout.Count})");
+                _lastPolledShouldShow = nowShouldShow;
+                if (!nowShouldShow)
                 {
                     TearDownOverlays();
                     _lastPolledMonitorIndex = latest.OverlayWidgetsMonitor;
                     _lastPolledAlwaysOnTop = latest.OverlayWidgetsAlwaysOnTop;
-                    // Going widget-less might leave us fully idle if no
-                    // dashboard is visible. Arm the grace timer so the
-                    // process reclaims its memory after the cooldown.
                     MaybeArmIdleExitTimer();
                     return;
                 }
-                // Re-enabled: spawn widget windows again with the
-                // freshly-read monitor + always-on-top so the user
-                // sees them reappear without waiting for a separate
-                // poll cycle.
                 DisarmIdleExitTimer();
                 CreateOverlay(latest.OverlayWidgetsMonitor, latest.OverlayWidgetsAlwaysOnTop);
                 _lastPolledMonitorIndex = latest.OverlayWidgetsMonitor;
@@ -367,9 +360,9 @@ internal static class Program
                 return;
             }
 
-            // While widgets are disabled, the remaining poll branches
-            // would try to mutate non-existent overlays. Skip them.
-            if (!_lastPolledEnabled) return;
+            // Nothing pinned / toggle off: skip downstream branches that
+            // would mutate non-existent overlay HWNDs.
+            if (!_lastPolledShouldShow) return;
 
             // Monitor index change: tear down the existing overlay (and its
             // WebView2 process tree) and respawn on the new monitor. Pref

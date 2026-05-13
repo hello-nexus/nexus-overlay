@@ -89,10 +89,24 @@ internal sealed class UiPrefs
     /// </summary>
     [JsonPropertyName("overlayWidgetsMonitor")]
     public int OverlayWidgetsMonitor { get; set; } = -1;
+    /// <summary>
+    /// Pinned overlay-widget entries. Only the count is consumed here -
+    /// per-entry rendering happens inside the WebView2 SPA.
+    /// </summary>
+    [JsonPropertyName("overlayLayout")]
+    public System.Collections.Generic.List<OverlayLayoutEntry> OverlayLayout { get; set; } = new();
 }
+
+/// <summary>
+/// Stub for counting only. Per-entry fields are consumed by the SPA,
+/// not the native host.
+/// </summary>
+internal sealed class OverlayLayoutEntry { }
 
 [JsonSerializable(typeof(PairResponse))]
 [JsonSerializable(typeof(UiPrefs))]
+[JsonSerializable(typeof(OverlayLayoutEntry))]
+[JsonSerializable(typeof(System.Collections.Generic.List<OverlayLayoutEntry>))]
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 internal partial class ApiJson : JsonSerializerContext
 {
