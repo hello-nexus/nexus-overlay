@@ -9,10 +9,17 @@ namespace Qos.Overlay;
 
 internal static class Program
 {
-    private const string SingletonMutexName = "Global\\Qos.Overlay.Singleton";
+    // Per-session singleton. Global\ would force one overlay process across
+    // ALL sessions, which breaks the cross-session schtasks spawn the service
+    // uses: a transient Session 0 launch holds the Global mutex past its own
+    // process death, and subsequent Session 2 spawns see firstInstance=false
+    // and silently bail. Local\ keeps the singleton per logon session.
+    private const string SingletonMutexName = "Local\\Qos.Overlay.Singleton";
     private const string ServiceOrigin = "http://localhost:9400";
     private const string MarshalerClassName = "Qos.Overlay.Marshaler";
     private const string ShowDashboardMessageName = "Qos.Overlay.ShowDashboard";
+    private const string ShowPanelKioskMessageName = "Qos.Overlay.ShowPanelKiosk";
+    private const string HidePanelKioskMessageName = "Qos.Overlay.HidePanelKiosk";
     private const string PrefsChangedMessageName = "Qos.Overlay.PrefsChanged";
     private static readonly UIntPtr TIMER_PREFS_POLL = new(1);
     private static readonly UIntPtr TIMER_IDLE_EXIT = new(2);
@@ -24,7 +31,10 @@ internal static class Program
 
     private static readonly List<OverlayWindow> Overlays = new();
     private static DashboardWindow? _dashboard;
+    private static PanelKioskWindow? _panelKiosk;
     private static uint _showDashboardMsg;
+    private static uint _showPanelKioskMsg;
+    private static uint _hidePanelKioskMsg;
     private static uint _prefsChangedMsg;
     private static QosApi? _api;
     private static string _pairedToken = "";
@@ -135,6 +145,12 @@ internal static class Program
         _showDashboardMsg = Native.RegisterWindowMessageW(ShowDashboardMessageName);
         Log.Info($"registered ShowDashboard msg=0x{_showDashboardMsg:X}");
 
+        _showPanelKioskMsg = Native.RegisterWindowMessageW(ShowPanelKioskMessageName);
+        Log.Info($"registered ShowPanelKiosk msg=0x{_showPanelKioskMsg:X}");
+
+        _hidePanelKioskMsg = Native.RegisterWindowMessageW(HidePanelKioskMessageName);
+        Log.Info($"registered HidePanelKiosk msg=0x{_hidePanelKioskMsg:X}");
+
         // Register the push-notify message that the user-session helper
         // posts from `overlay.prefsChanged`. Receiving it kicks
         // PollPrefsAsync immediately so user-visible toggles feel instant
@@ -153,8 +169,23 @@ internal static class Program
         else
         {
             Log.Info($"no overlay widgets to show (enabled={prefs.Overlay.Enabled} pinned={prefs.Overlay.Layout.Count}); staying resident for on-demand dashboard");
-            MaybeArmIdleExitTimer();
         }
+
+        // Panel kiosk auto-launch: when panel.autoLaunch is on AND a
+        // recognized HYTE touch panel is connected, open the fullscreen
+        // kiosk window on it. Swallow exceptions so a kiosk-init failure
+        // doesn't take down the whole overlay process before the message
+        // loop is even up.
+        if (prefs.Panel.AutoLaunch)
+        {
+            try { MaybeShowPanelKiosk(); }
+            catch (Exception ex) { Log.Error($"startup MaybeShowPanelKiosk: {ex.Message}"); }
+        }
+
+        // Arm the idle-exit timer only if nothing landed on screen. With any
+        // of overlays/kiosk/dashboard up, IsIdle returns false and the call
+        // no-ops.
+        MaybeArmIdleExitTimer();
 
         // Pin the overlay's AppID across virtual desktops. Process-level
         // pin, not per-overlay - one call covers every HWND we own. Idempotent
@@ -166,12 +197,16 @@ internal static class Program
 
         var result = MessageLoop.Run(_syncContext);
 
-        // Cleanup.
+        // Cleanup. Dispose the kiosk first, then dashboard, then per-monitor
+        // overlays — mirrors the on-screen reverse z-order so the dispose
+        // chain progresses through windows by visual prominence.
         Native.KillTimer(_marshalerHwnd, TIMER_PREFS_POLL);
-        foreach (var o in Overlays) o.Dispose();
-        Overlays.Clear();
+        _panelKiosk?.Dispose();
+        _panelKiosk = null;
         _dashboard?.Dispose();
         _dashboard = null;
+        foreach (var o in Overlays) o.Dispose();
+        Overlays.Clear();
         return result;
     }
 
@@ -209,12 +244,51 @@ internal static class Program
         MaybeArmIdleExitTimer();
     }
 
+    /// <summary>
+    /// Open the panel kiosk window if a recognized HYTE touch panel is
+    /// connected AND no kiosk is already up. Called at startup when
+    /// <c>panel.autoLaunch</c> is on, from the <c>ShowPanelKiosk</c> cross-
+    /// process message, and from the prefs poll when the toggle flips.
+    /// </summary>
+    private static void MaybeShowPanelKiosk()
+    {
+        if (_panelKiosk is not null && _panelKiosk.Hwnd != IntPtr.Zero)
+        {
+            Log.Info("panel kiosk already open; ignoring duplicate launch");
+            return;
+        }
+        var target = PanelDisplay.Find();
+        if (target is null)
+        {
+            Log.Info("panel kiosk skipped: no recognized HYTE panel display connected");
+            return;
+        }
+        DisarmIdleExitTimer();
+        var url = $"{ServiceOrigin}/panel?token={Uri.EscapeDataString(_pairedToken)}";
+        _panelKiosk = new PanelKioskWindow(target, url);
+        Log.Info($"panel kiosk opened on monitor={target.Index}");
+    }
+
+    private static void ClosePanelKiosk()
+    {
+        if (_panelKiosk is null) return;
+        try { _panelKiosk.Dispose(); }
+        catch (Exception ex) { Log.Error($"panel kiosk dispose: {ex.Message}"); }
+        _panelKiosk = null;
+        MaybeArmIdleExitTimer();
+        Log.Info("panel kiosk closed");
+    }
+
     private static bool IsIdle()
     {
         if (Overlays.Count > 0) return false;
         if (_dashboard is not null
             && _dashboard.Hwnd != IntPtr.Zero
             && Native.IsWindowVisible(_dashboard.Hwnd))
+        {
+            return false;
+        }
+        if (_panelKiosk is not null && _panelKiosk.Hwnd != IntPtr.Zero)
         {
             return false;
         }
@@ -319,6 +393,18 @@ internal static class Program
                 catch (Exception ex) { Log.Error($"ShowOrCreateDashboard: {ex.Message}"); }
                 return IntPtr.Zero;
             }
+            if (_showPanelKioskMsg != 0 && msg == _showPanelKioskMsg)
+            {
+                try { MaybeShowPanelKiosk(); }
+                catch (Exception ex) { Log.Error($"MaybeShowPanelKiosk: {ex.Message}"); }
+                return IntPtr.Zero;
+            }
+            if (_hidePanelKioskMsg != 0 && msg == _hidePanelKioskMsg)
+            {
+                try { ClosePanelKiosk(); }
+                catch (Exception ex) { Log.Error($"ClosePanelKiosk: {ex.Message}"); }
+                return IntPtr.Zero;
+            }
             if (_prefsChangedMsg != 0 && msg == _prefsChangedMsg)
             {
                 // Service signaled a settings change; repoll without
@@ -336,6 +422,14 @@ internal static class Program
         try
         {
             var latest = await _api.GetPreferencesAsync();
+
+            // Reconcile kiosk state against the toggle. Using actual window
+            // presence (not a cached pref value) means a Y70 hot-plug AFTER
+            // panel.autoLaunch was already on gets picked up on the next
+            // poll: previous poll's Find() returned null, this poll finds it.
+            var kioskUp = _panelKiosk is not null;
+            if (latest.Panel.AutoLaunch && !kioskUp) MaybeShowPanelKiosk();
+            else if (!latest.Panel.AutoLaunch && kioskUp) ClosePanelKiosk();
 
             // "Should overlays be visible?" = toggle on AND at least one
             // pinned widget. The service no longer kills this process

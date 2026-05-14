@@ -18,6 +18,7 @@ internal static unsafe class Native
     public const int WS_EX_TOOLWINDOW = 0x00000080;
     public const int WS_EX_NOACTIVATE = 0x08000000;
     public const int WS_EX_TRANSPARENT = 0x00000020;
+    public const int WS_EX_TOPMOST = 0x00000008;
 
     // Window styles.
     public const uint WS_POPUP = 0x80000000u;
@@ -317,17 +318,10 @@ internal static unsafe class Native
         public RECT rcMonitor;
         public RECT rcWork;
         public uint dwFlags;
-        // szDevice not marshalled - we don't read it. Save the fixed-size
-        // string field by using a separate manually-sized buffer if ever
-        // needed. Keeping it out keeps the struct blittable for AOT.
-        public ulong szDevice0;
-        public ulong szDevice1;
-        public ulong szDevice2;
-        public ulong szDevice3;
-        public ulong szDevice4;
-        public ulong szDevice5;
-        public ulong szDevice6;
-        public ulong szDevice7;
+        // szDevice is the GDI device name (\\.\DISPLAYn) used by
+        // EnumDisplayDevicesW to resolve EDID hardware info per monitor.
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string szDevice;
     }
 
     [DllImport("user32.dll", SetLastError = true)]

@@ -19,6 +19,9 @@ internal sealed class MonitorInfo
     public Native.RECT Bounds { get; init; }
     public Native.RECT WorkArea { get; init; }
     public bool Primary { get; init; }
+    /// <summary>GDI device name (e.g. <c>\\.\DISPLAY1</c>). Pass to
+    /// <c>EnumDisplayDevicesW</c> to resolve EDID hardware info.</summary>
+    public string DeviceName { get; init; } = string.Empty;
 }
 
 internal static unsafe class Monitors
@@ -70,9 +73,11 @@ internal static unsafe class Monitors
     private static int OnMonitor(IntPtr hMonitor, IntPtr hdcMonitor, Native.RECT* lprcMonitor, IntPtr dwData)
     {
         _invocations++;
+        // ByValTStr on szDevice makes the struct non-blittable, so use
+        // Marshal.SizeOf instead of the sizeof operator.
         var info = new Native.MonitorInfoNative
         {
-            cbSize = sizeof(Native.MonitorInfoNative),
+            cbSize = Marshal.SizeOf<Native.MonitorInfoNative>(),
         };
         if (Native.GetMonitorInfoW(hMonitor, ref info) && _collected is not null)
         {
@@ -82,6 +87,7 @@ internal static unsafe class Monitors
                 Bounds = info.rcMonitor,
                 WorkArea = info.rcWork,
                 Primary = (info.dwFlags & 1) != 0,
+                DeviceName = info.szDevice ?? string.Empty,
             });
         }
         return 1; // TRUE - continue enumeration

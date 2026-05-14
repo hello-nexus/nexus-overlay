@@ -81,6 +81,8 @@ internal sealed class UiPrefs
 {
     [JsonPropertyName("overlay")]
     public OverlayBlock Overlay { get; set; } = new();
+    [JsonPropertyName("panel")]
+    public PanelBlock Panel { get; set; } = new();
 }
 
 internal sealed class OverlayBlock
@@ -103,6 +105,16 @@ internal sealed class OverlayBlock
     public System.Collections.Generic.List<OverlayLayoutEntry> Layout { get; set; } = new();
 }
 
+internal sealed class PanelBlock
+{
+    /// <summary>
+    /// Auto-open the fullscreen panel kiosk window when a recognized HYTE
+    /// touch panel is connected.
+    /// </summary>
+    [JsonPropertyName("autoLaunch")]
+    public bool AutoLaunch { get; set; }
+}
+
 /// <summary>
 /// Stub for counting only. Per-entry fields are consumed by the SPA,
 /// not the native host.
@@ -112,6 +124,7 @@ internal sealed class OverlayLayoutEntry { }
 [JsonSerializable(typeof(PairResponse))]
 [JsonSerializable(typeof(UiPrefs))]
 [JsonSerializable(typeof(OverlayBlock))]
+[JsonSerializable(typeof(PanelBlock))]
 [JsonSerializable(typeof(OverlayLayoutEntry))]
 [JsonSerializable(typeof(System.Collections.Generic.List<OverlayLayoutEntry>))]
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
