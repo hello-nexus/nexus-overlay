@@ -73,28 +73,34 @@ internal sealed class PairResponse
 }
 
 /// <summary>
-/// Tiny subset of the service's UiSettings that the host actually consumes.
-/// JSON deserialization is lenient about extra fields, so we only need
-/// these on the wire.
+/// Tiny subset of the service's nested preferences shape that the host
+/// actually consumes. JSON deserialization is lenient about extra fields,
+/// so we only need these on the wire.
 /// </summary>
 internal sealed class UiPrefs
 {
-    [JsonPropertyName("overlayWidgetsEnabled")]
-    public bool OverlayWidgetsEnabled { get; set; }
-    [JsonPropertyName("overlayWidgetsAlwaysOnTop")]
-    public bool OverlayWidgetsAlwaysOnTop { get; set; }
+    [JsonPropertyName("overlay")]
+    public OverlayBlock Overlay { get; set; } = new();
+}
+
+internal sealed class OverlayBlock
+{
+    [JsonPropertyName("enabled")]
+    public bool Enabled { get; set; }
+    [JsonPropertyName("alwaysOnTop")]
+    public bool AlwaysOnTop { get; set; }
     /// <summary>
     /// Monitor index (zero-based) where the single overlay should render.
     /// -1 = "use the primary monitor" (sentinel for unset / first-run).
     /// </summary>
-    [JsonPropertyName("overlayWidgetsMonitor")]
-    public int OverlayWidgetsMonitor { get; set; } = -1;
+    [JsonPropertyName("monitor")]
+    public int Monitor { get; set; } = -1;
     /// <summary>
     /// Pinned overlay-widget entries. Only the count is consumed here -
     /// per-entry rendering happens inside the WebView2 SPA.
     /// </summary>
-    [JsonPropertyName("overlayLayout")]
-    public System.Collections.Generic.List<OverlayLayoutEntry> OverlayLayout { get; set; } = new();
+    [JsonPropertyName("layout")]
+    public System.Collections.Generic.List<OverlayLayoutEntry> Layout { get; set; } = new();
 }
 
 /// <summary>
@@ -105,6 +111,7 @@ internal sealed class OverlayLayoutEntry { }
 
 [JsonSerializable(typeof(PairResponse))]
 [JsonSerializable(typeof(UiPrefs))]
+[JsonSerializable(typeof(OverlayBlock))]
 [JsonSerializable(typeof(OverlayLayoutEntry))]
 [JsonSerializable(typeof(System.Collections.Generic.List<OverlayLayoutEntry>))]
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]

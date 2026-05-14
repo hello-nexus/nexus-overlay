@@ -39,7 +39,7 @@ internal static class Program
     private static int _lastPolledMonitorIndex = -1;
 
     private static bool ShouldShowOverlays(UiPrefs p)
-        => p.OverlayWidgetsEnabled && p.OverlayLayout.Count > 0;
+        => p.Overlay.Enabled && p.Overlay.Layout.Count > 0;
 
     public static void SetAllAlwaysOnTop(bool value)
     {
@@ -107,10 +107,10 @@ internal static class Program
         Log.Info($"paired ok token len={_pairedToken.Length}");
 
         var prefs = _api.GetPreferencesAsync().GetAwaiter().GetResult();
-        Log.Info($"prefs enabled={prefs.OverlayWidgetsEnabled} pinned={prefs.OverlayLayout.Count} alwaysOnTop={prefs.OverlayWidgetsAlwaysOnTop} monitor={prefs.OverlayWidgetsMonitor}");
+        Log.Info($"prefs enabled={prefs.Overlay.Enabled} pinned={prefs.Overlay.Layout.Count} alwaysOnTop={prefs.Overlay.AlwaysOnTop} monitor={prefs.Overlay.Monitor}");
         _lastPolledShouldShow = ShouldShowOverlays(prefs);
-        _lastPolledAlwaysOnTop = prefs.OverlayWidgetsAlwaysOnTop;
-        _lastPolledMonitorIndex = prefs.OverlayWidgetsMonitor;
+        _lastPolledAlwaysOnTop = prefs.Overlay.AlwaysOnTop;
+        _lastPolledMonitorIndex = prefs.Overlay.Monitor;
 
         // Now safe to install: WebView2 callbacks fire on this thread once
         // the message loop is pumping, and the sync context drains via the
@@ -148,11 +148,11 @@ internal static class Program
         // ShowDashboard; otherwise we idle out after the grace window.
         if (_lastPolledShouldShow)
         {
-            CreateOverlay(prefs.OverlayWidgetsMonitor, prefs.OverlayWidgetsAlwaysOnTop);
+            CreateOverlay(prefs.Overlay.Monitor, prefs.Overlay.AlwaysOnTop);
         }
         else
         {
-            Log.Info($"no overlay widgets to show (enabled={prefs.OverlayWidgetsEnabled} pinned={prefs.OverlayLayout.Count}); staying resident for on-demand dashboard");
+            Log.Info($"no overlay widgets to show (enabled={prefs.Overlay.Enabled} pinned={prefs.Overlay.Layout.Count}); staying resident for on-demand dashboard");
             MaybeArmIdleExitTimer();
         }
 
@@ -344,20 +344,20 @@ internal static class Program
             var nowShouldShow = ShouldShowOverlays(latest);
             if (nowShouldShow != _lastPolledShouldShow)
             {
-                Log.Info($"prefs poll: shouldShow changed {_lastPolledShouldShow} -> {nowShouldShow} (enabled={latest.OverlayWidgetsEnabled} pinned={latest.OverlayLayout.Count})");
+                Log.Info($"prefs poll: shouldShow changed {_lastPolledShouldShow} -> {nowShouldShow} (enabled={latest.Overlay.Enabled} pinned={latest.Overlay.Layout.Count})");
                 _lastPolledShouldShow = nowShouldShow;
                 if (!nowShouldShow)
                 {
                     TearDownOverlays();
-                    _lastPolledMonitorIndex = latest.OverlayWidgetsMonitor;
-                    _lastPolledAlwaysOnTop = latest.OverlayWidgetsAlwaysOnTop;
+                    _lastPolledMonitorIndex = latest.Overlay.Monitor;
+                    _lastPolledAlwaysOnTop = latest.Overlay.AlwaysOnTop;
                     MaybeArmIdleExitTimer();
                     return;
                 }
                 DisarmIdleExitTimer();
-                CreateOverlay(latest.OverlayWidgetsMonitor, latest.OverlayWidgetsAlwaysOnTop);
-                _lastPolledMonitorIndex = latest.OverlayWidgetsMonitor;
-                _lastPolledAlwaysOnTop = latest.OverlayWidgetsAlwaysOnTop;
+                CreateOverlay(latest.Overlay.Monitor, latest.Overlay.AlwaysOnTop);
+                _lastPolledMonitorIndex = latest.Overlay.Monitor;
+                _lastPolledAlwaysOnTop = latest.Overlay.AlwaysOnTop;
                 return;
             }
 
@@ -369,23 +369,23 @@ internal static class Program
             // WebView2 process tree) and respawn on the new monitor. Pref
             // poll fires on the message-loop thread, so the dispose +
             // recreate is single-threaded with WM_DESTROY handlers - no race.
-            if (latest.OverlayWidgetsMonitor != _lastPolledMonitorIndex)
+            if (latest.Overlay.Monitor != _lastPolledMonitorIndex)
             {
-                Log.Info($"prefs poll: monitor index changed {_lastPolledMonitorIndex} -> {latest.OverlayWidgetsMonitor}, respawning");
-                _lastPolledMonitorIndex = latest.OverlayWidgetsMonitor;
+                Log.Info($"prefs poll: monitor index changed {_lastPolledMonitorIndex} -> {latest.Overlay.Monitor}, respawning");
+                _lastPolledMonitorIndex = latest.Overlay.Monitor;
                 TearDownOverlays();
-                CreateOverlay(latest.OverlayWidgetsMonitor, latest.OverlayWidgetsAlwaysOnTop);
-                _lastPolledAlwaysOnTop = latest.OverlayWidgetsAlwaysOnTop;
+                CreateOverlay(latest.Overlay.Monitor, latest.Overlay.AlwaysOnTop);
+                _lastPolledAlwaysOnTop = latest.Overlay.AlwaysOnTop;
                 return;
             }
 
             // Always-on-top change: just re-apply on the existing overlay.
             // The guard prevents clobbering any in-flight SPA-pushed override.
-            if (latest.OverlayWidgetsAlwaysOnTop == _lastPolledAlwaysOnTop) return;
-            _lastPolledAlwaysOnTop = latest.OverlayWidgetsAlwaysOnTop;
+            if (latest.Overlay.AlwaysOnTop == _lastPolledAlwaysOnTop) return;
+            _lastPolledAlwaysOnTop = latest.Overlay.AlwaysOnTop;
             foreach (var overlay in Overlays)
             {
-                overlay.SetAlwaysOnTop(latest.OverlayWidgetsAlwaysOnTop);
+                overlay.SetAlwaysOnTop(latest.Overlay.AlwaysOnTop);
             }
         }
         catch (Exception ex)
