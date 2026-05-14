@@ -176,10 +176,11 @@ internal static class Program
     }
 
     /// <summary>
-    /// Create the dashboard on first request; reuse it on subsequent ones.
-    /// The dashboard window hides instead of destroying itself on close,
-    /// so the second "Open Qos" just needs to show + focus the existing
-    /// HWND - no WebView2 cold start.
+    /// Create the dashboard window for each "Open Qos" click. The window
+    /// fully tears down on close (DashboardWindow.WM_CLOSE → DestroyWindow
+    /// → OnDashboardClosed clears the singleton) so every reopen does a
+    /// fresh WebView2 init + navigation — important after a wwwroot
+    /// redeploy. The cold start is ~1-2s.
     /// </summary>
     private static void ShowOrCreateDashboard()
     {
@@ -197,14 +198,14 @@ internal static class Program
     }
 
     /// <summary>
-    /// Invoked by DashboardWindow on WM_CLOSE (after the window hides
-    /// itself). If no widgets are showing either, arm the idle-exit
-    /// timer so the process unloads its WebView2 tree after the grace
-    /// window. The dashboard re-show path is fast enough that this
-    /// reclaim is invisible to a user who actually comes back.
+    /// Invoked by DashboardWindow on WM_CLOSE before DestroyWindow tears
+    /// down the HWND. Clears the singleton so the next ShowDashboard
+    /// constructs a fresh window + WebView2 (picks up any newly-deployed
+    /// wwwroot), and arms idle-exit if no widgets are around either.
     /// </summary>
-    internal static void OnDashboardHidden()
+    internal static void OnDashboardClosed()
     {
+        _dashboard = null;
         MaybeArmIdleExitTimer();
     }
 

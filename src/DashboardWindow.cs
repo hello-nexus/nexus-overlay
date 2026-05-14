@@ -196,17 +196,17 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 return IntPtr.Zero;
 
             case Native.WM_CLOSE:
-                // Hide on close so the next open is instant. The window
-                // and WebView2 stay alive in the background until the
-                // owning process either gets a new ShowDashboard message
-                // or, if also widget-less, idles out.
+                // Fully tear down on close so the next open does a fresh
+                // WebView2 init + navigation — picks up any newly-deployed
+                // wwwroot. Saving bounds first; Program clears the
+                // singleton + arms idle-exit inside OnDashboardClosed.
                 if (_saveOnClose)
                 {
                     SaveBounds();
                     _saveOnClose = false;
                 }
-                Native.ShowWindow(hwnd, Native.SW_HIDE);
-                Program.OnDashboardHidden();
+                Program.OnDashboardClosed();
+                Native.DestroyWindow(hwnd);
                 return IntPtr.Zero;
 
             case Native.WM_DESTROY:
