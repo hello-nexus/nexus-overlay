@@ -113,15 +113,6 @@ internal sealed class PanelBlock
     /// </summary>
     [JsonPropertyName("autoLaunch")]
     public bool AutoLaunch { get; set; }
-
-    /// <summary>
-    /// Uniform alpha for the kiosk window (0 = fully transparent, desktop
-    /// wallpaper visible through the entire panel; 1 = fully opaque).
-    /// Surfaced as "Panel Opacity" in the dashboard. Defaults to 1.0 when
-    /// the field is absent in older /preferences responses.
-    /// </summary>
-    [JsonPropertyName("panelOpacity")]
-    public double PanelOpacity { get; set; } = 1.0;
 }
 
 /// <summary>

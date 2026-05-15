@@ -57,46 +57,21 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         _navigationUrl = navigationUrl;
 
         var b = monitor.Bounds;
-        // WS_EX_LAYERED so SetLayeredWindowAttributes(LWA_ALPHA) lets the
-        // user fade the kiosk uniformly over the desktop wallpaper via the
-        // panel.panelOpacity preference. Uniform alpha is GPU-friendly
-        // (DWM applies it as a final composition step) so WebView2's
-        // hardware renderer is unaffected; input still flows to the
-        // window normally.
         Hwnd = Win32Window.Create(
             WindowClassName,
             WindowTitle,
             Native.WS_POPUP,
-            (uint)(Native.WS_EX_TOOLWINDOW | Native.WS_EX_TOPMOST | Native.WS_EX_LAYERED),
+            (uint)(Native.WS_EX_TOOLWINDOW | Native.WS_EX_TOPMOST),
             b.Left, b.Top, b.Width, b.Height,
             this);
 
         Log.Info($"panel-kiosk ctor monitor={monitor.Index} bounds={b.Left},{b.Top},{b.Width}x{b.Height} hwnd=0x{Hwnd:X} url={navigationUrl}");
-
-        // Apply initial opacity (default fully opaque) before showing so
-        // there's no first-paint flash at the wrong alpha. Program.cs
-        // re-applies the current panel.panelOpacity right after construction.
-        Native.SetLayeredWindowAttributes(Hwnd, 0, 255, Native.LWA_ALPHA);
 
         // Show the window before WebView2 attaches so the user sees the
         // intended frame land instantly; the controller paints over it
         // once init finishes.
         Native.ShowWindow(Hwnd, Native.SW_SHOWNOACTIVATE);
         StartWebView2Init();
-    }
-
-    /// <summary>
-    /// Set the kiosk window's uniform alpha. <paramref name="opacity"/> is
-    /// clamped to [0, 1]; 1 = fully opaque, 0 = fully transparent (desktop
-    /// wallpaper visible). Safe to call repeatedly from the message-loop
-    /// thread.
-    /// </summary>
-    public void SetOpacity(double opacity)
-    {
-        if (_disposed || Hwnd == IntPtr.Zero) return;
-        var clamped = opacity < 0 ? 0 : (opacity > 1 ? 1 : opacity);
-        var alpha = (byte)Math.Round(clamped * 255);
-        Native.SetLayeredWindowAttributes(Hwnd, 0, alpha, Native.LWA_ALPHA);
     }
 
     public IntPtr? HandleMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
