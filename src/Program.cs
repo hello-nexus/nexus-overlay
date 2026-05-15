@@ -47,6 +47,7 @@ internal static class Program
     private static bool _lastPolledShouldShow;
     private static bool _lastPolledAlwaysOnTop;
     private static int _lastPolledMonitorIndex = -1;
+    private static double? _lastPolledPanelOpacity;
 
     private static bool ShouldShowOverlays(UiPrefs p)
         => p.Overlay.Enabled && p.Overlay.Layout.Count > 0;
@@ -121,6 +122,7 @@ internal static class Program
         _lastPolledShouldShow = ShouldShowOverlays(prefs);
         _lastPolledAlwaysOnTop = prefs.Overlay.AlwaysOnTop;
         _lastPolledMonitorIndex = prefs.Overlay.Monitor;
+        _lastPolledPanelOpacity = prefs.Panel.PanelOpacity;
 
         // Now safe to install: WebView2 callbacks fire on this thread once
         // the message loop is pumping, and the sync context drains via the
@@ -267,6 +269,11 @@ internal static class Program
         var url = $"{ServiceOrigin}/panel?token={Uri.EscapeDataString(_pairedToken)}";
         _panelKiosk = new PanelKioskWindow(target, url);
         Log.Info($"panel kiosk opened on monitor={target.Index}");
+        // Apply the current panel.panelOpacity immediately so the freshly-
+        // launched kiosk doesn't flash at 100 % then snap to the user's
+        // setting on the next poll. Best-effort: if the API hasn't loaded
+        // yet, the next poll catches it.
+        if (_lastPolledPanelOpacity is { } op) _panelKiosk.SetOpacity(op);
     }
 
     private static void ClosePanelKiosk()
@@ -430,6 +437,15 @@ internal static class Program
             var kioskUp = _panelKiosk is not null;
             if (latest.Panel.AutoLaunch && !kioskUp) MaybeShowPanelKiosk();
             else if (!latest.Panel.AutoLaunch && kioskUp) ClosePanelKiosk();
+
+            // Reflect panel.panelOpacity onto the kiosk window's uniform alpha.
+            // No-op when the kiosk isn't up; the cached value is reapplied on
+            // the next launch via MaybeShowPanelKiosk.
+            if (_lastPolledPanelOpacity != latest.Panel.PanelOpacity)
+            {
+                _lastPolledPanelOpacity = latest.Panel.PanelOpacity;
+                _panelKiosk?.SetOpacity(latest.Panel.PanelOpacity);
+            }
 
             // "Should overlays be visible?" = toggle on AND at least one
             // pinned widget. The service no longer kills this process
