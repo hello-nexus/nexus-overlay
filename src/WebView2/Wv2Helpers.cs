@@ -172,6 +172,24 @@ internal static unsafe class Wv2
         return fn(wv2, token);
     }
 
+    public static int Wv2_remove_WebMessageReceived(IntPtr wv2, long token)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, long, int>)Slot(wv2, WebView2Vtable.Wv2_remove_WebMessageReceived);
+        return fn(wv2, token);
+    }
+
+    /// <summary>
+    /// Queues a script to run on document creation in every navigation. We
+    /// drop the completion handler (pass IntPtr.Zero) - we don't need the
+    /// returned script ID since we never remove what we add. AOT-safe: the
+    /// script string is fixed in a pinned buffer for the call duration.
+    /// </summary>
+    public static int Wv2_AddScriptToExecuteOnDocumentCreated(IntPtr wv2, string script)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, char*, IntPtr, int>)Slot(wv2, WebView2Vtable.Wv2_AddScriptToExecuteOnDocumentCreated);
+        fixed (char* s = script) return fn(wv2, s, IntPtr.Zero);
+    }
+
     // ===================== ICoreWebView2Settings =====================
 
     public static int Settings_put_AreDefaultContextMenusEnabled(IntPtr s, bool v) =>
@@ -192,6 +210,11 @@ internal static unsafe class Wv2
         return fn(settings, v ? 1 : 0);
     }
 
+    // ===================== ICoreWebView2Settings9 =====================
+
+    public static int Settings9_put_IsNonClientRegionSupportEnabled(IntPtr settings9, bool v) =>
+        SettingsPutBool(settings9, WebView2Vtable.Settings9_put_IsNonClientRegionSupportEnabled, v);
+
     // ===================== Event args =====================
 
     public static int WebMsgArgs_get_WebMessageAsJson(IntPtr args, out IntPtr cotaskMemStr)
@@ -200,6 +223,17 @@ internal static unsafe class Wv2
         var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(args, WebView2Vtable.WebMsgArgs_get_WebMessageAsJson);
         var hr = fn(args, &p);
         cotaskMemStr = p;
+        return hr;
+    }
+
+    public static int WebMsgArgs_TryGetWebMessageAsString(IntPtr args, out string? text)
+    {
+        IntPtr p;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(args, WebView2Vtable.WebMsgArgs_TryGetWebMessageAsString);
+        var hr = fn(args, &p);
+        if (WebView2Native.Failed(hr) || p == IntPtr.Zero) { text = null; return hr; }
+        text = Marshal.PtrToStringUni(p);
+        Marshal.FreeCoTaskMem(p);
         return hr;
     }
 

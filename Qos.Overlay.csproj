@@ -38,6 +38,16 @@
     <None Remove="tests/**/*" />
   </ItemGroup>
 
+  <!-- icon.ico is loaded at runtime by DashboardWindow.TryLoadAppIcon so the
+       dashboard window has a taskbar icon. We don't use <ApplicationIcon>
+       here because we share the same source-of-truth .ico with
+       qos-service (and AOT publish + Win32 resource compilation interact
+       awkwardly with our trim settings); shipping the .ico alongside
+       qos-overlay.exe in the publish dir keeps the load path simple. -->
+  <ItemGroup>
+    <None Include="icon.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- We only use Microsoft.Web.WebView2 for the native WebView2Loader.dll
          it ships under runtimes/win-x64/native/. The managed wrapper

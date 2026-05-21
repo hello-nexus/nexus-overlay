@@ -44,6 +44,14 @@ internal static unsafe class WebView2Native
     public static readonly Guid IID_ICoreWebView2Settings =
         new("e562e4f0-d7fa-43ac-8d71-c05150499f00");
 
+    // ICoreWebView2Settings9 (extends Settings8). Adds
+    // IsNonClientRegionSupportEnabled so CSS `app-region: drag` regions in
+    // the page forward mouse events to the host's WM_NCHITTEST - what makes
+    // a custom title bar (no system caption, draggable top strip + DWM-
+    // painted min/max/close) work inside a WebView2 child window.
+    public static readonly Guid IID_ICoreWebView2Settings9 =
+        new("0528a73b-e92d-49f4-927a-e547dddaa37d");
+
     public static readonly Guid IID_ICoreWebView2WebMessageReceivedEventHandler =
         new("57213f19-00e6-49fa-8e07-898ea01ecbd2");
 

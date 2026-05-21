@@ -101,6 +101,22 @@ internal static class WebView2Vtable
     // For simplicity we'll skip put_AreBrowserAcceleratorKeysEnabled in the
     // first pass and assert the default behavior is acceptable.
 
+    // ICoreWebView2Settings9 (extends Settings8). Slots are 0-based from the
+    // first IUnknown method; Settings adds 2 methods per property bumped
+    // through 8 prior versions. IsNonClientRegionSupportEnabled is added at
+    // the tail. QI separately for IID_ICoreWebView2Settings9.
+    //   Settings:  3..20  (9 props)
+    //   Settings2: 21..22 (UserAgent)
+    //   Settings3: 23..24 (AreBrowserAcceleratorKeysEnabled)
+    //   Settings4: 25..28 (IsPasswordAutosaveEnabled, IsGeneralAutofillEnabled)
+    //   Settings5: 29..30 (IsPinchZoomEnabled)
+    //   Settings6: 31..32 (IsSwipeNavigationEnabled)
+    //   Settings7: 33..34 (HiddenPdfToolbarItems)
+    //   Settings8: 35..36 (IsReputationCheckingRequired)
+    //   Settings9: 37..38 (IsNonClientRegionSupportEnabled)
+    public const int Settings9_get_IsNonClientRegionSupportEnabled = 37;
+    public const int Settings9_put_IsNonClientRegionSupportEnabled = 38;
+
     // ICoreWebView2WebMessageReceivedEventArgs (own methods 3..).
     public const int WebMsgArgs_get_Source = 3;
     public const int WebMsgArgs_get_WebMessageAsJson = 4;

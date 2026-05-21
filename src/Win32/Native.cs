@@ -37,6 +37,7 @@ internal static unsafe class Native
     public const int SW_HIDE = 0;
     public const int SW_SHOWNORMAL = 1;
     public const int SW_SHOWMINIMIZED = 2;
+    public const int SW_SHOWMAXIMIZED = 3;
     public const int SW_SHOWNOACTIVATE = 4;
     public const int SW_SHOW = 5;
     public const int SW_RESTORE = 9;
@@ -53,6 +54,7 @@ internal static unsafe class Native
     public const uint SWP_NOSIZE = 0x0001;
     public const uint SWP_NOACTIVATE = 0x0010;
     public const uint SWP_NOZORDER = 0x0004;
+    public const uint SWP_FRAMECHANGED = 0x0020;
     public const uint SWP_SHOWWINDOW = 0x0040;
 
     public static readonly IntPtr HWND_TOPMOST = new(-1);
@@ -70,11 +72,43 @@ internal static unsafe class Native
     public const uint WM_DESTROY = 0x0002;
     public const uint WM_MOVE = 0x0003;
     public const uint WM_SIZE = 0x0005;
+    public const uint WM_ACTIVATE = 0x0006;
     public const uint WM_CLOSE = 0x0010;
     public const uint WM_GETMINMAXINFO = 0x0024;
+    public const uint WM_NCCALCSIZE = 0x0083;
+    public const uint WM_NCHITTEST = 0x0084;
+    public const uint WM_NCACTIVATE = 0x0086;
+    public const uint WM_NCMOUSEMOVE = 0x00A0;
+    public const uint WM_NCLBUTTONDOWN = 0x00A1;
+    public const uint WM_NCLBUTTONUP = 0x00A2;
+    public const uint WM_DWMNCRENDERINGCHANGED = 0x031F;
     public const uint WM_TIMER = 0x0113;
     public const uint WM_DPICHANGED = 0x02E0;
     public const uint WM_USER = 0x0400;
+
+    // WM_NCHITTEST return codes.
+    public const int HTERROR = -2;
+    public const int HTTRANSPARENT = -1;
+    public const int HTNOWHERE = 0;
+    public const int HTCLIENT = 1;
+    public const int HTCAPTION = 2;
+    public const int HTSYSMENU = 3;
+    public const int HTGROWBOX = 4;
+    public const int HTMENU = 5;
+    public const int HTHSCROLL = 6;
+    public const int HTVSCROLL = 7;
+    public const int HTMINBUTTON = 8;
+    public const int HTMAXBUTTON = 9;
+    public const int HTLEFT = 10;
+    public const int HTRIGHT = 11;
+    public const int HTTOP = 12;
+    public const int HTTOPLEFT = 13;
+    public const int HTTOPRIGHT = 14;
+    public const int HTBOTTOM = 15;
+    public const int HTBOTTOMLEFT = 16;
+    public const int HTBOTTOMRIGHT = 17;
+    public const int HTBORDER = 18;
+    public const int HTCLOSE = 20;
 
     // GetWindowLong / SetWindowLong indices for the standard window data.
     public const int GWL_STYLE = -16;
@@ -113,9 +147,31 @@ internal static unsafe class Native
         public RECT rcNormalPosition;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct NCCALCSIZE_PARAMS
+    {
+        public RECT rgrc0;
+        public RECT rgrc1;
+        public RECT rgrc2;
+        public IntPtr lppos; // WINDOWPOS*
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MARGINS
+    {
+        public int cxLeftWidth;
+        public int cxRightWidth;
+        public int cyTopHeight;
+        public int cyBottomHeight;
+    }
+
     // SystemMetrics indices.
     public const int SM_CXSCREEN = 0;
     public const int SM_CYSCREEN = 1;
+    public const int SM_CYCAPTION = 4;
+    public const int SM_CXFRAME = 32;
+    public const int SM_CYFRAME = 33;
+    public const int SM_CXPADDEDBORDER = 92;
 
     // DPI awareness contexts (passed as IntPtr, negative magic constants).
     public static readonly IntPtr DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = new(-4);
@@ -206,6 +262,9 @@ internal static unsafe class Native
     public static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
 
     [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern UIntPtr SetTimer(IntPtr hWnd, UIntPtr nIDEvent, uint uElapse, IntPtr lpTimerFunc);
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -246,6 +305,22 @@ internal static unsafe class Native
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr LoadIconW(IntPtr hInstance, IntPtr lpIconName);
 
+    // LoadImageW with IMAGE_ICON + LR_LOADFROMFILE pulls an icon out of an
+    // .ico file at runtime - used to give the dashboard window its taskbar
+    // icon without needing the icon embedded as a resource in qos-overlay.exe.
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern IntPtr LoadImageW(IntPtr hInst, string name, uint type, int cx, int cy, uint fuLoad);
+
+    public const uint IMAGE_ICON = 1;
+    public const uint LR_LOADFROMFILE = 0x00000010;
+    public const uint LR_DEFAULTSIZE = 0x00000040;
+    public const uint LR_SHARED = 0x00008000;
+
+    // WM_SETICON: associate a small (taskbar) or large (Alt+Tab) icon with a window.
+    public const uint WM_SETICON = 0x0080;
+    public const int ICON_SMALL = 0;
+    public const int ICON_BIG = 1;
+
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool AdjustWindowRectEx(ref RECT lpRect, uint dwStyle, bool bMenu, uint dwExStyle);
 
@@ -279,6 +354,61 @@ internal static unsafe class Native
 
     [DllImport("dwmapi.dll")]
     public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, in int pvAttribute, int cbAttribute);
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmExtendFrameIntoClientArea(IntPtr hwnd, in MARGINS pMarInset);
+
+    // Returns BOOL (nonzero = handled). plResult receives the result that
+    // should be returned from the WNDPROC when handled. Used to forward
+    // WM_NCHITTEST / WM_NCMOUSE* / WM_NCLBUTTON* to DWM so the caption
+    // buttons get hover-paint and accept clicks.
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmDefWindowProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam, out IntPtr plResult);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool IsZoomed(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool ReleaseCapture();
+
+    // Auto-hide-taskbar detection. When the maximized window covers the
+    // monitor's work area edge-to-edge, the OS needs at least 1 px of
+    // window space along the edge with an auto-hide appbar so the bar's
+    // reveal trigger still fires. SHAppBarMessage(ABM_GETAUTOHIDEBAREX)
+    // is the canonical query.
+    [StructLayout(LayoutKind.Sequential)]
+    public struct APPBARDATA
+    {
+        public uint cbSize;
+        public IntPtr hWnd;
+        public uint uCallbackMessage;
+        public uint uEdge;
+        public RECT rc;
+        public IntPtr lParam;
+    }
+
+    public const uint ABM_GETAUTOHIDEBAREX = 0x0000000B;
+    public const uint ABE_LEFT = 0;
+    public const uint ABE_TOP = 1;
+    public const uint ABE_RIGHT = 2;
+    public const uint ABE_BOTTOM = 3;
+
+    [DllImport("shell32.dll", CallingConvention = CallingConvention.StdCall)]
+    public static extern IntPtr SHAppBarMessage(uint dwMessage, ref APPBARDATA pData);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+
+    public const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint GetDpiForWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern bool SetWindowTextW(IntPtr hWnd, string lpString);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
@@ -354,6 +484,12 @@ internal static unsafe class Native
 
     [DllImport("gdi32.dll")]
     public static extern bool DeleteObject(IntPtr hObject);
+
+    // COLORREF is 0x00BBGGRR (little-endian RGB). CreateSolidBrush makes
+    // a GDI brush we can hand to WNDCLASSEXW.hbrBackground so the
+    // window-paint default fills with our color instead of system white.
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr CreateSolidBrush(uint crColor);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
