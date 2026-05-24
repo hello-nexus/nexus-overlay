@@ -8,8 +8,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
-    <RootNamespace>Qos.Overlay.Tests</RootNamespace>
-    <AssemblyName>Qos.Overlay.Tests</AssemblyName>
+    <RootNamespace>Nexus.Overlay.Tests</RootNamespace>
+    <AssemblyName>Nexus.Overlay.Tests</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
@@ -20,7 +20,7 @@
 
   <ItemGroup>
     <!-- We pull in just the source files we need to test, rather than a
-         ProjectReference to Qos.Overlay.csproj - the overlay project is
+         ProjectReference to Nexus.Overlay.csproj - the overlay project is
          Windows-only and the test runner needs to load on Mac too. -->
     <Compile Include="..\..\src\RegionLayout.cs" Link="src\RegionLayout.cs" />
   </ItemGroup>

@@ -3,7 +3,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 
-namespace Qos.Overlay.WebView2;
+namespace Nexus.Overlay.WebView2;
 
 /// <summary>
 /// Hand-rolled ICoreWebView2EnvironmentOptions COM impl. We only need

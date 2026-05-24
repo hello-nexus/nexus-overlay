@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
-using Qos.Overlay.Win32;
+using Nexus.Overlay.Win32;
 
-namespace Qos.Overlay;
+namespace Nexus.Overlay;
 
 internal static class Program
 {
@@ -14,13 +14,13 @@ internal static class Program
     // uses: a transient Session 0 launch holds the Global mutex past its own
     // process death, and subsequent Session 2 spawns see firstInstance=false
     // and silently bail. Local\ keeps the singleton per logon session.
-    private const string SingletonMutexName = "Local\\Qos.Overlay.Singleton";
+    private const string SingletonMutexName = "Local\\Nexus.Overlay.Singleton";
     private const string ServiceOrigin = "http://localhost:9400";
-    private const string MarshalerClassName = "Qos.Overlay.Marshaler";
-    private const string ShowDashboardMessageName = "Qos.Overlay.ShowDashboard";
-    private const string ShowPanelKioskMessageName = "Qos.Overlay.ShowPanelKiosk";
-    private const string HidePanelKioskMessageName = "Qos.Overlay.HidePanelKiosk";
-    private const string PrefsChangedMessageName = "Qos.Overlay.PrefsChanged";
+    private const string MarshalerClassName = "Nexus.Overlay.Marshaler";
+    private const string ShowDashboardMessageName = "Nexus.Overlay.ShowDashboard";
+    private const string ShowPanelKioskMessageName = "Nexus.Overlay.ShowPanelKiosk";
+    private const string HidePanelKioskMessageName = "Nexus.Overlay.HidePanelKiosk";
+    private const string PrefsChangedMessageName = "Nexus.Overlay.PrefsChanged";
     private static readonly UIntPtr TIMER_PREFS_POLL = new(1);
     private static readonly UIntPtr TIMER_IDLE_EXIT = new(2);
     // Grace window after going idle (no widgets, dashboard hidden) before
@@ -36,7 +36,7 @@ internal static class Program
     private static uint _showPanelKioskMsg;
     private static uint _hidePanelKioskMsg;
     private static uint _prefsChangedMsg;
-    private static QosApi? _api;
+    private static NexusApi? _api;
     private static string _pairedToken = "";
     private static IntPtr _marshalerHwnd;
     private static MarshalerOwner? _marshalerOwner;
@@ -102,7 +102,7 @@ internal static class Program
         // already initialized; we just ensure the apartment is what we expect.
         Native.CoInitializeEx(IntPtr.Zero, Native.COINIT_APARTMENTTHREADED);
 
-        _api = new QosApi(ServiceOrigin);
+        _api = new NexusApi(ServiceOrigin);
 
         // Pair + initial prefs synchronously before the message loop or
         // sync context exist. The HttpClient await chain must NOT capture
@@ -130,7 +130,7 @@ internal static class Program
         _marshalerOwner = new MarshalerOwner();
         _marshalerHwnd = Win32Window.Create(
             MarshalerClassName,
-            "Qos.Overlay.Marshaler",
+            "Nexus.Overlay.Marshaler",
             0u,
             (uint)Native.WS_EX_TOOLWINDOW,
             0, 0, 0, 0,
@@ -138,8 +138,8 @@ internal static class Program
         _syncContext.Bind(_marshalerHwnd);
         Log.Info($"marshaler hwnd=0x{_marshalerHwnd:X}");
 
-        // Register the cross-process message used by the tray's "Open Qos"
-        // path. Both sender (qos-service TrayIcon) and receiver (us) call
+        // Register the cross-process message used by the tray's "Open Nexus"
+        // path. Both sender (nexus-service TrayIcon) and receiver (us) call
         // RegisterWindowMessageW with the same string and get the same ID
         // for the OS session lifetime.
         _showDashboardMsg = Native.RegisterWindowMessageW(ShowDashboardMessageName);
@@ -160,7 +160,7 @@ internal static class Program
 
         // Overlay widgets only spawn when the toggle is on AND at least
         // one widget is pinned. With either condition false we stay
-        // resident only long enough for the tray's "Open Qos" to post
+        // resident only long enough for the tray's "Open Nexus" to post
         // ShowDashboard; otherwise we idle out after the grace window.
         if (_lastPolledShouldShow)
         {
@@ -211,7 +211,7 @@ internal static class Program
     }
 
     /// <summary>
-    /// Create the dashboard window for each "Open Qos" click. The window
+    /// Create the dashboard window for each "Open Nexus" click. The window
     /// fully tears down on close (DashboardWindow.WM_CLOSE → DestroyWindow
     /// → OnDashboardClosed clears the singleton) so every reopen does a
     /// fresh WebView2 init + navigation — important after a wwwroot

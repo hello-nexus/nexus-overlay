@@ -2,7 +2,7 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace Qos.Overlay.Win32;
+namespace Nexus.Overlay.Win32;
 
 /// <summary>
 /// Finds (or forces creation of) the WorkerW window that sits behind the

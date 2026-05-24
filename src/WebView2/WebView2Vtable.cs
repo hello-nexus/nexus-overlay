@@ -1,4 +1,4 @@
-namespace Qos.Overlay.WebView2;
+namespace Nexus.Overlay.WebView2;
 
 /// <summary>
 /// COM vtable slot indices for every WebView2 interface this overlay

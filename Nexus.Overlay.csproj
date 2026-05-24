@@ -6,8 +6,8 @@
     <EnableWindowsTargeting Condition="!$([MSBuild]::IsOSPlatform('Windows'))">true</EnableWindowsTargeting>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <RootNamespace>Qos.Overlay</RootNamespace>
-    <AssemblyName>qos-overlay</AssemblyName>
+    <RootNamespace>Nexus.Overlay</RootNamespace>
+    <AssemblyName>nexus-overlay</AssemblyName>
     <OutputType>WinExe</OutputType>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
@@ -24,7 +24,7 @@
     <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
     <!-- AOT publish output ships symbols as a 20+ MB pdb by default.
          The installer copies whatever is in the publish dir; without these,
-         Qos-Setup.exe drops from ~23 MB to ~20 MB. Field crashes are still
+         Nexus-Setup.exe drops from ~23 MB to ~20 MB. Field crashes are still
          actionable via the host log and the AOT exe stacktrace addresses. -->
     <DebugType>none</DebugType>
     <DebugSymbols>false</DebugSymbols>
@@ -41,9 +41,9 @@
   <!-- icon.ico is loaded at runtime by DashboardWindow.TryLoadAppIcon so the
        dashboard window has a taskbar icon. We don't use <ApplicationIcon>
        here because we share the same source-of-truth .ico with
-       qos-service (and AOT publish + Win32 resource compilation interact
+       nexus-service (and AOT publish + Win32 resource compilation interact
        awkwardly with our trim settings); shipping the .ico alongside
-       qos-overlay.exe in the publish dir keeps the load path simple. -->
+       nexus-overlay.exe in the publish dir keeps the load path simple. -->
   <ItemGroup>
     <None Include="icon.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
@@ -54,7 +54,7 @@
          assemblies (.WinForms, .Wpf, .Core) are NOT used by our code; the
          post-publish target below strips them so the deploy is minimal. -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2792.45" />
-    <InternalsVisibleTo Include="Qos.Overlay.Tests" />
+    <InternalsVisibleTo Include="Nexus.Overlay.Tests" />
   </ItemGroup>
 
   <Target Name="StripUnusedWebView2Assets" AfterTargets="Publish">
@@ -67,8 +67,8 @@
       <_StripFromPublish Include="$(PublishDir)Microsoft.Web.WebView2.Core.xml" />
       <!-- ILC emits a 20+ MB pdb regardless of DebugType=none. Strip it
            from the publish dir explicitly so the installer doesn't bundle
-           debug symbols into Qos-Setup.exe. -->
-      <_StripFromPublish Include="$(PublishDir)qos-overlay.pdb" />
+           debug symbols into Nexus-Setup.exe. -->
+      <_StripFromPublish Include="$(PublishDir)nexus-overlay.pdb" />
     </ItemGroup>
     <Delete Files="@(_StripFromPublish)" />
   </Target>

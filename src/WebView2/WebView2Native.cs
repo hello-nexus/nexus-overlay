@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace Qos.Overlay.WebView2;
+namespace Nexus.Overlay.WebView2;
 
 /// <summary>
 /// Single export from <c>WebView2Loader.dll</c> we consume. Everything else

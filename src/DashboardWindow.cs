@@ -5,13 +5,13 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
-using Qos.Overlay.WebView2;
-using Qos.Overlay.Win32;
+using Nexus.Overlay.WebView2;
+using Nexus.Overlay.Win32;
 
-namespace Qos.Overlay;
+namespace Nexus.Overlay;
 
 /// <summary>
-/// Standard top-level WebView2 window hosting the main Qos dashboard URL.
+/// Standard top-level WebView2 window hosting the main Nexus dashboard URL.
 /// Replaces the Edge --app spawn the tray used to invoke. Lives in the
 /// same process as the floating overlay widgets so the dashboard's
 /// renderer shares the browser / GPU / network / utility process tree
@@ -20,13 +20,13 @@ namespace Qos.Overlay;
 /// is already singleton via the mutex in Program.cs).
 ///
 /// Closing via the X button hides the window rather than destroying it
-/// so the next "Open Qos" click is instantaneous - no WebView2 cold
+/// so the next "Open Nexus" click is instantaneous - no WebView2 cold
 /// start. The hidden window is torn down only when the overlay process
 /// itself exits.
 /// </summary>
 internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 {
-    private const string WindowClassName = "Qos.Overlay.Dashboard";
+    private const string WindowClassName = "Nexus.Overlay.Dashboard";
     // Empty caption so the system never has a string to draw if it ever
     // shows the non-client area (e.g. Alt+Space system menu). The custom
     // title bar (handled below in WM_NCCALCSIZE / WM_NCHITTEST) extends the
@@ -34,7 +34,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     private const string WindowTitle = "";
     private const int DefaultClientWidth = 1280;
     private const int DefaultClientHeight = 800;
-    // Minimum sizes match qos-web's CSS min-width on .layout so the OS
+    // Minimum sizes match nexus-web's CSS min-width on .layout so the OS
     // refuses to drag the window any narrower than the React layout's
     // intrinsic minimum - prevents the horizontal scrollbar that would
     // otherwise appear once the window dipped under the layout's CSS
@@ -65,7 +65,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 2;
     private const int PermissionStateDeny = 2;
     // Background ARGB the WebView2 controller paints behind the page
-    // until the SPA's CSS background takes over. Matches the qos-web
+    // until the SPA's CSS background takes over. Matches the nexus-web
     // dark theme --bg (#0a0a0a) so the brief flash that appears between
     // a fast resize event and the next React paint blends with the
     // page instead of flashing white. The app ships dark-mode-first;
@@ -112,7 +112,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         // DeleteObject it because the class registration is permanent.
         var bgBrush = GetOrCreateDarkBrush();
 
-        // Load the Qos app icon out of the installed .ico file so it shows
+        // Load the Nexus app icon out of the installed .ico file so it shows
         // up in the taskbar / Alt+Tab. We removed the visible title bar so
         // the system can't infer an icon from there anymore; load explicitly.
         var hIcon = TryLoadAppIcon();
@@ -242,8 +242,8 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
     private static IntPtr TryLoadAppIcon()
     {
-        // qos-overlay.exe lives at ...\Qos\overlay\; qos-service drops
-        // icon.ico one directory up at ...\Qos\icon.ico (qos-service's
+        // nexus-overlay.exe lives at ...\Nexus\overlay\; nexus-service drops
+        // icon.ico one directory up at ...\Nexus\icon.ico (nexus-service's
         // <ApplicationIcon> CopyToOutputDirectory). Walk the path manually
         // rather than embedding our own copy - keeps the binary slim and
         // avoids two-source-of-truth for the brand icon.
@@ -567,7 +567,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         // instead of spawning a second tree.
         var userDataDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Qos", "DesktopWebView2");
+            "Nexus", "DesktopWebView2");
         try { Directory.CreateDirectory(userDataDir); } catch { /* best-effort */ }
 
         _envCreatedHandler = WebView2Callbacks.CreateEnvCreatedHandler(&OnEnvCreatedStatic);
@@ -627,7 +627,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         Wv2.AddRef(controller);
         _controller = controller;
 
-        // Match the qos-web dark theme --bg so the WebView2's default
+        // Match the nexus-web dark theme --bg so the WebView2's default
         // backdrop doesn't flash white during resize / before the page
         // first paints.
         _controller2 = Wv2.QueryInterface(controller, Wv2.IID_ICoreWebView2Controller2);
@@ -699,12 +699,12 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         if (WebView2Native.Failed(wmHr)) Log.Error($"dashboard add_WebMessageReceived failed hr=0x{wmHr:X8}");
 
         // Flag the page so its CSS / React tree knows it's running inside the
-        // Qos Windows shell. The React app uses this to render the custom
+        // Nexus Windows shell. The React app uses this to render the custom
         // caption buttons + reserve the top drag strip; without the flag the
         // page renders its normal layout (browser / macOS / phone shells).
         // Runs before every document creation, so survives navigations.
         var injectHr = Wv2.Wv2_AddScriptToExecuteOnDocumentCreated(_coreWebView2,
-            "Object.defineProperty(window,'qosShellPlatform',{value:'windows-app',writable:false,configurable:false});");
+            "Object.defineProperty(window,'nexusShellPlatform',{value:'windows-app',writable:false,configurable:false});");
         if (WebView2Native.Failed(injectHr)) Log.Error($"dashboard AddScriptToExecuteOnDocumentCreated hr=0x{injectHr:X8}");
 
         var hr = Wv2.Wv2_Navigate(_coreWebView2, _navigationUrl);
@@ -790,14 +790,14 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
     private void HandleWindowAction(string action)
     {
-        // Sentinels match QOS_WINDOW_ACTIONS / QOS_RESIZE_EDGES in qos-web
+        // Sentinels match QOS_WINDOW_ACTIONS / QOS_RESIZE_EDGES in nexus-web
         // (windowActions.ts). Keep this switch in lockstep.
         switch (action)
         {
-            case "qos:window-minimize":
+            case "nexus:window-minimize":
                 Native.ShowWindow(Hwnd, Native.SW_SHOWMINIMIZED);
                 break;
-            case "qos:window-toggle-maximize":
+            case "nexus:window-toggle-maximize":
                 // Single button on the page: ask the OS for current state and
                 // flip. The corresponding restore icon swap is signalled back
                 // to the page through DOM resize (the React app subscribes to
@@ -807,17 +807,17 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 else
                     Native.ShowWindow(Hwnd, Native.SW_SHOWMAXIMIZED);
                 break;
-            case "qos:window-close":
+            case "nexus:window-close":
                 Native.PostMessageW(Hwnd, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
                 break;
-            case "qos:resize-left":         BeginResize(Native.HTLEFT); break;
-            case "qos:resize-right":        BeginResize(Native.HTRIGHT); break;
-            case "qos:resize-top":          BeginResize(Native.HTTOP); break;
-            case "qos:resize-bottom":       BeginResize(Native.HTBOTTOM); break;
-            case "qos:resize-top-left":     BeginResize(Native.HTTOPLEFT); break;
-            case "qos:resize-top-right":    BeginResize(Native.HTTOPRIGHT); break;
-            case "qos:resize-bottom-left":  BeginResize(Native.HTBOTTOMLEFT); break;
-            case "qos:resize-bottom-right": BeginResize(Native.HTBOTTOMRIGHT); break;
+            case "nexus:resize-left":         BeginResize(Native.HTLEFT); break;
+            case "nexus:resize-right":        BeginResize(Native.HTRIGHT); break;
+            case "nexus:resize-top":          BeginResize(Native.HTTOP); break;
+            case "nexus:resize-bottom":       BeginResize(Native.HTBOTTOM); break;
+            case "nexus:resize-top-left":     BeginResize(Native.HTTOPLEFT); break;
+            case "nexus:resize-top-right":    BeginResize(Native.HTTOPRIGHT); break;
+            case "nexus:resize-bottom-left":  BeginResize(Native.HTBOTTOMLEFT); break;
+            case "nexus:resize-bottom-right": BeginResize(Native.HTBOTTOMRIGHT); break;
             default:
                 // Other messages may flow through here for legitimate IPC; do
                 // not log them as errors.
@@ -861,7 +861,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
     private static string BoundsFilePath() => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Qos", "dashboard-bounds.json");
+        "Nexus", "dashboard-bounds.json");
 
     private (int x, int y, int w, int h) ResolveInitialBounds()
     {

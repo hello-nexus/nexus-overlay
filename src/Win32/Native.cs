@@ -2,7 +2,7 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace Qos.Overlay.Win32;
+namespace Nexus.Overlay.Win32;
 
 /// <summary>
 /// Slim Win32 P/Invoke surface used by the desktop overlay. AOT-safe:
@@ -307,7 +307,7 @@ internal static unsafe class Native
 
     // LoadImageW with IMAGE_ICON + LR_LOADFROMFILE pulls an icon out of an
     // .ico file at runtime - used to give the dashboard window its taskbar
-    // icon without needing the icon embedded as a resource in qos-overlay.exe.
+    // icon without needing the icon embedded as a resource in nexus-overlay.exe.
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern IntPtr LoadImageW(IntPtr hInst, string name, uint type, int cx, int cy, uint fuLoad);
 

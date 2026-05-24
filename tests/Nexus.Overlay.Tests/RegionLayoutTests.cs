@@ -1,8 +1,8 @@
 using System.Text.Json;
-using Qos.Overlay;
+using Nexus.Overlay;
 using Xunit;
 
-namespace Qos.Overlay.Tests;
+namespace Nexus.Overlay.Tests;
 
 public class RegionLayoutTests
 {

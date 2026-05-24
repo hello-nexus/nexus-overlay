@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 
-namespace Qos.Overlay;
+namespace Nexus.Overlay;
 
 /// <summary>
 /// Pure parsing of the SPA's <c>reportLayout</c> webMessage payload.

@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace Qos.Overlay.Win32;
+namespace Nexus.Overlay.Win32;
 
 /// <summary>
 /// Snapshot of physical monitors in <c>EnumDisplayMonitors</c> order. The

@@ -3,7 +3,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
-namespace Qos.Overlay.Win32;
+namespace Nexus.Overlay.Win32;
 
 /// <summary>
 /// Interface every window-owning managed object implements. The static

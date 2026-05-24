@@ -5,10 +5,10 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
-using Qos.Overlay.WebView2;
-using Qos.Overlay.Win32;
+using Nexus.Overlay.WebView2;
+using Nexus.Overlay.Win32;
 
-namespace Qos.Overlay;
+namespace Nexus.Overlay;
 
 /// <summary>
 /// One overlay per HMONITOR. A Win32 window hosts a WebView2 controller
@@ -20,7 +20,7 @@ namespace Qos.Overlay;
 /// </summary>
 internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
 {
-    private const string WindowClassName = "Qos.Overlay.HostWindow";
+    private const string WindowClassName = "Nexus.Overlay.HostWindow";
     private const int CornerEllipsePx = 20;
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 1;
 
@@ -64,7 +64,7 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         var b = monitor.Bounds;
         Hwnd = Win32Window.Create(
             WindowClassName,
-            $"Qos Overlay ({monitor.Index})",
+            $"Nexus Overlay ({monitor.Index})",
             Native.WS_POPUP,
             (uint)(Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE),
             b.Left, b.Top, b.Width, b.Height,
@@ -181,11 +181,11 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
 
     private void StartWebView2Init()
     {
-        // %ProgramData%\Qos\DesktopWebView2 - shared between SYSTEM and user
+        // %ProgramData%\Nexus\DesktopWebView2 - shared between SYSTEM and user
         // sessions, see d7edccd commit message.
         var userDataDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Qos", "DesktopWebView2");
+            "Nexus", "DesktopWebView2");
         try { Directory.CreateDirectory(userDataDir); } catch { /* best-effort */ }
 
         // TODO: re-enable env options once vtable layout is verified.

@@ -2,7 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Threading;
 
-namespace Qos.Overlay.Win32;
+namespace Nexus.Overlay.Win32;
 
 /// <summary>
 /// Marshals async continuations back onto the UI thread that owns the
@@ -16,7 +16,7 @@ internal sealed class Win32SynchronizationContext : SynchronizationContext
     private readonly ConcurrentQueue<(SendOrPostCallback Callback, object? State)> _queue = new();
     private IntPtr _marshalerHwnd;
 
-    public uint DrainMessage { get; } = Native.RegisterWindowMessageW("Qos.Overlay.SyncContextDrain");
+    public uint DrainMessage { get; } = Native.RegisterWindowMessageW("Nexus.Overlay.SyncContextDrain");
 
     public void Bind(IntPtr marshalerHwnd) => _marshalerHwnd = marshalerHwnd;
 

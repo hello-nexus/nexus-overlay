@@ -1,6 +1,6 @@
 using System;
 
-namespace Qos.Overlay.Win32;
+namespace Nexus.Overlay.Win32;
 
 /// <summary>
 /// Standard Win32 message pump. Drains the sync-context queue whenever a

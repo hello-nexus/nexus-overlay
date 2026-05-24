@@ -4,10 +4,10 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
-using Qos.Overlay.WebView2;
-using Qos.Overlay.Win32;
+using Nexus.Overlay.WebView2;
+using Nexus.Overlay.Win32;
 
-namespace Qos.Overlay;
+namespace Nexus.Overlay;
 
 /// <summary>
 /// Fullscreen WebView2 window for the HYTE Y70/Y80 touch panel. Sized to
@@ -18,8 +18,8 @@ namespace Qos.Overlay;
 /// </summary>
 internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
 {
-    private const string WindowClassName = "Qos.Overlay.PanelKiosk";
-    private const string WindowTitle = "Qos Panel";
+    private const string WindowClassName = "Nexus.Overlay.PanelKiosk";
+    private const string WindowTitle = "Nexus Panel";
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 3;
     private const int PermissionStateDeny = 2;
     // The panel SPA paints its own opaque background; this controls the
@@ -113,7 +113,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     {
         var userDataDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Qos", "DesktopWebView2");
+            "Nexus", "DesktopWebView2");
         try { Directory.CreateDirectory(userDataDir); } catch { /* best-effort */ }
 
         _envCreatedHandler = WebView2Callbacks.CreateEnvCreatedHandler(&OnEnvCreatedStatic);

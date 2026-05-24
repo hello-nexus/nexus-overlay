@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace Qos.Overlay.WebView2;
+namespace Nexus.Overlay.WebView2;
 
 /// <summary>
 /// Thin helpers for invoking COM vtable methods on raw IntPtr COM objects.

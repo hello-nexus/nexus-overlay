@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace Qos.Overlay.Win32;
+namespace Nexus.Overlay.Win32;
 
 /// <summary>
 /// Pins the overlay's app identity across every Windows virtual desktop
@@ -12,7 +12,7 @@ namespace Qos.Overlay.Win32;
 /// 2. <c>CoCreateInstance(CLSID_ImmersiveShell, IID_IServiceProvider)</c>.
 /// 3. <c>QueryService(SID_VirtualDesktopPinnedApps,
 ///    IID_IVirtualDesktopPinnedApps)</c>.
-/// 4. <c>IVirtualDesktopPinnedApps::PinAppID(L"Qos.Overlay")</c>.
+/// 4. <c>IVirtualDesktopPinnedApps::PinAppID(L"Nexus.Overlay")</c>.
 ///
 /// Why AppID, not PinView/PinWindow:
 /// - <c>PinView</c> requires an <c>IApplicationView</c>, which the shell
@@ -29,7 +29,7 @@ namespace Qos.Overlay.Win32;
 /// </summary>
 internal static unsafe class VirtualDesktopPin
 {
-    public const string OverlayAppUserModelId = "Qos.Overlay";
+    public const string OverlayAppUserModelId = "Nexus.Overlay";
 
     private static readonly Guid CLSID_ImmersiveShell =
         new("C2F03A33-21F5-47FA-B4BB-156362A2F239");

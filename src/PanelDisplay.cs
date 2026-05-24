@@ -1,8 +1,8 @@
 using System;
 using System.Runtime.InteropServices;
-using Qos.Overlay.Win32;
+using Nexus.Overlay.Win32;
 
-namespace Qos.Overlay;
+namespace Nexus.Overlay;
 
 /// <summary>
 /// Matches the connected displays against known HYTE panel models so the

@@ -4,22 +4,22 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 
-namespace Qos.Overlay;
+namespace Nexus.Overlay;
 
 /// <summary>
-/// Minimal HTTP client for the local qos-service. Pulls the auth token
+/// Minimal HTTP client for the local nexus-service. Pulls the auth token
 /// via <c>/pair</c> (LAN-restricted) and reads <c>UiSettings</c> via
 /// <c>/preferences</c> for initial Z-order. Anything else flows through
 /// the SPA + WebSocket inside the WebView2.
 /// </summary>
-internal sealed class QosApi
+internal sealed class NexusApi
 {
     public string ServiceOrigin { get; }
     public string Token { get; private set; } = "";
 
     private readonly HttpClient _http;
 
-    public QosApi(string origin)
+    public NexusApi(string origin)
     {
         ServiceOrigin = origin.TrimEnd('/');
         _http = new HttpClient
