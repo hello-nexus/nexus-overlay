@@ -790,7 +790,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
     private void HandleWindowAction(string action)
     {
-        // Sentinels match QOS_WINDOW_ACTIONS / QOS_RESIZE_EDGES in nexus-web
+        // Sentinels match NEXUS_WINDOW_ACTIONS / NEXUS_RESIZE_EDGES in nexus-web
         // (windowActions.ts). Keep this switch in lockstep.
         switch (action)
         {
