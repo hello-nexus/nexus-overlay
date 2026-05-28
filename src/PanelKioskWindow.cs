@@ -47,6 +47,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private long _navStartingToken;
     private long _newWindowToken;
     private long _permissionToken;
+    private PanelMonitorGuard? _monitorGuard;
     private bool _disposed;
 
     public PanelKioskWindow(MonitorInfo monitor, string navigationUrl)
@@ -72,6 +73,12 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         // once init finishes.
         Native.ShowWindow(Hwnd, Native.SW_SHOWNOACTIVATE);
         StartWebView2Init();
+
+        // The panel is a normal monitor to Windows, so the OS will let other
+        // apps open or be dragged onto it — behind this topmost kiosk. Guard
+        // it: relocate any foreign window that comes to rest there back onto a
+        // normal monitor. Tears down with the kiosk in Dispose.
+        _monitorGuard = PanelMonitorGuard.Start(Hwnd, _monitor);
     }
 
     public IntPtr? HandleMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
@@ -304,6 +311,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         if (_disposed) return;
         _disposed = true;
         _instances.TryRemove(_instanceId, out _);
+        _monitorGuard?.Dispose();
+        _monitorGuard = null;
         try
         {
             if (_coreWebView2 != IntPtr.Zero)

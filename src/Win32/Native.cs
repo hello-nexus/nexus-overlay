@@ -470,6 +470,48 @@ internal static unsafe class Native
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "GetClassNameW")]
     public static extern int GetClassNameW(IntPtr hWnd, char* lpClassName, int nMaxCount);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetAncestor(IntPtr hwnd, uint gaFlags);
+
+    // GetAncestor flags. GA_ROOT walks the parent chain to the top-level
+    // window (returns the window itself when it is already top-level).
+    public const uint GA_ROOT = 2;
+
+    // ====================== WinEvent hook (foreign-window watch) =====================
+
+    // Shell/accessibility event IDs we watch to know when a window appears
+    // on, or is dragged onto, a monitor we want kept clear.
+    public const uint EVENT_SYSTEM_FOREGROUND = 0x0003;
+    public const uint EVENT_SYSTEM_MOVESIZEEND = 0x000B;
+    public const uint EVENT_OBJECT_SHOW = 0x8002;
+
+    // dwFlags for SetWinEventHook. OUTOFCONTEXT delivers callbacks on the
+    // registering thread via its message loop (no DLL injection); SKIPOWNPROCESS
+    // suppresses events originating from our own overlay windows.
+    public const uint WINEVENT_OUTOFCONTEXT = 0x0000;
+    public const uint WINEVENT_SKIPOWNPROCESS = 0x0002;
+
+    // idObject / idChild values that mark a whole-window event (vs. a caret,
+    // cursor, scrollbar, or child control sub-object).
+    public const int OBJID_WINDOW = 0;
+    public const int CHILDID_SELF = 0;
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmodWinEventProc,
+        delegate* unmanaged[Stdcall]<IntPtr, uint, IntPtr, int, int, uint, uint, void> lpfnWinEventProc,
+        uint idProcess, uint idThread, uint dwFlags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool UnhookWinEvent(IntPtr hWinEventHook);
+
+    // DWMWA_CLOAKED: nonzero when DWM is hiding the window (suspended UWP app,
+    // or a window living on a different virtual desktop). Such windows must
+    // never be relocated — they're invisible to the user as-is.
+    public const int DWMWA_CLOAKED = 14;
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int pvAttribute, int cbAttribute);
+
     // ====================== GDI regions =====================
 
     [DllImport("gdi32.dll")]

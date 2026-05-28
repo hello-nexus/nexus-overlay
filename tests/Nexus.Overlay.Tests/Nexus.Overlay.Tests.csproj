@@ -23,6 +23,7 @@
          ProjectReference to Nexus.Overlay.csproj - the overlay project is
          Windows-only and the test runner needs to load on Mac too. -->
     <Compile Include="..\..\src\RegionLayout.cs" Link="src\RegionLayout.cs" />
+    <Compile Include="..\..\src\PanelGuardGeometry.cs" Link="src\PanelGuardGeometry.cs" />
   </ItemGroup>
 
 </Project>
