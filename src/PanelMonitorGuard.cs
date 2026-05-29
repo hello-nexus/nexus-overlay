@@ -198,20 +198,13 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
 
     private void Relocate(IntPtr hwnd)
     {
-        if (Native.IsZoomed(hwnd))
-        {
-            // Maximized: move via placement so it re-maximizes on the fallback
-            // monitor. A maximized window snaps to whichever monitor its
-            // restored (rcNormalPosition) rect sits on, so aim that at the
-            // fallback work area.
-            var wp = new Native.WINDOWPLACEMENT { length = (uint)sizeof(Native.WINDOWPLACEMENT) };
-            if (!Native.GetWindowPlacement(hwnd, ref wp)) return;
-            wp.rcNormalPosition = CenteredHalf(_fallbackWork);
-            wp.showCmd = (uint)Native.SW_SHOWMAXIMIZED;
-            Native.SetWindowPlacement(hwnd, ref wp);
-            Log.Info($"panel-guard relocated maximized hwnd=0x{hwnd:X}");
-            return;
-        }
+        // SetWindowPlacement on an already-maximized window updates its stored
+        // restore rect but does NOT move the maximized window to another
+        // monitor — Windows only re-picks the maximize monitor across a
+        // restore→maximize transition. So for a maximized window: restore it,
+        // move the windowed frame onto the fallback, then re-maximize there.
+        bool wasMaximized = Native.IsZoomed(hwnd);
+        if (wasMaximized) Native.ShowWindow(hwnd, Native.SW_RESTORE);
 
         Native.GetWindowRect(hwnd, out var r);
         var (left, top) = PanelGuardGeometry.ClampTopLeft(
@@ -219,16 +212,16 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
             _fallbackWork.Left, _fallbackWork.Top, _fallbackWork.Right, _fallbackWork.Bottom);
         Native.SetWindowPos(hwnd, IntPtr.Zero, left, top, 0, 0,
             Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
-        Log.Info($"panel-guard relocated hwnd=0x{hwnd:X} -> {left},{top}");
-    }
 
-    // A rect half the work area's size, centered in it — a safe restored
-    // position for a window we're re-maximizing onto the fallback monitor.
-    private static Native.RECT CenteredHalf(Native.RECT work)
-    {
-        int w = work.Width / 2, h = work.Height / 2;
-        int left = work.Left + w / 2, top = work.Top + h / 2;
-        return new Native.RECT { Left = left, Top = top, Right = left + w, Bottom = top + h };
+        if (wasMaximized)
+        {
+            Native.ShowWindow(hwnd, Native.SW_SHOWMAXIMIZED);
+            Log.Info($"panel-guard relocated maximized hwnd=0x{hwnd:X} -> {left},{top}");
+        }
+        else
+        {
+            Log.Info($"panel-guard relocated hwnd=0x{hwnd:X} -> {left},{top}");
+        }
     }
 
     public void Dispose()
