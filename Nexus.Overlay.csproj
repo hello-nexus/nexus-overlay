@@ -8,8 +8,14 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Nexus.Overlay</RootNamespace>
     <AssemblyName>nexus-overlay</AssemblyName>
+    <!-- FileDescription drives the friendly name shown in Task Manager and the
+         file Properties dialog; without it Windows falls back to the lowercase
+         exe name. Product shows in the version/Properties UI. -->
+    <AssemblyTitle>Nexus Overlay</AssemblyTitle>
+    <Product>Nexus Overlay</Product>
     <OutputType>WinExe</OutputType>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishAot>true</PublishAot>
     <InvariantGlobalization>true</InvariantGlobalization>
@@ -38,12 +44,12 @@
     <None Remove="tests/**/*" />
   </ItemGroup>
 
-  <!-- icon.ico is loaded at runtime by DashboardWindow.TryLoadAppIcon so the
-       dashboard window has a taskbar icon. We don't use <ApplicationIcon>
-       here because we share the same source-of-truth .ico with
-       nexus-service (and AOT publish + Win32 resource compilation interact
-       awkwardly with our trim settings); shipping the .ico alongside
-       nexus-overlay.exe in the publish dir keeps the load path simple. -->
+  <!-- icon.ico (shared source-of-truth with nexus-service) is embedded as the
+       exe's Win32 resource via <ApplicationIcon> above, so Task Manager,
+       Explorer, and the taskbar show it. It is ALSO shipped loose next to the
+       exe because DashboardWindow.TryLoadAppIcon loads it from disk at runtime
+       to set the per-window icon (the dashboard has no visible title bar for
+       the system to infer one from). -->
   <ItemGroup>
     <None Include="icon.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
