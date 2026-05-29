@@ -113,6 +113,14 @@ internal sealed class PanelBlock
     /// </summary>
     [JsonPropertyName("autoLaunch")]
     public bool AutoLaunch { get; set; }
+
+    /// <summary>
+    /// Keep the panel monitor exclusive to the kiosk: relocate foreign windows
+    /// that land on it back to a normal monitor. Defaults on; older services
+    /// that omit the field leave it on via this initializer.
+    /// </summary>
+    [JsonPropertyName("reserveMonitor")]
+    public bool ReserveMonitor { get; set; } = true;
 }
 
 /// <summary>

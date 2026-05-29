@@ -47,6 +47,10 @@ internal static class Program
     private static bool _lastPolledShouldShow;
     private static bool _lastPolledAlwaysOnTop;
     private static int _lastPolledMonitorIndex = -1;
+    // Whether the panel-monitor guard should run. Mirrored from the
+    // panel.reserveMonitor pref; a prefs change flips the guard on the live
+    // kiosk without recreating it.
+    private static bool _lastPolledReserveMonitor = true;
 
     private static bool ShouldShowOverlays(UiPrefs p)
         => p.Overlay.Enabled && p.Overlay.Layout.Count > 0;
@@ -121,6 +125,7 @@ internal static class Program
         _lastPolledShouldShow = ShouldShowOverlays(prefs);
         _lastPolledAlwaysOnTop = prefs.Overlay.AlwaysOnTop;
         _lastPolledMonitorIndex = prefs.Overlay.Monitor;
+        _lastPolledReserveMonitor = prefs.Panel.ReserveMonitor;
 
         // Now safe to install: WebView2 callbacks fire on this thread once
         // the message loop is pumping, and the sync context drains via the
@@ -265,8 +270,8 @@ internal static class Program
         }
         DisarmIdleExitTimer();
         var url = $"{ServiceOrigin}/panel?token={Uri.EscapeDataString(_pairedToken)}";
-        _panelKiosk = new PanelKioskWindow(target, url);
-        Log.Info($"panel kiosk opened on monitor={target.Index}");
+        _panelKiosk = new PanelKioskWindow(target, url, _lastPolledReserveMonitor);
+        Log.Info($"panel kiosk opened on monitor={target.Index} guard={_lastPolledReserveMonitor}");
     }
 
     private static void ClosePanelKiosk()
@@ -430,6 +435,17 @@ internal static class Program
             var kioskUp = _panelKiosk is not null;
             if (latest.Panel.AutoLaunch && !kioskUp) MaybeShowPanelKiosk();
             else if (!latest.Panel.AutoLaunch && kioskUp) ClosePanelKiosk();
+
+            // Toggle the monitor guard on the live kiosk when reserveMonitor
+            // flips. The service pushes PrefsChanged on any settings write, so
+            // this runs promptly off that signal — no extra poll. Track the
+            // value even when no kiosk is up so the next launch picks it up.
+            if (latest.Panel.ReserveMonitor != _lastPolledReserveMonitor)
+            {
+                _lastPolledReserveMonitor = latest.Panel.ReserveMonitor;
+                _panelKiosk?.SetMonitorGuard(_lastPolledReserveMonitor);
+                Log.Info($"prefs poll: reserveMonitor -> {_lastPolledReserveMonitor}");
+            }
 
             // "Should overlays be visible?" = toggle on AND at least one
             // pinned widget. The service no longer kills this process

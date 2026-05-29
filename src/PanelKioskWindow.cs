@@ -50,7 +50,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private PanelMonitorGuard? _monitorGuard;
     private bool _disposed;
 
-    public PanelKioskWindow(MonitorInfo monitor, string navigationUrl)
+    public PanelKioskWindow(MonitorInfo monitor, string navigationUrl, bool guardMonitor)
     {
         _instanceId = Interlocked.Increment(ref _nextInstanceId);
         _instances[_instanceId] = this;
@@ -75,10 +75,30 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         StartWebView2Init();
 
         // The panel is a normal monitor to Windows, so the OS will let other
-        // apps open or be dragged onto it — behind this topmost kiosk. Guard
-        // it: relocate any foreign window that comes to rest there back onto a
-        // normal monitor. Tears down with the kiosk in Dispose.
-        _monitorGuard = PanelMonitorGuard.Start(Hwnd, _monitor);
+        // apps open or be dragged onto it — behind this topmost kiosk. When the
+        // reserveMonitor pref is on, guard it: relocate any foreign window that
+        // comes to rest there back onto a normal monitor. The pref can be
+        // toggled live via SetMonitorGuard; tears down with the kiosk in Dispose.
+        SetMonitorGuard(guardMonitor);
+    }
+
+    /// <summary>
+    /// Turn the foreign-window guard on or off on the live kiosk. Idempotent:
+    /// starting when already running (or stopping when already off) is a no-op.
+    /// Runs on the message-loop thread (ctor + prefs poll), same as the guard's
+    /// hook install/teardown.
+    /// </summary>
+    public void SetMonitorGuard(bool enabled)
+    {
+        if (enabled)
+        {
+            _monitorGuard ??= PanelMonitorGuard.Start(Hwnd, _monitor);
+        }
+        else if (_monitorGuard is not null)
+        {
+            _monitorGuard.Dispose();
+            _monitorGuard = null;
+        }
     }
 
     public IntPtr? HandleMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
