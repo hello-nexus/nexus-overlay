@@ -12,11 +12,11 @@ Native AOT, no Microsoft.Web.WebView2.Core dependency: the WebView2 host calls `
 | `OverlayWindow` (one per monitor) | `/overlay` | Transparent, click-through-where-empty floating widgets. `SetWindowRgn` carves the window down to the widget rectangles reported by the SPA so input outside them falls through to the desktop. |
 | `PanelKioskWindow` | `/panel/:deviceId` | Fullscreen tool-window for the HYTE Y70/Y80 secondary touch display. Topmost, sized to its monitor, hidden from the taskbar. |
 
-All three surfaces are the same React app from [`nexus-web`](https://github.com/nexusqos/nexus-web); the URL path picks which view loads.
+All three surfaces are the same React app from [`nexus-web`](https://github.com/hello-nexus/nexus-web); the URL path picks which view loads.
 
 ## How it's driven
 
-`nexus-overlay.exe` runs as a per-session singleton (named `Local\Nexus.Overlay.Singleton`). The tray in [`nexus-service`](https://github.com/nexusqos/nexus-service) signals it by registered Win32 messages:
+`nexus-overlay.exe` runs as a per-session singleton (named `Local\Nexus.Overlay.Singleton`). The tray in [`nexus-service`](https://github.com/hello-nexus/nexus-service) signals it by registered Win32 messages:
 
 - `Nexus.Overlay.ShowDashboard` — show / focus the dashboard window.
 - `Nexus.Overlay.ShowPanelKioskWindow` / `…HidePanelKiosk` — toggle the Y70/Y80 panel.
