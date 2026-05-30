@@ -1,6 +1,6 @@
 # nexus-overlay
 
-Windows desktop host for the three browser-rendered surfaces that [Nexus](https://nexusqos.com) needs outside the system tray: the main dashboard, the floating per-monitor widget overlays, and the fullscreen HYTE Y70/Y80 touch panel. One process, one Chromium browser tree, shared GPU/network/utility processes — much cheaper than spawning `msedge --app` for each.
+Windows desktop host for the three browser-rendered surfaces that [Nexus](https://hellonexus.com) needs outside the system tray: the main dashboard, the floating per-monitor widget overlays, and the fullscreen HYTE Y70/Y80 touch panel. One process, one Chromium browser tree, shared GPU/network/utility processes — much cheaper than spawning `msedge --app` for each.
 
 Native AOT, no Microsoft.Web.WebView2.Core dependency: the WebView2 host calls `WebView2Loader.dll` directly and walks the COM vtables by hand so the binary stays small and AOT-clean.
 
