@@ -73,9 +73,8 @@ internal sealed class PairResponse
 }
 
 /// <summary>
-/// Tiny subset of the service's nested preferences shape that the host
-/// actually consumes. JSON deserialization is lenient about extra fields,
-/// so we only need these on the wire.
+/// Subset of the service's nested preferences the host consumes.
+/// Deserialization ignores extra fields, so only these are on the wire.
 /// </summary>
 internal sealed class UiPrefs
 {
@@ -98,7 +97,7 @@ internal sealed class OverlayBlock
     [JsonPropertyName("monitor")]
     public int Monitor { get; set; } = -1;
     /// <summary>
-    /// Pinned overlay-widget entries. Only the count is consumed here -
+    /// Pinned overlay-widget entries. Only the count is consumed here;
     /// per-entry rendering happens inside the WebView2 SPA.
     /// </summary>
     [JsonPropertyName("layout")]
@@ -116,8 +115,8 @@ internal sealed class PanelBlock
 
     /// <summary>
     /// Keep the panel monitor exclusive to the kiosk: relocate foreign windows
-    /// that land on it back to a normal monitor. Defaults on; older services
-    /// that omit the field leave it on via this initializer.
+    /// that land on it back to a normal monitor. Defaults on; services that
+    /// omit the field leave it on via this initializer.
     /// </summary>
     [JsonPropertyName("reserveMonitor")]
     public bool ReserveMonitor { get; set; } = true;

@@ -63,8 +63,7 @@ internal static unsafe class WebView2Callbacks
         var v = (uint)Interlocked.Decrement(ref *refSlot);
         if (v == 0)
         {
-            // Free both the vtable and the object block. The vtable was
-            // allocated per-instance so we can free it.
+            // Vtable is allocated per-instance; free it with the object block.
             var vt = ((IntPtr*)self)[Slot_Vtable];
             NativeMemory.Free((void*)vt);
             NativeMemory.Free((void*)self);

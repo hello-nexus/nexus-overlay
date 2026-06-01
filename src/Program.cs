@@ -24,9 +24,8 @@ internal static class Program
     private static readonly UIntPtr TIMER_PREFS_POLL = new(1);
     private static readonly UIntPtr TIMER_IDLE_EXIT = new(2);
     // Grace window after going idle (no widgets, dashboard hidden) before
-    // the process exits. Just long enough to absorb the tray's
-    // launch -> ShowDashboard message race at startup; not meant as a
-    // user-facing "keep around in case they come back" window.
+    // the process exits. Sized to absorb the tray's launch -> ShowDashboard
+    // message race at startup.
     private const uint IdleExitDelayMs = 3_000;
 
     private static readonly List<OverlayWindow> Overlays = new();
@@ -64,12 +63,10 @@ internal static class Program
     }
 
     /// <summary>
-    /// Move the overlay (we only have one in single-monitor mode, but
-    /// loop for symmetry) to a new monitor in-place. Triggered by the
-    /// SPA's <c>setMonitor</c> webMessage so the user sees the move
-    /// land instantly instead of waiting for the 5 s prefs poll.
-    /// Also updates the poll's last-seen index so the subsequent
-    /// poll doesn't fire a redundant teardown+respawn.
+    /// Move the overlay(s) to a new monitor in-place. Triggered by the SPA's
+    /// <c>setMonitor</c> webMessage, bypassing the 5 s prefs poll. Updates the
+    /// poll's last-seen index so the next poll doesn't fire a redundant
+    /// teardown+respawn.
     /// </summary>
     public static void MoveAllToMonitor(int value)
     {
@@ -98,8 +95,8 @@ internal static class Program
         // for the cross-desktop pin via PinAppID later.
         VirtualDesktopPin.SetProcessAppId();
 
-        // Per-monitor V2 DPI awareness. Win10 < 1703 will fail this; we
-        // accept the older behavior on those (best-effort).
+        // Per-monitor V2 DPI awareness. Fails on Win10 < 1703, which keeps
+        // the older behavior.
         Native.SetProcessDpiAwarenessContext(Native.DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
         // WebView2 requires STA. CoInitializeEx is benign if STAThread
@@ -202,9 +199,7 @@ internal static class Program
 
         var result = MessageLoop.Run(_syncContext);
 
-        // Cleanup. Dispose the kiosk first, then dashboard, then per-monitor
-        // overlays — mirrors the on-screen reverse z-order so the dispose
-        // chain progresses through windows by visual prominence.
+        // Cleanup: dispose kiosk, then dashboard, then per-monitor overlays.
         Native.KillTimer(_marshalerHwnd, TIMER_PREFS_POLL);
         _panelKiosk?.Dispose();
         _panelKiosk = null;
@@ -380,10 +375,8 @@ internal static class Program
             }
             if (msg == Native.WM_TIMER && wParam == (IntPtr)(long)TIMER_IDLE_EXIT.ToUInt64())
             {
-                // Idle grace window elapsed. Confirm we're still idle
-                // (a widget toggle or dashboard reopen between arm and
-                // fire would have killed the timer, but a defensive
-                // re-check guards against any in-flight race).
+                // Idle grace window elapsed. Re-check idle to guard against
+                // a widget toggle / dashboard reopen racing the timer fire.
                 Native.KillTimer(_marshalerHwnd, TIMER_IDLE_EXIT);
                 if (IsIdle())
                 {
@@ -448,9 +441,8 @@ internal static class Program
             }
 
             // "Should overlays be visible?" = toggle on AND at least one
-            // pinned widget. The service no longer kills this process
-            // when overlays go away (the dashboard window lives here
-            // too); we tear down widget HWNDs in-process and idle out.
+            // pinned widget. When they go away we tear down widget HWNDs
+            // in-process and idle out (the dashboard window lives here too).
             var nowShouldShow = ShouldShowOverlays(latest);
             if (nowShouldShow != _lastPolledShouldShow)
             {

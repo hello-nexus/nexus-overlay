@@ -70,8 +70,7 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
             b.Left, b.Top, b.Width, b.Height,
             this);
 
-        // Hide everything until the SPA reports widget rects. 1x1 region in
-        // the corner is invisible enough.
+        // Hide everything until the SPA reports widget rects: 1x1 region.
         var emptyRgn = Native.CreateRectRgn(0, 0, 1, 1);
         Native.SetWindowRgn(Hwnd, emptyRgn, false);
 
@@ -155,12 +154,10 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
                 return IntPtr.Zero;
             case Native.WM_DPICHANGED:
                 // lParam points to a RECT* with the OS-suggested new bounds
-                // for the window at the new DPI. Honoring it keeps the
-                // overlay correctly sized when the user drags between
-                // monitors with different scale factors, or replaces a
-                // display. WM_SIZE fires from the resulting SetWindowPos
-                // and the existing handler reflows the WebView2 controller;
-                // the SPA's reportLayout naturally re-emits and refreshes
+                // at the new DPI. Honoring it keeps the overlay sized when
+                // dragged between monitors of different scale, or on a display
+                // swap. WM_SIZE fires from the SetWindowPos and reflows the
+                // controller; the SPA's reportLayout re-emits and refreshes
                 // the SetWindowRgn carve-out for the new client area.
                 if (lParam != IntPtr.Zero)
                 {
@@ -182,15 +179,14 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
     private void StartWebView2Init()
     {
         // %ProgramData%\Nexus\DesktopWebView2 - shared between SYSTEM and user
-        // sessions, see d7edccd commit message.
+        // sessions.
         var userDataDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "Nexus", "DesktopWebView2");
         try { Directory.CreateDirectory(userDataDir); } catch { /* best-effort */ }
 
         // TODO: re-enable env options once vtable layout is verified.
-        // Passing null skips renderer-process-limit consolidation but lets
-        // us verify the rest of the pipeline first.
+        // Passing null skips renderer-process-limit consolidation.
         _envOptions = IntPtr.Zero;
         _envCreatedHandler = WebView2Callbacks.CreateEnvCreatedHandler(&OnEnvCreatedStatic);
 
@@ -302,11 +298,8 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
 
         ApplyZOrder();
 
-        // Try PinWindow(HWND) on IVirtualDesktopManagerInternal as a
-        // belt-and-suspenders on top of the process-level PinAppID call in
-        // Program.cs. On Win11 builds where PinAppID succeeds this is a
-        // no-op; on builds where PinAppID can't find the service, this
-        // direct HWND pin sometimes works.
+        // Per-HWND pin on top of the process-level PinAppID in Program.cs.
+        // Currently disabled (returns false); see TryPinWindow.
         VirtualDesktopPin.TryPinWindow(Hwnd);
     }
 

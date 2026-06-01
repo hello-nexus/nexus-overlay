@@ -5,9 +5,8 @@ using System.Text.Json;
 namespace Nexus.Overlay;
 
 /// <summary>
-/// Pure parsing of the SPA's <c>reportLayout</c> webMessage payload.
-/// Extracted as a static helper so it's unit-testable on any OS without
-/// touching Win32 region APIs.
+/// Parses the SPA's <c>reportLayout</c> webMessage payload. No Win32 region
+/// APIs, so unit-testable on any OS.
 ///
 /// Payload shape:
 /// <code>
@@ -32,9 +31,8 @@ internal static class RegionLayout
         if (el.ValueKind != JsonValueKind.Object) return false;
         if (!el.TryGetProperty("x", out var xEl) || !el.TryGetProperty("y", out var yEl)) return false;
         if (!el.TryGetProperty("w", out var wEl) || !el.TryGetProperty("h", out var hEl)) return false;
-        // TryGetDouble throws on non-Number kinds rather than returning false,
-        // so kind-check explicitly first - the SPA could send a malformed
-        // payload during early init and the host should not crash.
+        // TryGetDouble throws on non-Number kinds rather than returning
+        // false, so kind-check first to tolerate a malformed payload.
         if (xEl.ValueKind != JsonValueKind.Number || yEl.ValueKind != JsonValueKind.Number
             || wEl.ValueKind != JsonValueKind.Number || hEl.ValueKind != JsonValueKind.Number) return false;
         if (!xEl.TryGetDouble(out var x) || !yEl.TryGetDouble(out var y)

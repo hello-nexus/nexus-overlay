@@ -24,8 +24,7 @@ namespace Nexus.Overlay.Win32;
 ///   interface whose IID has been stable for years and works regardless
 ///   of the window's shell visibility.
 ///
-/// Same single window, same single WebView2 - the shell just stops
-/// hiding the HWND when switching desktops. Zero memory or CPU cost.
+/// The shell stops hiding the HWND when switching desktops.
 /// </summary>
 internal static unsafe class VirtualDesktopPin
 {
@@ -43,11 +42,9 @@ internal static unsafe class VirtualDesktopPin
     private static readonly Guid SID_VirtualDesktopManagerInternal =
         new("C5E0CDCA-7B6E-41B2-9FC4-D93975CC467B");
 
-    // IID for IVirtualDesktopManagerInternal changes across Windows
-    // builds. Try the modern ones in order; we only need ONE that returns
-    // a valid object that itself supports IVirtualDesktopPinnedApps via QI,
-    // so we don't actually invoke methods on this interface - any successful
-    // pointer is enough to bridge to PinnedApps.
+    // IID for IVirtualDesktopManagerInternal changes across Windows builds.
+    // Try them in order; any object that QIs to IVirtualDesktopPinnedApps
+    // suffices (no methods on this interface are invoked).
     private static readonly Guid[] IID_IVirtualDesktopManagerInternal_Candidates = new[]
     {
         // Win11 24H2 / 25H2:
@@ -101,27 +98,13 @@ internal static unsafe class VirtualDesktopPin
 
     /// <summary>
     /// Pin a specific HWND across all virtual desktops via
-    /// <c>IVirtualDesktopManagerInternal::PinWindow</c>.
-    ///
-    /// NOTE (Win11 25H2 build 26200): all known paths return failure on
-    /// this Windows build:
-    /// - QueryService(SID_VirtualDesktopPinnedApps) -> E_NOTIMPL.
-    /// - CoCreateInstance(IID as CLSID) -> REGDB_E_CLASSNOTREG.
-    /// - QI from IVirtualDesktopManagerInternal -> E_NOINTERFACE.
-    /// - Slot-21 PinWindow on the manager returned 0x800706F4 (Win32 1780).
-    ///
-    /// The manager interface IS reachable, but the slot indices for
-    /// PinWindow have shifted. Brute-forcing slots is unsafe (different
-    /// methods take different signatures and call them as if they were
-    /// PinWindow will crash). Leaving this as a single best-effort
-    /// attempt to a known-callable slot, returning the HR so the caller
-    /// can log it - then move on.
+    /// <c>IVirtualDesktopManagerInternal::PinWindow</c>. Disabled: the
+    /// PinWindow slot index shifts across Windows builds and calling the
+    /// wrong slot (different signature) crashes the process, so this returns
+    /// false until a reliable per-build slot map exists.
     /// </summary>
     public static bool TryPinWindow(IntPtr hwnd)
     {
-        // Disabled until a reliable per-build mapping is known. Each
-        // crashed sweep takes the overlay process down; preserving uptime
-        // is more valuable than chasing a Windows-version-specific slot.
         return false;
     }
 

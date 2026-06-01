@@ -41,10 +41,9 @@ internal static unsafe class Monitors
             var ok = Native.EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, &OnMonitor, IntPtr.Zero);
             Log.Info($"EnumDisplayMonitors returned ok={ok} callbacks={_invocations}");
 
-            // Fallback: if EnumDisplayMonitors didn't surface anything (rare,
-            // sometimes happens when the GDI session is in an odd state right
-            // after logon), construct a single virtual screen rect from
-            // SystemMetrics. Better one rectangle than zero overlays.
+            // Fallback when EnumDisplayMonitors surfaces nothing (rare GDI
+            // state right after logon): build one virtual-screen rect from
+            // SystemMetrics.
             if (_collected.Count == 0)
             {
                 var w = Native.GetSystemMetrics(Native.SM_CXSCREEN);

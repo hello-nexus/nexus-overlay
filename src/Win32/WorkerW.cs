@@ -5,17 +5,16 @@ using System.Runtime.InteropServices;
 namespace Nexus.Overlay.Win32;
 
 /// <summary>
-/// Finds (or forces creation of) the WorkerW window that sits behind the
-/// desktop icons. Standard Rainmeter / Wallpaper Engine technique.
+/// Finds (or forces creation of) the WorkerW window behind the desktop
+/// icons.
 ///
-/// 1. Send Progman the magic 0x052C with params (0xD, 0x1) to force it to
-///    spawn a sibling WorkerW behind the icons.
+/// 1. Send Progman the magic 0x052C with params (0xD, 0x1) to spawn a
+///    sibling WorkerW behind the icons.
 /// 2. EnumWindows for top-level WorkerW windows whose first child is NOT
 ///    SHELLDLL_DefView - the WorkerW with that child hosts the icons; the
 ///    one without is the empty layer between wallpaper and icons.
 ///
-/// Currently dormant - the overlay sits at HWND_BOTTOM instead of parenting
-/// to WorkerW. Kept on disk for any future "true wallpaper layer" mode.
+/// Dormant: the overlay sits at HWND_BOTTOM instead of parenting to WorkerW.
 /// </summary>
 internal static unsafe class WorkerW
 {

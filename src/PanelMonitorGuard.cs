@@ -6,24 +6,20 @@ using Nexus.Overlay.Win32;
 namespace Nexus.Overlay;
 
 /// <summary>
-/// Keeps the HYTE panel monitor exclusive to the kiosk window. Windows still
-/// treats the panel as an ordinary monitor (it reports a normal EDID over
-/// DisplayPort), so the OS will happily extend the desktop onto it and let
-/// other apps open or be dragged there — landing them behind the always-
-/// topmost kiosk. This guard is the software answer: while the kiosk is up,
-/// any *foreign* top-level application window that comes to rest on the panel
-/// monitor is relocated back onto a normal monitor.
+/// Keeps the HYTE panel monitor exclusive to the kiosk window. The panel
+/// reports a normal EDID over DisplayPort, so Windows treats it as an ordinary
+/// monitor and lets other apps open or be dragged there, behind the always-
+/// topmost kiosk. While the kiosk is up, any foreign top-level window that
+/// comes to rest on the panel monitor is relocated back onto a normal monitor.
 ///
-/// It is a guard, not an OS-level "specialized display" guarantee. Hooked via
-/// <c>SetWinEventHook</c> (OUTOFCONTEXT) on the overlay's message-loop thread,
-/// so callbacks run single-threaded with the rest of the overlay — no locking.
+/// Hooked via <c>SetWinEventHook</c> (OUTOFCONTEXT) on the overlay's
+/// message-loop thread, so callbacks run single-threaded with the rest of the
+/// overlay — no locking.
 ///
-/// We deliberately watch only "window came to rest" events — foreground
-/// changes, the end of a move/size drag, and window show — never the
-/// high-frequency <c>EVENT_OBJECT_LOCATIONCHANGE</c>. Acting on
-/// location-change would yank a window out from under the cursor mid-drag and
-/// spin the CPU; reacting at drag-end is both calmer and what the user means
-/// by "don't leave it there."
+/// Watches only "window came to rest" events — foreground changes, move/size
+/// drag-end, and window show — never the high-frequency
+/// <c>EVENT_OBJECT_LOCATIONCHANGE</c>: acting on location-change would yank a
+/// window out from under the cursor mid-drag and spin the CPU.
 /// </summary>
 internal sealed unsafe class PanelMonitorGuard : IDisposable
 {
@@ -67,7 +63,7 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
     /// Begin guarding the monitor the kiosk window sits on. Picks a relocation
     /// target (the OS primary, else the first other monitor). If the panel is
     /// the only display there is nowhere to send evicted windows, so the guard
-    /// installs nothing and simply no-ops — the topmost kiosk still hides them.
+    /// installs nothing and no-ops.
     /// </summary>
     public static PanelMonitorGuard Start(IntPtr kioskHwnd, MonitorInfo panel)
     {
@@ -100,10 +96,9 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
     private void InstallHooks()
     {
         const uint flags = Native.WINEVENT_OUTOFCONTEXT | Native.WINEVENT_SKIPOWNPROCESS;
-        // One hook spans the small SYSTEM band (foreground .. move/size-end);
-        // a second covers OBJECT_SHOW. The callback narrows to the exact three
-        // events we act on — the in-between IDs (menu/capture/move-start) are
-        // delivered too but ignored, which is cheaper than three separate hooks.
+        // One hook spans the SYSTEM band (foreground .. move/size-end), a
+        // second covers OBJECT_SHOW. The callback acts on three events; the
+        // in-between IDs (menu/capture/move-start) are delivered but ignored.
         _hookSystem = Native.SetWinEventHook(
             Native.EVENT_SYSTEM_FOREGROUND, Native.EVENT_SYSTEM_MOVESIZEEND,
             IntPtr.Zero, &OnWinEvent, 0, 0, flags);

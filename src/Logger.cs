@@ -4,14 +4,12 @@ using System.IO;
 namespace Nexus.Overlay;
 
 /// <summary>
-/// File-only logger. Service spawns us with no console attached and we have
-/// no UI surface for diagnostic output, so trace lands at
-/// %ProgramData%\Nexus\Logs\desktop-host.log. ProgramData (vs LocalAppData)
-/// because the overlay can be spawned under SYSTEM or under the active
-/// console user - LocalAppData differs between those, and SYSTEM's resolves
-/// to C:\Windows\System32\config\systemprofile\AppData\Local which is
-/// invisible to users (same rationale as the WebView2 user-data-dir
-/// migration in d7edccd).
+/// File-only logger; no console attached, no UI surface for diagnostics.
+/// Trace lands at %ProgramData%\Nexus\Logs\desktop-host.log. ProgramData
+/// (not LocalAppData) because the overlay runs under SYSTEM or the console
+/// user: LocalAppData differs between them, and SYSTEM's resolves to
+/// C:\Windows\System32\config\systemprofile\AppData\Local, invisible to
+/// users.
 /// </summary>
 internal static class Log
 {

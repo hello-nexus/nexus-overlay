@@ -61,13 +61,11 @@ internal static unsafe class Win32Window
 
     /// <summary>
     /// Creates a top-level window and registers the owner against its
-    /// HWND before <c>CreateWindowExW</c> returns - this lets the owner
-    /// receive WM_NCCREATE / WM_CREATE messages that fire synchronously
-    /// during the call. Pass a non-default <paramref name="hbrBackground"/>
-    /// to avoid the unpainted flash that visible top-level windows show
-    /// before the first WM_PAINT - the overlay uses default (no brush)
-    /// because its layered/transparent compositing makes the brush moot,
-    /// but a normal opaque window wants COLOR_WINDOW+1 or similar.
+    /// HWND before <c>CreateWindowExW</c> returns, so the owner receives
+    /// WM_NCCREATE / WM_CREATE messages that fire synchronously during the
+    /// call. A non-default <paramref name="hbrBackground"/> avoids the
+    /// unpainted flash before the first WM_PAINT (the layered/transparent
+    /// overlay passes none; opaque windows want COLOR_WINDOW+1).
     /// </summary>
     public static IntPtr Create(string className, string title, uint style, uint exStyle,
         int x, int y, int width, int height, IWin32WindowOwner owner,

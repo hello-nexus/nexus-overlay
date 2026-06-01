@@ -11,18 +11,11 @@ using Nexus.Overlay.Win32;
 namespace Nexus.Overlay;
 
 /// <summary>
-/// Standard top-level WebView2 window hosting the main Nexus dashboard URL.
-/// Replaces the Edge --app spawn the tray used to invoke. Lives in the
-/// same process as the floating overlay widgets so the dashboard's
-/// renderer shares the browser / GPU / network / utility process tree
-/// already running for the overlays - this is where the memory win over
-/// msedge --app comes from. Singleton per process (the overlay process
-/// is already singleton via the mutex in Program.cs).
-///
-/// Closing via the X button hides the window rather than destroying it
-/// so the next "Open Nexus" click is instantaneous - no WebView2 cold
-/// start. The hidden window is torn down only when the overlay process
-/// itself exits.
+/// Top-level WebView2 window hosting the main Nexus dashboard URL. Lives in
+/// the same process as the floating overlay widgets so its renderer shares
+/// the browser / GPU / network / utility process tree already running for
+/// them — the memory win over msedge --app. Singleton per process (the
+/// overlay process is itself singleton via the mutex in Program.cs).
 /// </summary>
 internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 {
@@ -34,43 +27,32 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     private const string WindowTitle = "";
     private const int DefaultClientWidth = 1280;
     private const int DefaultClientHeight = 800;
-    // Minimum sizes match nexus-web's CSS min-width on .layout so the OS
-    // refuses to drag the window any narrower than the React layout's
-    // intrinsic minimum - prevents the horizontal scrollbar that would
-    // otherwise appear once the window dipped under the layout's CSS
-    // min-width. Bump these in lockstep with App.module.scss .layout
-    // min-width.
+    // Match nexus-web's .layout CSS min-width so the OS refuses to drag the
+    // window narrower than the React layout's minimum (avoids a horizontal
+    // scrollbar). Keep in lockstep with App.module.scss .layout min-width.
     private const int MinClientWidth = 1000;
     private const int MinClientHeight = 640;
     // Custom title bar logical height (96 DPI). Matches the system caption
     // height and the height of our React-side custom caption buttons +
     // drag strip.
     private const int CustomTitleBarHeightLogical = 32;
-    // How wide the resize-grab non-client strip is on each edge, in
-    // logical pixels at 96 DPI. The default WS_THICKFRAME area is 8px
-    // (4 SM_CXFRAME + 4 SM_CXPADDEDBORDER) which is fine for desktop apps
-    // with a system title bar, but feels cramped here because the WebView2
-    // child window covers everything inside the client rect - the user
-    // only has these N pixels at the edge to grab. 12 is what Edge /
-    // Settings / Microsoft Store use for their custom-frame edges.
+    // Resize-grab non-client strip width per edge, logical px at 96 DPI. The
+    // default WS_THICKFRAME area is 8px (4 SM_CXFRAME + 4 SM_CXPADDEDBORDER);
+    // the WebView2 child covers the client rect, leaving only this edge strip
+    // to grab. 12 matches Edge / Settings / Microsoft Store custom frames.
     private const int ResizeGrabLogical = 12;
-    // Top inset can be smaller because the React drag strip + WebView2's
-    // IsNonClientRegionSupportEnabled forwards events through CSS
-    // `app-region: drag` regions; the parent WM_NCHITTEST returns HTTOP
-    // for the top few pixels of those forwarded events. 4px direct
-    // non-client gives a hard fallback for clicks that land outside the
-    // drag region (e.g. the right gutter between the caption buttons and
-    // the window's outer edge).
+    // Top inset is smaller because the React drag strip forwards events via
+    // IsNonClientRegionSupportEnabled and WM_NCHITTEST returns HTTOP for the
+    // top few px. 4px direct non-client is the fallback for clicks outside
+    // the drag region (e.g. the gutter right of the caption buttons).
     private const int TopResizeGrabLogical = 4;
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 2;
     private const int PermissionStateDeny = 2;
-    // Background ARGB the WebView2 controller paints behind the page
-    // until the SPA's CSS background takes over. Matches the nexus-web
-    // dark theme --bg (#0a0a0a) so the brief flash that appears between
-    // a fast resize event and the next React paint blends with the
-    // page instead of flashing white. The app ships dark-mode-first;
-    // light-mode users see a very brief dark flash, which is the
-    // smaller of two evils.
+    // Background ARGB the WebView2 controller paints behind the page until
+    // the SPA's CSS background takes over. Matches the nexus-web dark theme
+    // --bg (#0a0a0a) so the resize-to-repaint flash blends instead of
+    // flashing white. App is dark-mode-first; light-mode shows a brief dark
+    // flash.
     private const uint DefaultBgArgbDark = 0xFF0A0A0Au;
 
     private static readonly ConcurrentDictionary<int, DashboardWindow> _instances = new();
@@ -112,9 +94,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         // DeleteObject it because the class registration is permanent.
         var bgBrush = GetOrCreateDarkBrush();
 
-        // Load the Nexus app icon out of the installed .ico file so it shows
-        // up in the taskbar / Alt+Tab. We removed the visible title bar so
-        // the system can't infer an icon from there anymore; load explicitly.
+        // Load the Nexus app icon from the installed .ico for the taskbar /
+        // Alt+Tab. No visible title bar, so the system can't infer one; load
+        // explicitly.
         var hIcon = TryLoadAppIcon();
 
         Hwnd = Win32Window.Create(
@@ -243,10 +225,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     private static IntPtr TryLoadAppIcon()
     {
         // nexus-overlay.exe lives at ...\Nexus\overlay\; nexus-service drops
-        // icon.ico one directory up at ...\Nexus\icon.ico (nexus-service's
-        // <ApplicationIcon> CopyToOutputDirectory). Walk the path manually
-        // rather than embedding our own copy - keeps the binary slim and
-        // avoids two-source-of-truth for the brand icon.
+        // icon.ico one directory up at ...\Nexus\icon.ico (its
+        // <ApplicationIcon> CopyToOutputDirectory). Resolve at runtime instead
+        // of embedding a second copy.
         try
         {
             var exe = Environment.ProcessPath;
@@ -304,9 +285,8 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     public void ShowAndFocus()
     {
         if (Hwnd == IntPtr.Zero) return;
-        // Re-read theme: covers the case where the user toggled light/dark
-        // between dashboard sessions. The hidden window kept its previous
-        // attribute value, which would otherwise paint stale on first show.
+        // Re-read theme in case the user toggled light/dark since the window
+        // last applied it, which would otherwise paint stale on show.
         ApplyImmersiveTheme(Hwnd, IsSystemDarkMode());
         if (Native.IsIconic(Hwnd))
         {
@@ -503,13 +483,11 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         }
 
         // Step 2: translate cursor position (screen coords in lParam) to
-        // WINDOW-local coordinates and run our own hit-test against the
-        // resize border + drag strip. Window-local (not client-local)
-        // matters because the non-client area outside the client rect
-        // has negative client coords - my first cut used ScreenToClient
-        // and the resize corners read as pt.x < 0 / pt.y < 0, which fell
-        // through to HTCLIENT and the cursor never showed the resize
-        // affordance.
+        // WINDOW-local coords and hit-test the resize border + drag strip.
+        // Window-local (not client-local) because the non-client area
+        // outside the client rect has negative client coords, so
+        // ScreenToClient would read corners as pt < 0 and fall through to
+        // HTCLIENT (no resize cursor).
         int lp = (int)(lParam.ToInt64() & 0xFFFFFFFF);
         int screenX = (short)(lp & 0xFFFF);
         int screenY = (short)((lp >> 16) & 0xFFFF);
@@ -523,16 +501,11 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         int titleH = TitleBarHeightPx(hwnd);
         bool maximized = Native.IsZoomed(hwnd);
 
-        // All forwarded events come from `app-region: drag` regions in
-        // the React tree: a top drag strip and a thin transparent strip
-        // along each edge. We bucket by position - the corner / edge
-        // strips give resize, the wider top strip gives drag, and any
-        // forwarded click outside those regions is treated as HTCLIENT
-        // (shouldn't actually reach this branch in practice because the
-        // WebView2 only forwards drag-region events).
-        //
-        // Resize is suppressed while maximized: the OS doesn't resize a
-        // maximized window and the cursor would feel wrong.
+        // Forwarded events come from `app-region: drag` regions: a top drag
+        // strip and a thin strip along each edge. Bucket by position: corner
+        // / edge strips give resize, the top strip gives drag, anything else
+        // is HTCLIENT. Resize is suppressed while maximized (the OS doesn't
+        // resize a maximized window).
         if (!maximized)
         {
             bool top = py >= 0 && py < side;
@@ -562,9 +535,8 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
     private void StartWebView2Init()
     {
-        // Same user-data-dir as OverlayWindow - this is what makes
-        // Chromium reuse the existing browser/GPU/utility processes
-        // instead of spawning a second tree.
+        // Same user-data-dir as OverlayWindow so Chromium reuses the existing
+        // browser/GPU/utility processes instead of spawning a second tree.
         var userDataDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
             "Nexus", "DesktopWebView2");
@@ -819,7 +791,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             case "nexus:resize-bottom-left":  BeginResize(Native.HTBOTTOMLEFT); break;
             case "nexus:resize-bottom-right": BeginResize(Native.HTBOTTOMRIGHT); break;
             default:
-                // Other messages may flow through here for legitimate IPC; do
+                // Other messages may flow through here for valid IPC; do
                 // not log them as errors.
                 break;
         }

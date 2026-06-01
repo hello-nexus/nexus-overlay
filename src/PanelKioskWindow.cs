@@ -68,17 +68,14 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
 
         Log.Info($"panel-kiosk ctor monitor={monitor.Index} bounds={b.Left},{b.Top},{b.Width}x{b.Height} hwnd=0x{Hwnd:X} url={navigationUrl}");
 
-        // Show the window before WebView2 attaches so the user sees the
-        // intended frame land instantly; the controller paints over it
-        // once init finishes.
+        // Show the window before WebView2 attaches; the controller paints
+        // over it once init finishes.
         Native.ShowWindow(Hwnd, Native.SW_SHOWNOACTIVATE);
         StartWebView2Init();
 
-        // The panel is a normal monitor to Windows, so the OS will let other
-        // apps open or be dragged onto it — behind this topmost kiosk. When the
-        // reserveMonitor pref is on, guard it: relocate any foreign window that
-        // comes to rest there back onto a normal monitor. The pref can be
-        // toggled live via SetMonitorGuard; tears down with the kiosk in Dispose.
+        // When reserveMonitor is on, guard the panel monitor: relocate any
+        // foreign window that comes to rest there. Toggled live via
+        // SetMonitorGuard; torn down with the kiosk in Dispose.
         SetMonitorGuard(guardMonitor);
     }
 
@@ -224,8 +221,6 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
 
         // Same security posture as the dashboard window: external links go
         // to the default browser, popups go external, perm prompts deny.
-        // The kiosk is fullscreen and the user can't navigate away, but if
-        // a stray `<a href>` slips through these handlers keep it contained.
         _navStartingHandler = WebView2Callbacks.CreateNavigationStartingHandler(&OnNavigationStartingStatic);
         Wv2.Wv2_add_NavigationStarting(_coreWebView2, _navStartingHandler, out _navStartingToken);
 
