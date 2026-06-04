@@ -58,11 +58,16 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         _navigationUrl = navigationUrl;
 
         var b = monitor.Bounds;
+        // WS_EX_NOACTIVATE: touching the panel must not activate the kiosk.
+        // Without it, touch on this secondary monitor activates the window and
+        // Windows warps the system cursor to the contact point, stranding the
+        // pointer on the Y70. Matches the legacy HYTE app (focusable:false) and
+        // the sibling OverlayWindow.
         Hwnd = Win32Window.Create(
             WindowClassName,
             WindowTitle,
             Native.WS_POPUP,
-            (uint)(Native.WS_EX_TOOLWINDOW | Native.WS_EX_TOPMOST),
+            (uint)(Native.WS_EX_TOOLWINDOW | Native.WS_EX_TOPMOST | Native.WS_EX_NOACTIVATE),
             b.Left, b.Top, b.Width, b.Height,
             this);
 
