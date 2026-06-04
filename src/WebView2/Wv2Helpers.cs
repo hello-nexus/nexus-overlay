@@ -92,6 +92,23 @@ internal static unsafe class Wv2
         return fn(ctrl2, argb);
     }
 
+    // ===================== ICoreWebView2Controller3 =====================
+
+    public static readonly Guid IID_ICoreWebView2Controller3 =
+        new("f9614724-5d2b-41dc-aef7-73d62b51543b");
+
+    public static int Ctrl3_put_RasterizationScale(IntPtr ctrl3, double scale)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, double, int>)Slot(ctrl3, WebView2Vtable.Ctrl3_put_RasterizationScale);
+        return fn(ctrl3, scale);
+    }
+
+    public static int Ctrl3_put_ShouldDetectMonitorScaleChanges(IntPtr ctrl3, bool value)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(ctrl3, WebView2Vtable.Ctrl3_put_ShouldDetectMonitorScaleChanges);
+        return fn(ctrl3, value ? 1 : 0);
+    }
+
     // ===================== ICoreWebView2 =====================
 
     public static int Wv2_Navigate(IntPtr wv2, string url)

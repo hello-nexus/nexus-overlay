@@ -261,6 +261,26 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
             Log.Warn($"overlay {_monitor.Index} no ICoreWebView2Controller2; transparent bg unavailable");
         }
 
+        // Pin the WebView2 to 1 device-independent px = 1 raw px and stop it
+        // tracking monitor DPI. Desktop widget size must come only from the
+        // in-app OverlayWidgetScale pref (the SPA's cellPx), never from Windows
+        // display scaling: otherwise a non-100% monitor rasterizes the widgets
+        // larger while the SetWindowRgn carve-out - built from the SPA's CSS-px
+        // rects - stays unscaled, so the mask no longer covers the widget. With
+        // the scale pinned at 1.0, devicePixelRatio is 1, CSS px == raw px, and
+        // the carve-out lines up at any display scaling.
+        var controller3 = Wv2.QueryInterface(controller, Wv2.IID_ICoreWebView2Controller3);
+        if (controller3 != IntPtr.Zero)
+        {
+            Wv2.Ctrl3_put_ShouldDetectMonitorScaleChanges(controller3, false);
+            Wv2.Ctrl3_put_RasterizationScale(controller3, 1.0);
+            Wv2.Release(controller3);
+        }
+        else
+        {
+            Log.Warn($"overlay {_monitor.Index} no ICoreWebView2Controller3; DPI scale pin unavailable");
+        }
+
         // Bounds + visibility.
         Native.GetClientRect(Hwnd, out var rc);
         Wv2.Ctrl_put_Bounds(_controller, rc);
@@ -422,6 +442,10 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         {
             region = Native.CreateRectRgn(0, 0, 1, 1);
         }
+        // Rects are raw device pixels: the overlay's WebView2 is pinned to
+        // RasterizationScale 1.0 (see OnControllerCreated), so the SPA's CSS-px
+        // layout maps 1:1 to device px and the carve-out matches the widgets at
+        // any display scaling.
         Native.SetWindowRgn(Hwnd, region, true);
         Log.Info($"overlay {_monitor.Index} region rebuilt rects={rects.Count}");
     }

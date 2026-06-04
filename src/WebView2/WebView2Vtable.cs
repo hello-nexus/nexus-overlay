@@ -38,6 +38,14 @@ internal static class WebView2Vtable
     public const int Ctrl2_get_DefaultBackgroundColor = 26;
     public const int Ctrl2_put_DefaultBackgroundColor = 27;
 
+    // ICoreWebView2Controller3 (extends Controller2, adds RasterizationScale /
+    // ShouldDetectMonitorScaleChanges / BoundsMode). Slots continue after
+    // Controller2's 26/27. QI separately for IID_ICoreWebView2Controller3.
+    public const int Ctrl3_get_RasterizationScale = 28;
+    public const int Ctrl3_put_RasterizationScale = 29;
+    public const int Ctrl3_get_ShouldDetectMonitorScaleChanges = 30;
+    public const int Ctrl3_put_ShouldDetectMonitorScaleChanges = 31;
+
     // ICoreWebView2 (own methods 3..). Subset:
     public const int Wv2_get_Settings = 3;
     public const int Wv2_get_Source = 4;
