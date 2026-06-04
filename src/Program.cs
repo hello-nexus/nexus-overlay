@@ -258,11 +258,8 @@ internal static class Program
             return;
         }
         var target = PanelDisplay.Find();
-        if (target is null)
-        {
-            Log.Info("panel kiosk skipped: no recognized HYTE panel display connected");
-            return;
-        }
+        // Find() logs the scan result on change; no per-poll line needed here.
+        if (target is null) return;
         DisarmIdleExitTimer();
         var url = $"{ServiceOrigin}/panel?token={Uri.EscapeDataString(_pairedToken)}";
         _panelKiosk = new PanelKioskWindow(target, url, _lastPolledReserveMonitor);

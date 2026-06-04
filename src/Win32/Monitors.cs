@@ -28,18 +28,15 @@ internal static unsafe class Monitors
 {
     // EnumDisplayMonitors callback cannot capture closures (must be a
     // static [UnmanagedCallersOnly] for AOT). Stash the collecting list
-    // and a count in a thread-static so the callback can append.
+    // in a thread-static so the callback can append.
     [ThreadStatic] private static List<MonitorInfo>? _collected;
-    [ThreadStatic] private static int _invocations;
 
     public static IReadOnlyList<MonitorInfo> Enumerate()
     {
         _collected = new List<MonitorInfo>();
-        _invocations = 0;
         try
         {
-            var ok = Native.EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, &OnMonitor, IntPtr.Zero);
-            Log.Info($"EnumDisplayMonitors returned ok={ok} callbacks={_invocations}");
+            Native.EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, &OnMonitor, IntPtr.Zero);
 
             // Fallback when EnumDisplayMonitors surfaces nothing (rare GDI
             // state right after logon): build one virtual-screen rect from
@@ -71,7 +68,6 @@ internal static unsafe class Monitors
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     private static int OnMonitor(IntPtr hMonitor, IntPtr hdcMonitor, Native.RECT* lprcMonitor, IntPtr dwData)
     {
-        _invocations++;
         // ByValTStr on szDevice makes the struct non-blittable, so use
         // Marshal.SizeOf instead of the sizeof operator.
         var info = new Native.MonitorInfoNative
