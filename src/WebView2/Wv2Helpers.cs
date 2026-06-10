@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 namespace Nexus.Overlay.WebView2;
@@ -115,6 +116,12 @@ internal static unsafe class Wv2
     {
         var fn = (delegate* unmanaged[Stdcall]<IntPtr, char*, int>)Slot(wv2, WebView2Vtable.Wv2_Navigate);
         fixed (char* u = url) return fn(wv2, u);
+    }
+
+    public static int Wv2_PostWebMessageAsJson(IntPtr wv2, string json)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, char*, int>)Slot(wv2, WebView2Vtable.Wv2_PostWebMessageAsJson);
+        fixed (char* j = json) return fn(wv2, j);
     }
 
     public static int Wv2_get_Settings(IntPtr wv2, out IntPtr settings)
@@ -252,6 +259,57 @@ internal static unsafe class Wv2
         text = Marshal.PtrToStringUni(p);
         Marshal.FreeCoTaskMem(p);
         return hr;
+    }
+
+    /// <summary>
+    /// Disk paths of the File objects a page passed via
+    /// chrome.webview.postMessageWithAdditionalObjects. Empty when the
+    /// runtime predates args2 (SDK &lt; 1.0.1518) or nothing was attached;
+    /// non-File entries are skipped.
+    /// </summary>
+    public static List<string> WebMsgArgs_GetAdditionalFilePaths(IntPtr args)
+    {
+        var paths = new List<string>();
+        var args2 = QueryInterface(args, WebView2Native.IID_ICoreWebView2WebMessageReceivedEventArgs2);
+        if (args2 == IntPtr.Zero) return paths;
+        try
+        {
+            IntPtr collection;
+            var getFn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(args2, WebView2Vtable.WebMsgArgs2_get_AdditionalObjects);
+            if (WebView2Native.Failed(getFn(args2, &collection)) || collection == IntPtr.Zero) return paths;
+            try
+            {
+                uint count;
+                var countFn = (delegate* unmanaged[Stdcall]<IntPtr, uint*, int>)Slot(collection, WebView2Vtable.ObjectCollection_get_Count);
+                if (WebView2Native.Failed(countFn(collection, &count))) return paths;
+
+                var atFn = (delegate* unmanaged[Stdcall]<IntPtr, uint, IntPtr*, int>)Slot(collection, WebView2Vtable.ObjectCollection_GetValueAtIndex);
+                for (uint i = 0; i < count; i++)
+                {
+                    IntPtr obj;
+                    if (WebView2Native.Failed(atFn(collection, i, &obj)) || obj == IntPtr.Zero) continue;
+                    try
+                    {
+                        var file = QueryInterface(obj, WebView2Native.IID_ICoreWebView2File);
+                        if (file == IntPtr.Zero) continue;
+                        try
+                        {
+                            IntPtr pathPtr;
+                            var pathFn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(file, WebView2Vtable.File_get_Path);
+                            if (WebView2Native.Failed(pathFn(file, &pathPtr)) || pathPtr == IntPtr.Zero) continue;
+                            var path = Marshal.PtrToStringUni(pathPtr);
+                            Marshal.FreeCoTaskMem(pathPtr);
+                            if (!string.IsNullOrEmpty(path)) paths.Add(path);
+                        }
+                        finally { Release(file); }
+                    }
+                    finally { Release(obj); }
+                }
+            }
+            finally { Release(collection); }
+        }
+        finally { Release(args2); }
+        return paths;
     }
 
     public static int NavCompletedArgs_get_IsSuccess(IntPtr args, out bool isSuccess)

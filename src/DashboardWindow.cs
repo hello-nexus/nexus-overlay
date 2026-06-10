@@ -754,10 +754,32 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             // dependency in this hot path.
             if (WebView2Native.Failed(Wv2.WebMsgArgs_TryGetWebMessageAsString(args, out var text)) || text is null)
                 return WebView2Native.S_OK;
+            // Gallery drop bridge: the page can't see dropped files' disk
+            // paths (web sandbox), but the host can — it reads them off the
+            // message's AdditionalObjects and posts them straight back; the
+            // page then registers them as sources over its own authed API.
+            // Must happen here while `args` is alive, not in HandleWindowAction.
+            if (text == "nexus:gallery-drop")
+            {
+                owner.HandleGalleryDrop(args);
+                return WebView2Native.S_OK;
+            }
             owner.HandleWindowAction(text);
         }
         catch (Exception ex) { Log.Error($"dashboard WebMessage: {ex.Message}"); }
         return WebView2Native.S_OK;
+    }
+
+    private void HandleGalleryDrop(IntPtr args)
+    {
+        var paths = Wv2.WebMsgArgs_GetAdditionalFilePaths(args);
+        Log.Info($"dashboard gallery-drop: {paths.Count} path(s) from AdditionalObjects");
+        if (_coreWebView2 == IntPtr.Zero) return;
+        var json = JsonSerializer.Serialize(
+            new GalleryDropPaths { Type = "nexus:gallery-drop-paths", Paths = paths },
+            DashboardBoundsJson.Default.GalleryDropPaths);
+        var hr = Wv2.Wv2_PostWebMessageAsJson(_coreWebView2, json);
+        if (WebView2Native.Failed(hr)) Log.Error($"dashboard gallery-drop post hr=0x{hr:X8}");
     }
 
     private void HandleWindowAction(string action)
@@ -1003,7 +1025,15 @@ internal sealed class SavedBounds
     public int H { get; set; }
 }
 
+/// <summary>Host → page reply carrying dropped files' real disk paths.</summary>
+internal sealed class GalleryDropPaths
+{
+    public string Type { get; set; } = "";
+    public System.Collections.Generic.List<string> Paths { get; set; } = new();
+}
+
 [System.Text.Json.Serialization.JsonSerializable(typeof(SavedBounds))]
+[System.Text.Json.Serialization.JsonSerializable(typeof(GalleryDropPaths))]
 [System.Text.Json.Serialization.JsonSourceGenerationOptions(PropertyNamingPolicy = System.Text.Json.Serialization.JsonKnownNamingPolicy.CamelCase)]
 internal partial class DashboardBoundsJson : System.Text.Json.Serialization.JsonSerializerContext
 {

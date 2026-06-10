@@ -58,6 +58,18 @@ internal static unsafe class WebView2Native
     public static readonly Guid IID_ICoreWebView2WebMessageReceivedEventArgs =
         new("0f99a40c-e962-4207-9e92-e3d542eff849");
 
+    // postMessageWithAdditionalObjects support (SDK 1.0.1518.46+): args2
+    // exposes the passed DOM objects; File entries surface their real disk
+    // path — the only way a web drop can become a path reference.
+    public static readonly Guid IID_ICoreWebView2WebMessageReceivedEventArgs2 =
+        new("06fc7ab7-c90c-4297-9389-33ca01cf6d5e");
+
+    public static readonly Guid IID_ICoreWebView2ObjectCollectionView =
+        new("0f36fd87-4f69-4415-98da-888f89fb9a33");
+
+    public static readonly Guid IID_ICoreWebView2File =
+        new("f2c19559-6bc1-4583-a757-90021be9afec");
+
     public static readonly Guid IID_ICoreWebView2NavigationCompletedEventHandler =
         new("d33a35bf-1c49-4f98-93ab-006e0533fe1c");
 

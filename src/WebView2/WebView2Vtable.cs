@@ -129,6 +129,16 @@ internal static class WebView2Vtable
     public const int WebMsgArgs_get_WebMessageAsJson = 4;
     public const int WebMsgArgs_TryGetWebMessageAsString = 5;
 
+    // ICoreWebView2WebMessageReceivedEventArgs2 (derives from the above).
+    public const int WebMsgArgs2_get_AdditionalObjects = 6;
+
+    // ICoreWebView2ObjectCollectionView (own methods 3..).
+    public const int ObjectCollection_get_Count = 3;
+    public const int ObjectCollection_GetValueAtIndex = 4;
+
+    // ICoreWebView2File (own methods 3..).
+    public const int File_get_Path = 3;
+
     // ICoreWebView2NavigationCompletedEventArgs (own methods 3..).
     public const int NavCompletedArgs_get_IsSuccess = 3;
     public const int NavCompletedArgs_get_WebErrorStatus = 4;
