@@ -24,6 +24,10 @@
          Windows-only and the test runner needs to load on Mac too. -->
     <Compile Include="..\..\src\RegionLayout.cs" Link="src\RegionLayout.cs" />
     <Compile Include="..\..\src\PanelGuardGeometry.cs" Link="src\PanelGuardGeometry.cs" />
+    <!-- DisplayIdentity's DllImport compiles anywhere; only ExtractStableId
+         (pure) is exercised here. -->
+    <Compile Include="..\..\src\DisplayIdentity.cs" Link="src\DisplayIdentity.cs" />
+    <Compile Include="..\..\src\MonitorKioskPlan.cs" Link="src\MonitorKioskPlan.cs" />
   </ItemGroup>
 
 </Project>

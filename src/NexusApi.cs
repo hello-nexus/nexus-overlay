@@ -64,6 +64,32 @@ internal sealed class NexusApi
             return new UiPrefs();
         }
     }
+
+    /// <summary>
+    /// Monitor-panel assignments (displayId -> panelDeviceId) driving the
+    /// per-monitor kiosk reconcile. Empty list on any failure — the caller
+    /// treats that as "close nothing new, spawn nothing" only when the
+    /// service is unreachable, so transient errors don't tear kiosks down.
+    /// Null = request failed; empty list = service says no assignments.
+    /// </summary>
+    public async Task<System.Collections.Generic.List<DisplayAssignment>?> GetDisplayAssignmentsAsync()
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, "/displays/assignments");
+            if (!string.IsNullOrEmpty(Token))
+                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Token);
+            using var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return null;
+            await using var stream = await resp.Content.ReadAsStreamAsync();
+            var doc = await JsonSerializer.DeserializeAsync(stream, ApiJson.Default.DisplayAssignmentsResponse);
+            return doc?.Assignments ?? new System.Collections.Generic.List<DisplayAssignment>();
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }
 
 internal sealed class PairResponse
@@ -128,12 +154,29 @@ internal sealed class PanelBlock
 /// </summary>
 internal sealed class OverlayLayoutEntry { }
 
+internal sealed class DisplayAssignment
+{
+    [JsonPropertyName("displayId")]
+    public string DisplayId { get; set; } = "";
+    [JsonPropertyName("panelDeviceId")]
+    public string PanelDeviceId { get; set; } = "";
+}
+
+internal sealed class DisplayAssignmentsResponse
+{
+    [JsonPropertyName("assignments")]
+    public System.Collections.Generic.List<DisplayAssignment> Assignments { get; set; } = new();
+}
+
 [JsonSerializable(typeof(PairResponse))]
 [JsonSerializable(typeof(UiPrefs))]
 [JsonSerializable(typeof(OverlayBlock))]
 [JsonSerializable(typeof(PanelBlock))]
 [JsonSerializable(typeof(OverlayLayoutEntry))]
 [JsonSerializable(typeof(System.Collections.Generic.List<OverlayLayoutEntry>))]
+[JsonSerializable(typeof(DisplayAssignment))]
+[JsonSerializable(typeof(DisplayAssignmentsResponse))]
+[JsonSerializable(typeof(System.Collections.Generic.List<DisplayAssignment>))]
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 internal partial class ApiJson : JsonSerializerContext
 {

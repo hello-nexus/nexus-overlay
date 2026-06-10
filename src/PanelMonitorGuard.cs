@@ -23,14 +23,20 @@ namespace Nexus.Overlay;
 /// </summary>
 internal sealed unsafe class PanelMonitorGuard : IDisposable
 {
-    // There is at most one kiosk, hence at most one guard. The WinEvent and
-    // EnumWindows callbacks must be static [UnmanagedCallersOnly] for AOT, so
-    // they route through this single static reference rather than a per-
-    // instance managed delegate (which NativeAOT cannot marshal).
-    private static PanelMonitorGuard? _current;
+    // One guard per kiosk window (Y70 kiosk + each promoted-monitor kiosk).
+    // The WinEvent and EnumWindows callbacks must be static
+    // [UnmanagedCallersOnly] for AOT, so they iterate this registry rather
+    // than a per-instance managed delegate (which NativeAOT cannot marshal).
+    // Each guard owns a distinct monitor, so a window is relocated by at
+    // most one of them; with N guards an event is evaluated N×N times, all
+    // cheap monitor-membership checks (N is the panel count, single digits).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, PanelMonitorGuard> _active = new();
+    private static int _nextGuardId;
+    private readonly int _guardId;
 
     private readonly IntPtr _kioskHwnd;
     private readonly IntPtr _panelMonitor;       // HMONITOR of the panel display
+    private readonly Native.RECT _panelBounds;   // for excluding this monitor as another guard's fallback
     private readonly uint _ownProcessId;
     private readonly bool _hasFallback;
     private readonly Native.RECT _fallbackWork;  // work area to relocate windows into
@@ -50,10 +56,12 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
         "#32768" /* menus */, "tooltips_class32", "ComboLBox",
     };
 
-    private PanelMonitorGuard(IntPtr kioskHwnd, IntPtr panelMonitor, Native.RECT fallbackWork, bool hasFallback)
+    private PanelMonitorGuard(IntPtr kioskHwnd, IntPtr panelMonitor, Native.RECT panelBounds, Native.RECT fallbackWork, bool hasFallback)
     {
+        _guardId = Interlocked.Increment(ref _nextGuardId);
         _kioskHwnd = kioskHwnd;
         _panelMonitor = panelMonitor;
+        _panelBounds = panelBounds;
         _fallbackWork = fallbackWork;
         _hasFallback = hasFallback;
         _ownProcessId = (uint)Environment.ProcessId;
@@ -69,21 +77,24 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
     {
         var panelMon = Native.MonitorFromWindow(kioskHwnd, Native.MONITOR_DEFAULTTONEAREST);
 
+        // Never relocate onto a monitor another guard already owns — that
+        // would shove windows under a topmost kiosk (and the guards would
+        // bounce them between each other).
         var monitors = Monitors.Enumerate();
         MonitorInfo? fallback = null;
         foreach (var m in monitors)
-            if (m.Index != panel.Index && m.Primary) { fallback = m; break; }
+            if (m.Index != panel.Index && m.Primary && !IsGuardedBounds(m.Bounds)) { fallback = m; break; }
         if (fallback is null)
             foreach (var m in monitors)
-                if (m.Index != panel.Index) { fallback = m; break; }
+                if (m.Index != panel.Index && !IsGuardedBounds(m.Bounds)) { fallback = m; break; }
 
         var guard = new PanelMonitorGuard(
-            kioskHwnd, panelMon, fallback?.WorkArea ?? default, fallback is not null);
-        _current = guard;
+            kioskHwnd, panelMon, panel.Bounds, fallback?.WorkArea ?? default, fallback is not null);
+        _active[guard._guardId] = guard;
 
         if (!guard._hasFallback)
         {
-            Log.Warn($"panel-guard: panel monitor (index={panel.Index}) is the only display; nothing to evict onto, guard idle");
+            Log.Warn($"panel-guard: no unguarded display to evict onto (panel index={panel.Index}); guard idle");
             return guard;
         }
 
@@ -91,6 +102,19 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
         guard.SweepExisting();
         Log.Info($"panel-guard started panelMon=0x{panelMon:X} fallbackWork={guard._fallbackWork.Left},{guard._fallbackWork.Top} {guard._fallbackWork.Width}x{guard._fallbackWork.Height}");
         return guard;
+    }
+
+    private static bool IsGuardedBounds(Native.RECT bounds)
+    {
+        foreach (var kv in _active)
+        {
+            var g = kv.Value;
+            if (g._disposed) continue;
+            var p = g._panelBounds;
+            if (p.Left == bounds.Left && p.Top == bounds.Top && p.Right == bounds.Right && p.Bottom == bounds.Bottom)
+                return true;
+        }
+        return false;
     }
 
     private void InstallHooks()
@@ -121,10 +145,13 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
             && ev != Native.EVENT_SYSTEM_MOVESIZEEND
             && ev != Native.EVENT_OBJECT_SHOW) return;
 
-        var g = _current;
-        if (g is null || g._disposed) return;
-        try { g.EvaluateAndEvict(hwnd); }
-        catch (Exception ex) { Log.Error($"panel-guard OnWinEvent: {ex.Message}"); }
+        foreach (var kv in _active)
+        {
+            var g = kv.Value;
+            if (g._disposed) continue;
+            try { g.EvaluateAndEvict(hwnd); }
+            catch (Exception ex) { Log.Error($"panel-guard OnWinEvent: {ex.Message}"); }
+        }
     }
 
     /// <summary>Evict anything already sitting on the panel when the guard
@@ -138,9 +165,10 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     private static int OnEnumWindow(IntPtr hwnd, IntPtr lParam)
     {
-        var g = _current;
-        if (g is not null && !g._disposed)
+        foreach (var kv in _active)
         {
+            var g = kv.Value;
+            if (g._disposed) continue;
             try { g.EvaluateAndEvict(hwnd); }
             catch (Exception ex) { Log.Error($"panel-guard sweep: {ex.Message}"); }
         }
@@ -227,7 +255,7 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
         // both happen on the message-loop thread (kiosk ctor / kiosk dispose).
         if (_hookSystem != IntPtr.Zero) { Native.UnhookWinEvent(_hookSystem); _hookSystem = IntPtr.Zero; }
         if (_hookObject != IntPtr.Zero) { Native.UnhookWinEvent(_hookObject); _hookObject = IntPtr.Zero; }
-        if (ReferenceEquals(_current, this)) _current = null;
+        _active.TryRemove(_guardId, out _);
         Log.Info("panel-guard disposed");
     }
 }

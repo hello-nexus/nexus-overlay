@@ -57,32 +57,47 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         _monitor = monitor;
         _navigationUrl = navigationUrl;
 
-        var b = monitor.Bounds;
-        // WS_EX_NOACTIVATE: touching the panel must not activate the kiosk.
-        // Without it, touch on this secondary monitor activates the window and
-        // Windows warps the system cursor to the contact point, stranding the
-        // pointer on the Y70. Matches the legacy HYTE app (focusable:false) and
-        // the sibling OverlayWindow.
-        Hwnd = Win32Window.Create(
-            WindowClassName,
-            WindowTitle,
-            Native.WS_POPUP,
-            (uint)(Native.WS_EX_TOOLWINDOW | Native.WS_EX_TOPMOST | Native.WS_EX_NOACTIVATE),
-            b.Left, b.Top, b.Width, b.Height,
-            this);
+        try
+        {
+            var b = monitor.Bounds;
+            // WS_EX_NOACTIVATE: touching the panel must not activate the kiosk.
+            // Without it, touch on this secondary monitor activates the window and
+            // Windows warps the system cursor to the contact point, stranding the
+            // pointer on the Y70. Matches the legacy HYTE app (focusable:false) and
+            // the sibling OverlayWindow.
+            Hwnd = Win32Window.Create(
+                WindowClassName,
+                WindowTitle,
+                Native.WS_POPUP,
+                (uint)(Native.WS_EX_TOOLWINDOW | Native.WS_EX_TOPMOST | Native.WS_EX_NOACTIVATE),
+                b.Left, b.Top, b.Width, b.Height,
+                this);
 
-        Log.Info($"panel-kiosk ctor monitor={monitor.Index} bounds={b.Left},{b.Top},{b.Width}x{b.Height} hwnd=0x{Hwnd:X} url={navigationUrl}");
+            Log.Info($"panel-kiosk ctor monitor={monitor.Index} bounds={b.Left},{b.Top},{b.Width}x{b.Height} hwnd=0x{Hwnd:X} url={navigationUrl}");
 
-        // Show the window before WebView2 attaches; the controller paints
-        // over it once init finishes.
-        Native.ShowWindow(Hwnd, Native.SW_SHOWNOACTIVATE);
-        StartWebView2Init();
+            // Show the window before WebView2 attaches; the controller paints
+            // over it once init finishes.
+            Native.ShowWindow(Hwnd, Native.SW_SHOWNOACTIVATE);
+            StartWebView2Init();
 
-        // When reserveMonitor is on, guard the panel monitor: relocate any
-        // foreign window that comes to rest there. Toggled live via
-        // SetMonitorGuard; torn down with the kiosk in Dispose.
-        SetMonitorGuard(guardMonitor);
+            // When reserveMonitor is on, guard the panel monitor: relocate any
+            // foreign window that comes to rest there. Toggled live via
+            // SetMonitorGuard; torn down with the kiosk in Dispose.
+            SetMonitorGuard(guardMonitor);
+        }
+        catch
+        {
+            // A throw mid-ctor (e.g. WebView2 loader missing) would otherwise
+            // leak the already-shown fullscreen topmost HWND with no owner to
+            // dispose it — a permanent black window.
+            Dispose();
+            throw;
+        }
     }
+
+    /// <summary>Monitor bounds this kiosk was created for (reconcile compares
+    /// against fresh enumeration to catch arrangement/resolution changes).</summary>
+    public Native.RECT MonitorBounds => _monitor.Bounds;
 
     /// <summary>
     /// Turn the foreign-window guard on or off on the live kiosk. Idempotent:

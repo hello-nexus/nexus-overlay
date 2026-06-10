@@ -31,6 +31,9 @@ internal static class Program
     private static readonly List<OverlayWindow> Overlays = new();
     private static DashboardWindow? _dashboard;
     private static PanelKioskWindow? _panelKiosk;
+    // Kiosks for user-promoted monitors, reconciled from /displays/assignments.
+    // Distinct from _panelKiosk (the auto-detected Y70).
+    private static MonitorKioskManager? _monitorKiosks;
     private static uint _showDashboardMsg;
     private static uint _showPanelKioskMsg;
     private static uint _hidePanelKioskMsg;
@@ -119,6 +122,9 @@ internal static class Program
 
         var prefs = _api.GetPreferencesAsync().GetAwaiter().GetResult();
         Log.Info($"prefs enabled={prefs.Overlay.Enabled} pinned={prefs.Overlay.Layout.Count} alwaysOnTop={prefs.Overlay.AlwaysOnTop} monitor={prefs.Overlay.Monitor}");
+        // Same no-sync-context rule as pair/prefs: fetch the initial monitor
+        // assignments before the message loop exists.
+        var initialAssignments = _api.GetDisplayAssignmentsAsync().GetAwaiter().GetResult();
         _lastPolledShouldShow = ShouldShowOverlays(prefs);
         _lastPolledAlwaysOnTop = prefs.Overlay.AlwaysOnTop;
         _lastPolledMonitorIndex = prefs.Overlay.Monitor;
@@ -184,6 +190,15 @@ internal static class Program
             catch (Exception ex) { Log.Error($"startup MaybeShowPanelKiosk: {ex.Message}"); }
         }
 
+        // Promoted-monitor kiosks: one fullscreen window per assignment.
+        // Independent of panel.autoLaunch (that toggle is the Y70 kiosk's).
+        _monitorKiosks = new MonitorKioskManager(ServiceOrigin);
+        if (initialAssignments is { Count: > 0 })
+        {
+            try { _monitorKiosks.Reconcile(initialAssignments, _pairedToken, _lastPolledReserveMonitor); }
+            catch (Exception ex) { Log.Error($"startup monitor-kiosk reconcile: {ex.Message}"); }
+        }
+
         // Arm the idle-exit timer only if nothing landed on screen. With any
         // of overlays/kiosk/dashboard up, IsIdle returns false and the call
         // no-ops.
@@ -199,8 +214,10 @@ internal static class Program
 
         var result = MessageLoop.Run(_syncContext);
 
-        // Cleanup: dispose kiosk, then dashboard, then per-monitor overlays.
+        // Cleanup: dispose kiosks, then dashboard, then per-monitor overlays.
         Native.KillTimer(_marshalerHwnd, TIMER_PREFS_POLL);
+        _monitorKiosks?.CloseAll();
+        _monitorKiosks = null;
         _panelKiosk?.Dispose();
         _panelKiosk = null;
         _dashboard?.Dispose();
@@ -286,6 +303,10 @@ internal static class Program
             return false;
         }
         if (_panelKiosk is not null && _panelKiosk.Hwnd != IntPtr.Zero)
+        {
+            return false;
+        }
+        if (_monitorKiosks is { Count: > 0 })
         {
             return false;
         }
@@ -407,11 +428,50 @@ internal static class Program
                 _ = PollPrefsAsync();
                 return IntPtr.Zero;
             }
+            if (msg == Native.WM_DISPLAYCHANGE)
+            {
+                // Monitor hot-plug / arrangement change: re-reconcile so a
+                // kiosk on an unplugged monitor closes (and a replugged
+                // assigned monitor respawns) without waiting for the poll.
+                _ = PollPrefsAsync();
+                return IntPtr.Zero;
+            }
             return null;
         }
     }
 
+    // Poll coalescing: the timer, the PrefsChanged push, and WM_DISPLAYCHANGE
+    // (often delivered several times per topology change) all fire-and-forget
+    // PollPrefsAsync, and its awaits interleave on the message-loop thread. An
+    // older poll's response landing after a newer poll's reconcile would apply
+    // a stale assignments snapshot; serialize instead and re-run once if a
+    // trigger arrived mid-flight. Both flags only touch the loop thread.
+    private static bool _pollInFlight;
+    private static bool _pollRequeued;
+
     private static async System.Threading.Tasks.Task PollPrefsAsync()
+    {
+        if (_pollInFlight)
+        {
+            _pollRequeued = true;
+            return;
+        }
+        _pollInFlight = true;
+        try
+        {
+            do
+            {
+                _pollRequeued = false;
+                await PollPrefsOnceAsync();
+            } while (_pollRequeued);
+        }
+        finally
+        {
+            _pollInFlight = false;
+        }
+    }
+
+    private static async System.Threading.Tasks.Task PollPrefsOnceAsync()
     {
         if (_api is null) return;
         try
@@ -434,7 +494,23 @@ internal static class Program
             {
                 _lastPolledReserveMonitor = latest.Panel.ReserveMonitor;
                 _panelKiosk?.SetMonitorGuard(_lastPolledReserveMonitor);
+                _monitorKiosks?.SetMonitorGuardAll(_lastPolledReserveMonitor);
                 Log.Info($"prefs poll: reserveMonitor -> {_lastPolledReserveMonitor}");
+            }
+
+            // Reconcile promoted-monitor kiosks against the service's
+            // assignment list. A null fetch (service hiccup) keeps current
+            // kiosks untouched rather than tearing them down.
+            if (_monitorKiosks is not null)
+            {
+                var assignments = await _api.GetDisplayAssignmentsAsync();
+                if (assignments is not null)
+                {
+                    var hadKiosks = _monitorKiosks.Count > 0;
+                    _monitorKiosks.Reconcile(assignments, _pairedToken, _lastPolledReserveMonitor);
+                    if (_monitorKiosks.Count > 0) DisarmIdleExitTimer();
+                    else if (hadKiosks) MaybeArmIdleExitTimer();
+                }
             }
 
             // "Should overlays be visible?" = toggle on AND at least one
