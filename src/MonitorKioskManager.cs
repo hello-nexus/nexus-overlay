@@ -13,7 +13,12 @@ namespace Nexus.Overlay;
 /// </summary>
 internal sealed class MonitorKioskManager
 {
-    private sealed record KioskEntry(PanelKioskWindow Window, string PanelDeviceId);
+    private sealed class KioskEntry
+    {
+        public required PanelKioskWindow Window { get; init; }
+        public required string PanelDeviceId { get; init; }
+        public required bool Reserve { get; set; }
+    }
 
     private readonly string _serviceOrigin;
     private readonly Dictionary<string, KioskEntry> _kiosks = new(StringComparer.Ordinal);
@@ -25,7 +30,7 @@ internal sealed class MonitorKioskManager
 
     public int Count => _kiosks.Count;
 
-    public void Reconcile(IReadOnlyList<DisplayAssignment> assignments, string pairedToken, bool guardMonitor)
+    public void Reconcile(IReadOnlyList<DisplayAssignment> assignments, string pairedToken)
     {
         var monitors = Monitors.Enumerate();
         var byDisplayId = new Dictionary<string, MonitorInfo>(StringComparer.Ordinal);
@@ -37,10 +42,12 @@ internal sealed class MonitorKioskManager
         }
 
         var assignmentMap = new Dictionary<string, string>(StringComparer.Ordinal);
+        var reserveById = new Dictionary<string, bool>(StringComparer.Ordinal);
         foreach (var assignment in assignments)
         {
-            if (!string.IsNullOrEmpty(assignment.DisplayId) && !string.IsNullOrEmpty(assignment.PanelDeviceId))
-                assignmentMap[assignment.DisplayId] = assignment.PanelDeviceId;
+            if (string.IsNullOrEmpty(assignment.DisplayId) || string.IsNullOrEmpty(assignment.PanelDeviceId)) continue;
+            assignmentMap[assignment.DisplayId] = assignment.PanelDeviceId;
+            reserveById[assignment.DisplayId] = assignment.ReserveMonitor;
         }
 
         // Arrangement/resolution changes don't alter the attached-id set, so
@@ -76,14 +83,29 @@ internal sealed class MonitorKioskManager
             if (!byDisplayId.TryGetValue(entry.DisplayId, out var monitor)) continue;
             try
             {
+                var reserve = reserveById.TryGetValue(entry.DisplayId, out var r) ? r : true;
                 var url = $"{_serviceOrigin}/panel/{Uri.EscapeDataString(entry.PanelDeviceId)}?token={Uri.EscapeDataString(pairedToken)}";
-                _kiosks[entry.DisplayId] = new KioskEntry(new PanelKioskWindow(monitor, url, guardMonitor), entry.PanelDeviceId);
-                Log.Info($"monitor-kiosk opened display={entry.DisplayId} device={entry.PanelDeviceId} monitor={monitor.Index}");
+                _kiosks[entry.DisplayId] = new KioskEntry
+                {
+                    Window = new PanelKioskWindow(monitor, url, reserve),
+                    PanelDeviceId = entry.PanelDeviceId,
+                    Reserve = reserve,
+                };
+                Log.Info($"monitor-kiosk opened display={entry.DisplayId} device={entry.PanelDeviceId} monitor={monitor.Index} guard={reserve}");
             }
             catch (Exception ex)
             {
                 Log.Error($"monitor-kiosk spawn {entry.DisplayId}: {ex.Message}");
             }
+        }
+
+        // Per-panel reserve toggled on a live kiosk: flip the guard in place.
+        foreach (var (displayId, entry) in _kiosks)
+        {
+            if (!reserveById.TryGetValue(displayId, out var reserve) || reserve == entry.Reserve) continue;
+            entry.Reserve = reserve;
+            try { entry.Window.SetMonitorGuard(reserve); } catch { /* best-effort */ }
+            Log.Info($"monitor-kiosk guard display={displayId} -> {reserve}");
         }
     }
 
@@ -97,14 +119,6 @@ internal sealed class MonitorKioskManager
 
     private static bool SameBounds(Native.RECT a, Native.RECT b)
         => a.Left == b.Left && a.Top == b.Top && a.Right == b.Right && a.Bottom == b.Bottom;
-
-    public void SetMonitorGuardAll(bool enabled)
-    {
-        foreach (var entry in _kiosks.Values)
-        {
-            try { entry.Window.SetMonitorGuard(enabled); } catch { /* best-effort */ }
-        }
-    }
 
     public void CloseAll()
     {

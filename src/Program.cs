@@ -195,7 +195,7 @@ internal static class Program
         _monitorKiosks = new MonitorKioskManager(ServiceOrigin);
         if (initialAssignments is { Count: > 0 })
         {
-            try { _monitorKiosks.Reconcile(initialAssignments, _pairedToken, _lastPolledReserveMonitor); }
+            try { _monitorKiosks.Reconcile(initialAssignments, _pairedToken); }
             catch (Exception ex) { Log.Error($"startup monitor-kiosk reconcile: {ex.Message}"); }
         }
 
@@ -486,15 +486,13 @@ internal static class Program
             if (latest.Panel.AutoLaunch && !kioskUp) MaybeShowPanelKiosk();
             else if (!latest.Panel.AutoLaunch && kioskUp) ClosePanelKiosk();
 
-            // Toggle the monitor guard on the live kiosk when reserveMonitor
-            // flips. The service pushes PrefsChanged on any settings write, so
-            // this runs promptly off that signal — no extra poll. Track the
-            // value even when no kiosk is up so the next launch picks it up.
+            // Toggle the Y70 kiosk's monitor guard when the global
+            // reserveMonitor pref flips. Promoted-monitor kiosks carry their
+            // own per-panel reserve on the assignment (handled in Reconcile).
             if (latest.Panel.ReserveMonitor != _lastPolledReserveMonitor)
             {
                 _lastPolledReserveMonitor = latest.Panel.ReserveMonitor;
                 _panelKiosk?.SetMonitorGuard(_lastPolledReserveMonitor);
-                _monitorKiosks?.SetMonitorGuardAll(_lastPolledReserveMonitor);
                 Log.Info($"prefs poll: reserveMonitor -> {_lastPolledReserveMonitor}");
             }
 
@@ -507,7 +505,7 @@ internal static class Program
                 if (assignments is not null)
                 {
                     var hadKiosks = _monitorKiosks.Count > 0;
-                    _monitorKiosks.Reconcile(assignments, _pairedToken, _lastPolledReserveMonitor);
+                    _monitorKiosks.Reconcile(assignments, _pairedToken);
                     if (_monitorKiosks.Count > 0) DisarmIdleExitTimer();
                     else if (hadKiosks) MaybeArmIdleExitTimer();
                 }

@@ -160,6 +160,9 @@ internal sealed class DisplayAssignment
     public string DisplayId { get; set; } = "";
     [JsonPropertyName("panelDeviceId")]
     public string PanelDeviceId { get; set; } = "";
+    /// <summary>Per-panel "keep clear of other windows" (record setting; default on).</summary>
+    [JsonPropertyName("reserveMonitor")]
+    public bool ReserveMonitor { get; set; } = true;
 }
 
 internal sealed class DisplayAssignmentsResponse
