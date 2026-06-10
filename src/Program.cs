@@ -34,6 +34,8 @@ internal static class Program
     // Kiosks for user-promoted monitors, reconciled from /displays/assignments.
     // Distinct from _panelKiosk (the auto-detected Y70).
     private static MonitorKioskManager? _monitorKiosks;
+    // Consecutive /displays/assignments failures (message-loop thread only).
+    private static int _assignmentFetchFailures;
     private static uint _showDashboardMsg;
     private static uint _showPanelKioskMsg;
     private static uint _hidePanelKioskMsg;
@@ -497,17 +499,38 @@ internal static class Program
             }
 
             // Reconcile promoted-monitor kiosks against the service's
-            // assignment list. A null fetch (service hiccup) keeps current
-            // kiosks untouched rather than tearing them down.
+            // assignment list. A single failed fetch (service hiccup) keeps
+            // current kiosks untouched, but a persistently unreachable
+            // service must NOT leave a dead panel painted forever: re-pair
+            // once (the token churns if settings were reset), and after
+            // three consecutive failures (~15s of polls) close the kiosks —
+            // they respawn from assignments when the service returns.
             if (_monitorKiosks is not null)
             {
                 var assignments = await _api.GetDisplayAssignmentsAsync();
+                if (assignments is null)
+                {
+                    var refreshed = await _api.PairAsync();
+                    if (!string.IsNullOrEmpty(refreshed))
+                    {
+                        _pairedToken = refreshed;
+                        assignments = await _api.GetDisplayAssignmentsAsync();
+                    }
+                }
                 if (assignments is not null)
                 {
+                    _assignmentFetchFailures = 0;
                     var hadKiosks = _monitorKiosks.Count > 0;
                     _monitorKiosks.Reconcile(assignments, _pairedToken);
                     if (_monitorKiosks.Count > 0) DisarmIdleExitTimer();
                     else if (hadKiosks) MaybeArmIdleExitTimer();
+                }
+                else if (_monitorKiosks.Count > 0 && ++_assignmentFetchFailures >= 3)
+                {
+                    Log.Warn($"assignments unreachable {_assignmentFetchFailures}x; closing monitor kiosks");
+                    _assignmentFetchFailures = 0;
+                    _monitorKiosks.CloseAll();
+                    MaybeArmIdleExitTimer();
                 }
             }
 
