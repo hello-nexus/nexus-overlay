@@ -77,6 +77,10 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     private long _webMessageToken;
     private bool _disposed;
     private bool _saveOnClose;
+    // Resolved in-app (dashboard) theme, pushed by the page via the
+    // "nexus:theme-dark" / "nexus:theme-light" web message. Drives the
+    // immersive/Mica theme so it follows the app theme, not the OS theme.
+    private bool _appDark;
 
     public DashboardWindow(string navigationUrl)
     {
@@ -111,11 +115,12 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             Native.SendMessageW(Hwnd, Native.WM_SETICON, (IntPtr)Native.ICON_BIG, hIcon);
         }
 
-        // Apply the system theme to the non-client (caption + frame) area
-        // so the title bar reads dark when the user is on a dark theme,
-        // matching first-party Win11 apps. The SPA handles its own dark
-        // mode via prefers-color-scheme.
-        ApplyImmersiveTheme(Hwnd, IsSystemDarkMode());
+        // Apply the immersive theme to the non-client (caption + frame) area.
+        // Seed from the OS theme as a sane default; the page overrides it via
+        // the "nexus:theme-dark" / "nexus:theme-light" web message so the
+        // immersive/Mica theme follows the in-app theme, not the OS theme.
+        _appDark = IsSystemDarkMode();
+        ApplyImmersiveTheme(Hwnd, _appDark);
 
         // Windows 11 Mica system backdrop behind the (transparent) WebView2.
         ApplyMicaBackdrop();
@@ -143,18 +148,17 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
     private static void ApplyCustomFrameMargins(IntPtr hwnd)
     {
-        // Top margin = system caption height in physical pixels so DWM
-        // paints the min / max / close buttons in their default location.
-        // 0 on left / right / bottom because the frame extension is only
-        // about preserving the top caption buttons; the rest of the window
-        // is plain client area handled by the WebView2.
-        var dpi = Native.GetDpiForWindow(hwnd);
-        int topPx = (int)Math.Round(CustomTitleBarHeightLogical * (dpi / 96.0));
+        // Frame is no longer extended for the native caption buttons: the web
+        // draws its own min / max / close, and a caption-height top margin makes
+        // DWM paint duplicate system buttons through the transparent (Mica)
+        // WebView2. A 1px top margin is too thin for DWM to paint caption buttons
+        // into, but keeps a sliver of extended frame so the window still casts
+        // its DWM drop shadow.
         var margins = new Native.MARGINS
         {
             cxLeftWidth = 0,
             cxRightWidth = 0,
-            cyTopHeight = topPx,
+            cyTopHeight = 1,
             cyBottomHeight = 0,
         };
         var hr = Native.DwmExtendFrameIntoClientArea(hwnd, in margins);
@@ -280,9 +284,10 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     public void ShowAndFocus()
     {
         if (Hwnd == IntPtr.Zero) return;
-        // Re-read theme in case the user toggled light/dark since the window
-        // last applied it, which would otherwise paint stale on show.
-        ApplyImmersiveTheme(Hwnd, IsSystemDarkMode());
+        // Re-apply the last app-resolved theme in case the page pushed a new
+        // one while the window was hidden, which would otherwise paint stale
+        // on show.
+        ApplyImmersiveTheme(Hwnd, _appDark);
         ApplyMicaBackdrop();
         if (Native.IsIconic(Hwnd))
         {
@@ -767,6 +772,15 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             if (text == "nexus:request-system-accent")
             {
                 owner.PostSystemAccent();
+                return WebView2Native.S_OK;
+            }
+            // The page pushes its resolved theme so the immersive/Mica frame
+            // follows the in-app theme instead of the Windows OS theme.
+            if (text == "nexus:theme-dark" || text == "nexus:theme-light")
+            {
+                owner._appDark = text == "nexus:theme-dark";
+                ApplyImmersiveTheme(owner.Hwnd, owner._appDark);
+                owner.ApplyMicaBackdrop();
                 return WebView2Native.S_OK;
             }
             owner.HandleWindowAction(text);
