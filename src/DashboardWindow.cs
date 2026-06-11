@@ -48,12 +48,11 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     private const int TopResizeGrabLogical = 4;
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 2;
     private const int PermissionStateDeny = 2;
-    // Background ARGB the WebView2 controller paints behind the page until
-    // the SPA's CSS background takes over. Matches the nexus-web dark theme
-    // --bg (#0a0a0a) so the resize-to-repaint flash blends instead of
-    // flashing white. App is dark-mode-first; light-mode shows a brief dark
-    // flash.
-    private const uint DefaultBgArgbDark = 0xFF0A0A0Au;
+    // Fully-transparent ARGB for the WebView2 controller's default backdrop
+    // so the DWM Mica system backdrop shows through wherever the page paints
+    // transparent. The nexus-web page renders a transparent backdrop in the
+    // Windows shell, so this lets Mica be the window background.
+    private const uint DefaultBgTransparent = 0x00000000u;
 
     private static readonly ConcurrentDictionary<int, DashboardWindow> _instances = new();
     private static int _nextInstanceId;
@@ -65,9 +64,6 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     private IntPtr _env;
     private IntPtr _envCreatedHandler;
     private IntPtr _ctrlCreatedHandler;
-    private System.Threading.Thread? _wallpaperWatchThread;
-    private IntPtr _wallpaperWatchEvent;
-    private volatile bool _wallpaperWatchStop;
     private IntPtr _navStartingHandler;
     private IntPtr _newWindowHandler;
     private IntPtr _permissionHandler;
@@ -90,13 +86,6 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
         var (x, y, w, h) = ResolveInitialBounds();
 
-        // Pre-paint the client area with a dark brush that matches the
-        // SPA's --bg so the brief flash during fast resizes doesn't
-        // show as white (the default system COLOR_WINDOW). The brush
-        // is cached for the lifetime of the process - we never
-        // DeleteObject it because the class registration is permanent.
-        var bgBrush = GetOrCreateDarkBrush();
-
         // Load the Nexus app icon from the installed .ico for the taskbar /
         // Alt+Tab. No visible title bar, so the system can't infer one; load
         // explicitly.
@@ -109,7 +98,8 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             0u,
             x, y, w, h,
             this,
-            bgBrush,
+            IntPtr.Zero, // no class background brush: an opaque client brush
+                         // would paint over the Mica system backdrop
             hIcon);
 
         // Also attach the icon to the window via WM_SETICON. This guarantees
@@ -126,6 +116,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         // matching first-party Win11 apps. The SPA handles its own dark
         // mode via prefers-color-scheme.
         ApplyImmersiveTheme(Hwnd, IsSystemDarkMode());
+
+        // Windows 11 Mica system backdrop behind the (transparent) WebView2.
+        ApplyMicaBackdrop();
 
         // Custom title bar: extend the DWM frame into the client area so
         // the system caption buttons (min / max / close) stay painted at
@@ -215,16 +208,6 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         return barMonitor == monitor;
     }
 
-    private static IntPtr _darkBrush;
-    private static IntPtr GetOrCreateDarkBrush()
-    {
-        if (_darkBrush != IntPtr.Zero) return _darkBrush;
-        // COLORREF for GDI is 0x00BBGGRR; 0x0a0a0a in either order is
-        // 0x000A0A0A, the same byte. Matches DefaultBgArgbDark sans alpha.
-        _darkBrush = Native.CreateSolidBrush(0x000A0A0Au);
-        return _darkBrush;
-    }
-
     private static IntPtr TryLoadAppIcon()
     {
         // nexus-overlay.exe lives at ...\Nexus\overlay\; nexus-service drops
@@ -273,6 +256,15 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         }
     }
 
+    // Request the Windows 11 Mica system backdrop (DWMSBT_MAINWINDOW) behind
+    // the extended frame. No-op on Win10 / pre-22000, where the call just
+    // returns a nonzero HRESULT we ignore.
+    private void ApplyMicaBackdrop()
+    {
+        int backdrop = Native.DWMSBT_MAINWINDOW;
+        Native.DwmSetWindowAttribute(Hwnd, Native.DWMWA_SYSTEMBACKDROP_TYPE, backdrop, sizeof(int));
+    }
+
     private static bool IsSystemDarkMode()
     {
         try
@@ -291,6 +283,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         // Re-read theme in case the user toggled light/dark since the window
         // last applied it, which would otherwise paint stale on show.
         ApplyImmersiveTheme(Hwnd, IsSystemDarkMode());
+        ApplyMicaBackdrop();
         if (Native.IsIconic(Hwnd))
         {
             Native.ShowWindow(Hwnd, Native.SW_RESTORE);
@@ -363,18 +356,8 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 }
                 return IntPtr.Zero;
 
-            case Native.WM_MOVING:
-                // During the drag, before the move applies — ~1 frame earlier
-                // than WM_MOVE, so the screen-anchored backdrop lags less.
-                if (lParam != IntPtr.Zero)
-                {
-                    PostWindowOrigin(*(Native.RECT*)lParam);
-                }
-                return null;
-
             case Native.WM_MOVE:
                 _saveOnClose = true;
-                PostWindowOrigin();
                 return IntPtr.Zero;
 
             case Native.WM_GETMINMAXINFO:
@@ -409,19 +392,6 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             case Native.WM_DWMCOLORIZATIONCOLORCHANGED:
                 // System accent / colorization changed — push the new accent.
                 PostSystemAccent();
-                return IntPtr.Zero;
-
-            case Native.WM_SETTINGCHANGE:
-                // Desktop wallpaper changed — tell the page to re-fetch it.
-                if (wParam.ToInt32() == Native.SPI_SETDESKWALLPAPER)
-                {
-                    PostWallpaperChanged();
-                }
-                return IntPtr.Zero;
-
-            case Native.WM_APP_WALLPAPER:
-                // Posted by the registry watch thread when HKCU\…\Desktop changed.
-                PostWallpaperChanged();
                 return IntPtr.Zero;
 
             case Native.WM_CLOSE:
@@ -630,13 +600,12 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         Wv2.AddRef(controller);
         _controller = controller;
 
-        // Match the nexus-web dark theme --bg so the WebView2's default
-        // backdrop doesn't flash white during resize / before the page
-        // first paints.
+        // Transparent default backdrop so the DWM Mica system backdrop shows
+        // through wherever the page paints transparent.
         _controller2 = Wv2.QueryInterface(controller, Wv2.IID_ICoreWebView2Controller2);
         if (_controller2 != IntPtr.Zero)
         {
-            Wv2.Ctrl2_put_DefaultBackgroundColor(_controller2, DefaultBgArgbDark);
+            Wv2.Ctrl2_put_DefaultBackgroundColor(_controller2, DefaultBgTransparent);
         }
 
         Native.GetClientRect(Hwnd, out var rc);
@@ -718,7 +687,6 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         Native.ShowWindow(Hwnd, Native.SW_SHOWNORMAL);
         Native.BringWindowToTop(Hwnd);
         Native.SetForegroundWindow(Hwnd);
-        StartWallpaperWatch();
     }
 
     // ===================== Feature-parity event handlers =====================
@@ -796,11 +764,6 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 owner.HandleGalleryDrop(args);
                 return WebView2Native.S_OK;
             }
-            if (text == "nexus:request-window-origin")
-            {
-                owner.PostWindowOrigin();
-                return WebView2Native.S_OK;
-            }
             if (text == "nexus:request-system-accent")
             {
                 owner.PostSystemAccent();
@@ -822,93 +785,6 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             DashboardBoundsJson.Default.GalleryDropPaths);
         var hr = Wv2.Wv2_PostWebMessageAsJson(_coreWebView2, json);
         if (WebView2Native.Failed(hr)) Log.Error($"dashboard gallery-drop post hr=0x{hr:X8}");
-    }
-
-    // Pushes the window's content origin + monitor size (CSS px, DPI-scaled) to
-    // the page so the "wallpaper" background can be anchored to the desktop
-    // rather than the window (faked Mica). Sent on every WM_MOVE and on the
-    // page's request after mount.
-    // rect = the proposed window rect (WM_MOVING, before the move applies) so the
-    // backdrop updates ~a frame earlier; null = read the current rect (WM_MOVE).
-    private void PostWindowOrigin(Native.RECT? rect = null)
-    {
-        if (_coreWebView2 == IntPtr.Zero) return;
-        Native.RECT wr;
-        if (rect.HasValue) wr = rect.Value;
-        else if (!Native.GetWindowRect(Hwnd, out wr)) return;
-        uint dpi = Native.GetDpiForWindow(Hwnd);
-        double scale = dpi == 0 ? 1.0 : dpi / 96.0;
-        var mon = Native.MonitorFromWindow(Hwnd, Native.MONITOR_DEFAULTTONEAREST);
-        var mi = new Native.MonitorInfoNative { cbSize = Marshal.SizeOf<Native.MonitorInfoNative>() };
-        if (!Native.GetMonitorInfoW(mon, ref mi)) return;
-        var origin = new WindowOrigin
-        {
-            Type = "nexus:window-origin",
-            X = (wr.Left - mi.rcMonitor.Left) / scale,
-            Y = (wr.Top - mi.rcMonitor.Top) / scale,
-            W = mi.rcMonitor.Width / scale,
-            H = mi.rcMonitor.Height / scale,
-        };
-        var json = JsonSerializer.Serialize(origin, DashboardBoundsJson.Default.WindowOrigin);
-        var hr = Wv2.Wv2_PostWebMessageAsJson(_coreWebView2, json);
-        if (WebView2Native.Failed(hr)) Log.Error($"dashboard window-origin post hr=0x{hr:X8}");
-    }
-
-    // Tells the page to re-fetch the wallpaper after the OS desktop wallpaper
-    // changed (WM_SETTINGCHANGE / SPI_SETDESKWALLPAPER).
-    private void PostWallpaperChanged()
-    {
-        if (_coreWebView2 == IntPtr.Zero) return;
-        var json = JsonSerializer.Serialize(
-            new HostSignal { Type = "nexus:wallpaper-changed" }, DashboardBoundsJson.Default.HostSignal);
-        Wv2.Wv2_PostWebMessageAsJson(_coreWebView2, json);
-    }
-
-    // Watches HKCU\Control Panel\Desktop (where the wallpaper path lives) and
-    // posts WM_APP_WALLPAPER to the UI thread on any change — reliable across the
-    // Settings app / slideshow / right-click paths where WM_SETTINGCHANGE isn't
-    // broadcast. Event-driven (blocks on a notify event), no polling.
-    private void StartWallpaperWatch()
-    {
-        if (_wallpaperWatchThread != null) return;
-        _wallpaperWatchEvent = Native.CreateEventW(IntPtr.Zero, false, false, null);
-        if (_wallpaperWatchEvent == IntPtr.Zero) return;
-        _wallpaperWatchThread = new System.Threading.Thread(WallpaperWatchLoop)
-        {
-            IsBackground = true,
-            Name = "nexus-wallpaper-watch",
-        };
-        _wallpaperWatchThread.Start();
-    }
-
-    private void WallpaperWatchLoop()
-    {
-        // The notify event is owned + closed by Dispose (which joins this thread
-        // first), not here — so the open-failure return below can't leak it, and
-        // there's no cross-thread close race against Dispose's SetEvent.
-        if (Native.RegOpenKeyExW(Native.HKEY_CURRENT_USER, @"Control Panel\Desktop", 0,
-                Native.KEY_NOTIFY, out var hKey) != 0)
-        {
-            return;
-        }
-        try
-        {
-            while (!_wallpaperWatchStop)
-            {
-                if (Native.RegNotifyChangeKeyValue(hKey, false, Native.REG_NOTIFY_CHANGE_LAST_SET,
-                        _wallpaperWatchEvent, true) != 0)
-                {
-                    break;
-                }
-                Native.WaitForSingleObject(_wallpaperWatchEvent, Native.INFINITE);
-                if (_wallpaperWatchStop) break;
-                Native.PostMessageW(Hwnd, Native.WM_APP_WALLPAPER, IntPtr.Zero, IntPtr.Zero);
-            }
-        }
-        finally
-        {
-            Native.RegCloseKey(hKey);
-        }
     }
 
     // Reads the user's Windows accent colour and pushes it to the page (for the
@@ -1128,21 +1004,6 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        // Wake + join the wallpaper-watch thread, then free its event. Joining
-        // before CloseHandle avoids racing the thread's RegNotify/Wait on the
-        // handle; nulling the thread lets a later reopen restart the watcher.
-        _wallpaperWatchStop = true;
-        if (_wallpaperWatchEvent != IntPtr.Zero)
-        {
-            Native.SetEvent(_wallpaperWatchEvent);
-        }
-        _wallpaperWatchThread?.Join(2000);
-        _wallpaperWatchThread = null;
-        if (_wallpaperWatchEvent != IntPtr.Zero)
-        {
-            Native.CloseHandle(_wallpaperWatchEvent);
-            _wallpaperWatchEvent = IntPtr.Zero;
-        }
         _instances.TryRemove(_instanceId, out _);
         try
         {
@@ -1202,23 +1063,6 @@ internal sealed class GalleryDropPaths
     public System.Collections.Generic.List<string> Paths { get; set; } = new();
 }
 
-/// <summary>Host → page: window content origin + monitor size in CSS px, for
-/// anchoring the wallpaper background to the desktop (faked Mica).</summary>
-internal sealed class WindowOrigin
-{
-    public string Type { get; set; } = "";
-    public double X { get; set; }
-    public double Y { get; set; }
-    public double W { get; set; }
-    public double H { get; set; }
-}
-
-/// <summary>Host → page: bare notification (e.g. wallpaper changed).</summary>
-internal sealed class HostSignal
-{
-    public string Type { get; set; } = "";
-}
-
 /// <summary>Host → page: the OS accent colour as #RRGGBB.</summary>
 internal sealed class SystemAccent
 {
@@ -1228,8 +1072,6 @@ internal sealed class SystemAccent
 
 [System.Text.Json.Serialization.JsonSerializable(typeof(SavedBounds))]
 [System.Text.Json.Serialization.JsonSerializable(typeof(GalleryDropPaths))]
-[System.Text.Json.Serialization.JsonSerializable(typeof(WindowOrigin))]
-[System.Text.Json.Serialization.JsonSerializable(typeof(HostSignal))]
 [System.Text.Json.Serialization.JsonSerializable(typeof(SystemAccent))]
 [System.Text.Json.Serialization.JsonSourceGenerationOptions(PropertyNamingPolicy = System.Text.Json.Serialization.JsonKnownNamingPolicy.CamelCase)]
 internal partial class DashboardBoundsJson : System.Text.Json.Serialization.JsonSerializerContext
