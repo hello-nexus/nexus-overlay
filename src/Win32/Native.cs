@@ -85,7 +85,6 @@ internal static unsafe class Native
     public const uint WM_TIMER = 0x0113;
     public const uint WM_DISPLAYCHANGE = 0x007E;
     public const uint WM_DPICHANGED = 0x02E0;
-    public const uint WM_SETTINGCHANGE = 0x001A;
     public const uint WM_DWMCOLORIZATIONCOLORCHANGED = 0x0320;
     public const uint WM_USER = 0x0400;
 
@@ -547,12 +546,6 @@ internal static unsafe class Native
 
     [DllImport("gdi32.dll")]
     public static extern bool DeleteObject(IntPtr hObject);
-
-    // COLORREF is 0x00BBGGRR (little-endian RGB). CreateSolidBrush makes
-    // a GDI brush we can hand to WNDCLASSEXW.hbrBackground so the
-    // window-paint default fills with our color instead of system white.
-    [DllImport("gdi32.dll")]
-    public static extern IntPtr CreateSolidBrush(uint crColor);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
