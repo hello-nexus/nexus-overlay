@@ -849,14 +849,18 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             case "nexus:window-close":
                 Native.PostMessageW(Hwnd, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
                 break;
-            case "nexus:resize-left":         BeginResize(Native.HTLEFT); break;
-            case "nexus:resize-right":        BeginResize(Native.HTRIGHT); break;
-            case "nexus:resize-top":          BeginResize(Native.HTTOP); break;
-            case "nexus:resize-bottom":       BeginResize(Native.HTBOTTOM); break;
-            case "nexus:resize-top-left":     BeginResize(Native.HTTOPLEFT); break;
-            case "nexus:resize-top-right":    BeginResize(Native.HTTOPRIGHT); break;
-            case "nexus:resize-bottom-left":  BeginResize(Native.HTBOTTOMLEFT); break;
-            case "nexus:resize-bottom-right": BeginResize(Native.HTBOTTOMRIGHT); break;
+            case "nexus:resize-left":         BeginNcDrag(Native.HTLEFT); break;
+            case "nexus:resize-right":        BeginNcDrag(Native.HTRIGHT); break;
+            case "nexus:resize-top":          BeginNcDrag(Native.HTTOP); break;
+            case "nexus:resize-bottom":       BeginNcDrag(Native.HTBOTTOM); break;
+            case "nexus:resize-top-left":     BeginNcDrag(Native.HTTOPLEFT); break;
+            case "nexus:resize-top-right":    BeginNcDrag(Native.HTTOPRIGHT); break;
+            case "nexus:resize-bottom-left":  BeginNcDrag(Native.HTBOTTOMLEFT); break;
+            case "nexus:resize-bottom-right": BeginNcDrag(Native.HTBOTTOMRIGHT); break;
+            // Title-bar drag. HTCAPTION runs the OS move loop (Aero Snap incl.).
+            // The web bar uses this instead of `app-region: drag` so it stays a
+            // client region and doesn't black-flicker on resize over Mica.
+            case "nexus:window-drag":         BeginNcDrag(Native.HTCAPTION); break;
             default:
                 // Other messages may flow through here for valid IPC; do
                 // not log them as errors.
@@ -864,13 +868,15 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         }
     }
 
-    private void BeginResize(int hitCode)
+    // Hand a web-initiated non-client drag to the OS. hitCode = HTCAPTION runs
+    // the window move loop; the HT{LEFT,RIGHT,...} codes run the resize tracker.
+    private void BeginNcDrag(int hitCode)
     {
-        // The React strip caught the mousedown - WebView2 has captured
-        // input. Release it so the OS native resize loop can attach.
+        // The React strip/bar caught the mousedown - WebView2 has captured
+        // input. Release it so the OS native drag loop can attach.
         Native.ReleaseCapture();
-        // Post WM_NCLBUTTONDOWN with the right HT code; the OS reads
-        // GetCursorPos for the anchor and runs its own resize tracker.
+        // Post WM_NCLBUTTONDOWN with the HT code; the OS reads GetCursorPos for
+        // the anchor and runs its own move / resize tracker.
         Native.PostMessageW(Hwnd, Native.WM_NCLBUTTONDOWN, (IntPtr)hitCode, IntPtr.Zero);
     }
 
