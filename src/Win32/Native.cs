@@ -71,6 +71,7 @@ internal static unsafe class Native
     // Window messages.
     public const uint WM_DESTROY = 0x0002;
     public const uint WM_MOVE = 0x0003;
+    public const uint WM_MOVING = 0x0216;
     public const uint WM_SIZE = 0x0005;
     public const uint WM_ACTIVATE = 0x0006;
     public const uint WM_CLOSE = 0x0010;
@@ -85,6 +86,13 @@ internal static unsafe class Native
     public const uint WM_TIMER = 0x0113;
     public const uint WM_DISPLAYCHANGE = 0x007E;
     public const uint WM_DPICHANGED = 0x02E0;
+    public const uint WM_SETTINGCHANGE = 0x001A;
+    public const uint WM_DWMCOLORIZATIONCOLORCHANGED = 0x0320;
+    public const int SPI_SETDESKWALLPAPER = 0x0014;
+    public const uint WM_APP_WALLPAPER = 0x8001; // private: HKCU\…\Desktop changed
+    public const uint KEY_NOTIFY = 0x0010;
+    public const uint REG_NOTIFY_CHANGE_LAST_SET = 0x00000004;
+    public const uint INFINITE = 0xFFFFFFFF;
     public const uint WM_USER = 0x0400;
 
     // WM_NCHITTEST return codes.
@@ -407,6 +415,31 @@ internal static unsafe class Native
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetDpiForWindow(IntPtr hWnd);
+
+    // Reads a single REG_DWORD. Used to read the user's accent colour from
+    // HKCU\Software\Microsoft\Windows\DWM\AccentColor (overlay runs as the user).
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+    public static extern int RegGetValueW(IntPtr hkey, string lpSubKey, string lpValue,
+        uint dwFlags, out uint pdwType, out uint pvData, ref uint pcbData);
+    public static readonly IntPtr HKEY_CURRENT_USER = unchecked((IntPtr)0x80000001L);
+    public const uint RRF_RT_REG_DWORD = 0x00000010;
+
+    // Registry-change watch (wallpaper change detection): open the Desktop key
+    // for notify, then block on an event that signals on any value-set.
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+    public static extern int RegOpenKeyExW(IntPtr hKey, string lpSubKey, uint ulOptions, uint samDesired, out IntPtr phkResult);
+    [DllImport("advapi32.dll")]
+    public static extern int RegNotifyChangeKeyValue(IntPtr hKey, bool bWatchSubtree, uint dwNotifyFilter, IntPtr hEvent, bool fAsynchronous);
+    [DllImport("advapi32.dll")]
+    public static extern int RegCloseKey(IntPtr hKey);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr CreateEventW(IntPtr lpEventAttributes, bool bManualReset, bool bInitialState, string? lpName);
+    [DllImport("kernel32.dll")]
+    public static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+    [DllImport("kernel32.dll")]
+    public static extern bool SetEvent(IntPtr hEvent);
+    [DllImport("kernel32.dll")]
+    public static extern bool CloseHandle(IntPtr hObject);
 
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern bool SetWindowTextW(IntPtr hWnd, string lpString);

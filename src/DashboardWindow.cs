@@ -65,6 +65,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     private IntPtr _env;
     private IntPtr _envCreatedHandler;
     private IntPtr _ctrlCreatedHandler;
+    private System.Threading.Thread? _wallpaperWatchThread;
+    private IntPtr _wallpaperWatchEvent;
+    private volatile bool _wallpaperWatchStop;
     private IntPtr _navStartingHandler;
     private IntPtr _newWindowHandler;
     private IntPtr _permissionHandler;
@@ -360,8 +363,18 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 }
                 return IntPtr.Zero;
 
+            case Native.WM_MOVING:
+                // During the drag, before the move applies — ~1 frame earlier
+                // than WM_MOVE, so the screen-anchored backdrop lags less.
+                if (lParam != IntPtr.Zero)
+                {
+                    PostWindowOrigin(*(Native.RECT*)lParam);
+                }
+                return null;
+
             case Native.WM_MOVE:
                 _saveOnClose = true;
+                PostWindowOrigin();
                 return IntPtr.Zero;
 
             case Native.WM_GETMINMAXINFO:
@@ -391,6 +404,24 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                     // time - we re-apply here to keep them in step.
                     ApplyCustomFrameMargins(hwnd);
                 }
+                return IntPtr.Zero;
+
+            case Native.WM_DWMCOLORIZATIONCOLORCHANGED:
+                // System accent / colorization changed — push the new accent.
+                PostSystemAccent();
+                return IntPtr.Zero;
+
+            case Native.WM_SETTINGCHANGE:
+                // Desktop wallpaper changed — tell the page to re-fetch it.
+                if (wParam.ToInt32() == Native.SPI_SETDESKWALLPAPER)
+                {
+                    PostWallpaperChanged();
+                }
+                return IntPtr.Zero;
+
+            case Native.WM_APP_WALLPAPER:
+                // Posted by the registry watch thread when HKCU\…\Desktop changed.
+                PostWallpaperChanged();
                 return IntPtr.Zero;
 
             case Native.WM_CLOSE:
@@ -687,6 +718,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         Native.ShowWindow(Hwnd, Native.SW_SHOWNORMAL);
         Native.BringWindowToTop(Hwnd);
         Native.SetForegroundWindow(Hwnd);
+        StartWallpaperWatch();
     }
 
     // ===================== Feature-parity event handlers =====================
@@ -764,6 +796,16 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 owner.HandleGalleryDrop(args);
                 return WebView2Native.S_OK;
             }
+            if (text == "nexus:request-window-origin")
+            {
+                owner.PostWindowOrigin();
+                return WebView2Native.S_OK;
+            }
+            if (text == "nexus:request-system-accent")
+            {
+                owner.PostSystemAccent();
+                return WebView2Native.S_OK;
+            }
             owner.HandleWindowAction(text);
         }
         catch (Exception ex) { Log.Error($"dashboard WebMessage: {ex.Message}"); }
@@ -780,6 +822,119 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             DashboardBoundsJson.Default.GalleryDropPaths);
         var hr = Wv2.Wv2_PostWebMessageAsJson(_coreWebView2, json);
         if (WebView2Native.Failed(hr)) Log.Error($"dashboard gallery-drop post hr=0x{hr:X8}");
+    }
+
+    // Pushes the window's content origin + monitor size (CSS px, DPI-scaled) to
+    // the page so the "wallpaper" background can be anchored to the desktop
+    // rather than the window (faked Mica). Sent on every WM_MOVE and on the
+    // page's request after mount.
+    // rect = the proposed window rect (WM_MOVING, before the move applies) so the
+    // backdrop updates ~a frame earlier; null = read the current rect (WM_MOVE).
+    private void PostWindowOrigin(Native.RECT? rect = null)
+    {
+        if (_coreWebView2 == IntPtr.Zero) return;
+        Native.RECT wr;
+        if (rect.HasValue) wr = rect.Value;
+        else if (!Native.GetWindowRect(Hwnd, out wr)) return;
+        uint dpi = Native.GetDpiForWindow(Hwnd);
+        double scale = dpi == 0 ? 1.0 : dpi / 96.0;
+        var mon = Native.MonitorFromWindow(Hwnd, Native.MONITOR_DEFAULTTONEAREST);
+        var mi = new Native.MonitorInfoNative { cbSize = Marshal.SizeOf<Native.MonitorInfoNative>() };
+        if (!Native.GetMonitorInfoW(mon, ref mi)) return;
+        var origin = new WindowOrigin
+        {
+            Type = "nexus:window-origin",
+            X = (wr.Left - mi.rcMonitor.Left) / scale,
+            Y = (wr.Top - mi.rcMonitor.Top) / scale,
+            W = mi.rcMonitor.Width / scale,
+            H = mi.rcMonitor.Height / scale,
+        };
+        var json = JsonSerializer.Serialize(origin, DashboardBoundsJson.Default.WindowOrigin);
+        var hr = Wv2.Wv2_PostWebMessageAsJson(_coreWebView2, json);
+        if (WebView2Native.Failed(hr)) Log.Error($"dashboard window-origin post hr=0x{hr:X8}");
+    }
+
+    // Tells the page to re-fetch the wallpaper after the OS desktop wallpaper
+    // changed (WM_SETTINGCHANGE / SPI_SETDESKWALLPAPER).
+    private void PostWallpaperChanged()
+    {
+        if (_coreWebView2 == IntPtr.Zero) return;
+        var json = JsonSerializer.Serialize(
+            new HostSignal { Type = "nexus:wallpaper-changed" }, DashboardBoundsJson.Default.HostSignal);
+        Wv2.Wv2_PostWebMessageAsJson(_coreWebView2, json);
+    }
+
+    // Watches HKCU\Control Panel\Desktop (where the wallpaper path lives) and
+    // posts WM_APP_WALLPAPER to the UI thread on any change — reliable across the
+    // Settings app / slideshow / right-click paths where WM_SETTINGCHANGE isn't
+    // broadcast. Event-driven (blocks on a notify event), no polling.
+    private void StartWallpaperWatch()
+    {
+        if (_wallpaperWatchThread != null) return;
+        _wallpaperWatchEvent = Native.CreateEventW(IntPtr.Zero, false, false, null);
+        if (_wallpaperWatchEvent == IntPtr.Zero) return;
+        _wallpaperWatchThread = new System.Threading.Thread(WallpaperWatchLoop)
+        {
+            IsBackground = true,
+            Name = "nexus-wallpaper-watch",
+        };
+        _wallpaperWatchThread.Start();
+    }
+
+    private void WallpaperWatchLoop()
+    {
+        // The notify event is owned + closed by Dispose (which joins this thread
+        // first), not here — so the open-failure return below can't leak it, and
+        // there's no cross-thread close race against Dispose's SetEvent.
+        if (Native.RegOpenKeyExW(Native.HKEY_CURRENT_USER, @"Control Panel\Desktop", 0,
+                Native.KEY_NOTIFY, out var hKey) != 0)
+        {
+            return;
+        }
+        try
+        {
+            while (!_wallpaperWatchStop)
+            {
+                if (Native.RegNotifyChangeKeyValue(hKey, false, Native.REG_NOTIFY_CHANGE_LAST_SET,
+                        _wallpaperWatchEvent, true) != 0)
+                {
+                    break;
+                }
+                Native.WaitForSingleObject(_wallpaperWatchEvent, Native.INFINITE);
+                if (_wallpaperWatchStop) break;
+                Native.PostMessageW(Hwnd, Native.WM_APP_WALLPAPER, IntPtr.Zero, IntPtr.Zero);
+            }
+        }
+        finally
+        {
+            Native.RegCloseKey(hKey);
+        }
+    }
+
+    // Reads the user's Windows accent colour and pushes it to the page (for the
+    // "System" accent option). Sent on init/request + on colour change.
+    private void PostSystemAccent()
+    {
+        if (_coreWebView2 == IntPtr.Zero) return;
+        var hex = ReadSystemAccentHex();
+        if (hex is null) return;
+        var json = JsonSerializer.Serialize(
+            new SystemAccent { Type = "nexus:system-accent", Hex = hex }, DashboardBoundsJson.Default.SystemAccent);
+        Wv2.Wv2_PostWebMessageAsJson(_coreWebView2, json);
+    }
+
+    // HKCU\Software\Microsoft\Windows\DWM\AccentColor is a REG_DWORD in 0xAABBGGRR
+    // (ABGR) order; map it to #RRGGBB. Overlay runs as the user, so HKCU is theirs.
+    private static string? ReadSystemAccentHex()
+    {
+        uint data = 0, type = 0, cb = sizeof(uint);
+        int rc = Native.RegGetValueW(Native.HKEY_CURRENT_USER, @"Software\Microsoft\Windows\DWM",
+            "AccentColor", Native.RRF_RT_REG_DWORD, out type, out data, ref cb);
+        if (rc != 0) return null;
+        int r = (int)(data & 0xFF);
+        int g = (int)((data >> 8) & 0xFF);
+        int b = (int)((data >> 16) & 0xFF);
+        return $"#{r:X2}{g:X2}{b:X2}";
     }
 
     private void HandleWindowAction(string action)
@@ -973,6 +1128,21 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        // Wake + join the wallpaper-watch thread, then free its event. Joining
+        // before CloseHandle avoids racing the thread's RegNotify/Wait on the
+        // handle; nulling the thread lets a later reopen restart the watcher.
+        _wallpaperWatchStop = true;
+        if (_wallpaperWatchEvent != IntPtr.Zero)
+        {
+            Native.SetEvent(_wallpaperWatchEvent);
+        }
+        _wallpaperWatchThread?.Join(2000);
+        _wallpaperWatchThread = null;
+        if (_wallpaperWatchEvent != IntPtr.Zero)
+        {
+            Native.CloseHandle(_wallpaperWatchEvent);
+            _wallpaperWatchEvent = IntPtr.Zero;
+        }
         _instances.TryRemove(_instanceId, out _);
         try
         {
@@ -1032,8 +1202,35 @@ internal sealed class GalleryDropPaths
     public System.Collections.Generic.List<string> Paths { get; set; } = new();
 }
 
+/// <summary>Host → page: window content origin + monitor size in CSS px, for
+/// anchoring the wallpaper background to the desktop (faked Mica).</summary>
+internal sealed class WindowOrigin
+{
+    public string Type { get; set; } = "";
+    public double X { get; set; }
+    public double Y { get; set; }
+    public double W { get; set; }
+    public double H { get; set; }
+}
+
+/// <summary>Host → page: bare notification (e.g. wallpaper changed).</summary>
+internal sealed class HostSignal
+{
+    public string Type { get; set; } = "";
+}
+
+/// <summary>Host → page: the OS accent colour as #RRGGBB.</summary>
+internal sealed class SystemAccent
+{
+    public string Type { get; set; } = "";
+    public string Hex { get; set; } = "";
+}
+
 [System.Text.Json.Serialization.JsonSerializable(typeof(SavedBounds))]
 [System.Text.Json.Serialization.JsonSerializable(typeof(GalleryDropPaths))]
+[System.Text.Json.Serialization.JsonSerializable(typeof(WindowOrigin))]
+[System.Text.Json.Serialization.JsonSerializable(typeof(HostSignal))]
+[System.Text.Json.Serialization.JsonSerializable(typeof(SystemAccent))]
 [System.Text.Json.Serialization.JsonSourceGenerationOptions(PropertyNamingPolicy = System.Text.Json.Serialization.JsonKnownNamingPolicy.CamelCase)]
 internal partial class DashboardBoundsJson : System.Text.Json.Serialization.JsonSerializerContext
 {
