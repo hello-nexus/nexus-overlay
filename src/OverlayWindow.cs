@@ -41,7 +41,6 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
     private bool _zOrderApplied;
 
     private IntPtr _env;
-    private IntPtr _envOptions;
     private IntPtr _envCreatedHandler;
     private IntPtr _ctrlCreatedHandler;
     private IntPtr _webMsgHandler;
@@ -185,15 +184,13 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
             "Nexus", "DesktopWebView2");
         try { Directory.CreateDirectory(userDataDir); } catch { /* best-effort */ }
 
-        // TODO: re-enable env options once vtable layout is verified.
-        // Passing null skips renderer-process-limit consolidation.
-        _envOptions = IntPtr.Zero;
         _envCreatedHandler = WebView2Callbacks.CreateEnvCreatedHandler(&OnEnvCreatedStatic);
 
         fixed (char* udf = userDataDir)
         {
+            // Null env options: skips renderer-process-limit consolidation.
             var hr = WebView2Native.CreateCoreWebView2EnvironmentWithOptions(
-                null, udf, _envOptions, _envCreatedHandler);
+                null, udf, IntPtr.Zero, _envCreatedHandler);
             Log.Info($"overlay {_monitor.Index} CreateCoreWebView2Env hr=0x{hr:X8}");
             if (WebView2Native.Failed(hr))
             {
@@ -318,9 +315,6 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
 
         ApplyZOrder();
 
-        // Per-HWND pin on top of the process-level PinAppID in Program.cs.
-        // Currently disabled (returns false); see TryPinWindow.
-        VirtualDesktopPin.TryPinWindow(Hwnd);
     }
 
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]

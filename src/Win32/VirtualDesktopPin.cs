@@ -97,18 +97,6 @@ internal static unsafe class VirtualDesktopPin
     }
 
     /// <summary>
-    /// Pin a specific HWND across all virtual desktops via
-    /// <c>IVirtualDesktopManagerInternal::PinWindow</c>. Disabled: the
-    /// PinWindow slot index shifts across Windows builds and calling the
-    /// wrong slot (different signature) crashes the process, so this returns
-    /// false until a reliable per-build slot map exists.
-    /// </summary>
-    public static bool TryPinWindow(IntPtr hwnd)
-    {
-        return false;
-    }
-
-    /// <summary>
     /// Pin the overlay's AppID across all virtual desktops. Returns true
     /// on success; failures are logged and silently absorbed (the overlay
     /// still works on the current desktop, just not cross-desktop).

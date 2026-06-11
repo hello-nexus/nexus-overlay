@@ -42,9 +42,6 @@ internal static unsafe class Native
     public const int SW_SHOW = 5;
     public const int SW_RESTORE = 9;
 
-    public const uint LWA_COLORKEY = 0x00000001;
-    public const uint LWA_ALPHA = 0x00000002;
-
     // GetSysColor / hbrBackground index for "Window" - HBRUSH for a
     // window class is `(IntPtr)(COLOR_WINDOW + 1)` per the WNDCLASSEXW
     // documented quirk.
@@ -61,10 +58,6 @@ internal static unsafe class Native
     public static readonly IntPtr HWND_NOTOPMOST = new(-2);
     public static readonly IntPtr HWND_TOP = new(0);
     public static readonly IntPtr HWND_BOTTOM = new(1);
-
-    public const uint SMTO_NORMAL = 0x0000;
-    public const uint SMTO_BLOCK = 0x0001;
-    public const uint SMTO_ABORTIFHUNG = 0x0002;
 
     public const int RGN_OR = 2;
 
@@ -216,9 +209,6 @@ internal static unsafe class Native
     public static extern ushort RegisterClassExW(WNDCLASSEXW* lpwcx);
 
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    public static extern bool UnregisterClassW(string lpClassName, IntPtr hInstance);
-
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern IntPtr CreateWindowExW(
         uint dwExStyle, string lpClassName, string lpWindowName,
         uint dwStyle, int x, int y, int nWidth, int nHeight,
@@ -232,9 +222,6 @@ internal static unsafe class Native
 
     [DllImport("user32.dll")]
     public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-
-    [DllImport("user32.dll")]
-    public static extern bool UpdateWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
     public static extern bool IsWindow(IntPtr hWnd);
@@ -276,36 +263,17 @@ internal static unsafe class Native
     public static extern int GetWindowLongW(IntPtr hWnd, int nIndex);
 
     [DllImport("user32.dll", SetLastError = true)]
-    public static extern int SetWindowLongW(IntPtr hWnd, int nIndex, int dwNewLong);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
-
-    [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter,
         int X, int Y, int cx, int cy, uint uFlags);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
 
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "FindWindowW")]
-    public static extern IntPtr FindWindow(string? lpClassName, string? lpWindowName);
-
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "FindWindowExW")]
-    public static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter, string? lpszClass, string? lpszWindow);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern IntPtr SendMessageTimeoutW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam,
-        uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
-
     [DllImport("user32.dll", SetLastError = true)]
     public static extern int GetSystemMetrics(int nIndex);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr LoadCursorW(IntPtr hInstance, IntPtr lpCursorName);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern IntPtr LoadIconW(IntPtr hInstance, IntPtr lpIconName);
 
     // LoadImageW with IMAGE_ICON + LR_LOADFROMFILE pulls an icon out of an
     // .ico file at runtime - used to give the dashboard window its taskbar
@@ -427,23 +395,14 @@ internal static unsafe class Native
     public static readonly IntPtr HKEY_CURRENT_USER = unchecked((IntPtr)0x80000001L);
     public const uint RRF_RT_REG_DWORD = 0x00000010;
 
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-    public static extern bool SetWindowTextW(IntPtr hWnd, string lpString);
-
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     public static extern IntPtr GetModuleHandleW(string? lpModuleName);
 
-    [DllImport("kernel32.dll")]
-    public static extern uint GetCurrentThreadId();
-
     [DllImport("ole32.dll")]
     public static extern int CoInitializeEx(IntPtr pvReserved, uint dwCoInit);
-
-    [DllImport("ole32.dll")]
-    public static extern int CoUninitialize();
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
