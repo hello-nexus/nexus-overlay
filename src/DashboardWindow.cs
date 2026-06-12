@@ -54,6 +54,14 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     // Windows shell, so this lets Mica be the window background.
     private const uint DefaultBgTransparent = 0x00000000u;
 
+    // Opaque ARGB theme backdrop (the web's --backdrop-base) used ONLY while
+    // maximized. The DWM Mica system backdrop renders black behind a maximized
+    // transparent window, so the glass page (which paints transparent) shows
+    // black. While maximized we paint this base colour instead; restored windows
+    // go back to DefaultBgTransparent so Mica shows through again.
+    private const uint DefaultBgOpaqueDark = 0xFF1A1A1Au;
+    private const uint DefaultBgOpaqueLight = 0xFFD8D8D8u;
+
     private static readonly ConcurrentDictionary<int, DashboardWindow> _instances = new();
     private static int _nextInstanceId;
     private readonly int _instanceId;
@@ -269,6 +277,18 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         Native.DwmSetWindowAttribute(Hwnd, Native.DWMWA_SYSTEMBACKDROP_TYPE, backdrop, sizeof(int));
     }
 
+    // Mica renders black behind a maximized transparent window, so swap the
+    // WebView2 default backdrop to the opaque theme base while maximized and
+    // back to transparent (Mica) when restored — glass mode never goes black.
+    private void ApplyBackdropForWindowState()
+    {
+        if (_controller2 == IntPtr.Zero) return;
+        uint color = Native.IsZoomed(Hwnd)
+            ? (_appDark ? DefaultBgOpaqueDark : DefaultBgOpaqueLight)
+            : DefaultBgTransparent;
+        Wv2.Ctrl2_put_DefaultBackgroundColor(_controller2, color);
+    }
+
     private static bool IsSystemDarkMode()
     {
         try
@@ -352,10 +372,18 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                     Native.GetClientRect(hwnd, out var rc);
                     Wv2.Ctrl_put_Bounds(_controller, rc);
                 }
+                int sizeKind = wParam.ToInt32();
+                // Mica goes black behind a maximized transparent window; paint
+                // the opaque theme base while maximized, transparent (Mica) when
+                // restored. Only the two end states matter (skip minimize).
+                if (sizeKind == Native.SIZE_MAXIMIZED || sizeKind == Native.SIZE_RESTORED)
+                {
+                    ApplyBackdropForWindowState();
+                }
                 // Persist size only when restored - skip min/maximize so
                 // closing from maximized doesn't bake the maximized rect
                 // as the new "normal" bounds.
-                if (wParam.ToInt32() == Native.SIZE_RESTORED)
+                if (sizeKind == Native.SIZE_RESTORED)
                 {
                     _saveOnClose = true;
                 }
@@ -616,6 +644,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         Native.GetClientRect(Hwnd, out var rc);
         Wv2.Ctrl_put_Bounds(_controller, rc);
         Wv2.Ctrl_put_IsVisible(_controller, true);
+        // If the window came up maximized, start with the opaque base (not the
+        // transparent default set just above) so Mica-black never flashes.
+        ApplyBackdropForWindowState();
 
         if (WebView2Native.Failed(Wv2.Ctrl_get_CoreWebView2(_controller, out _coreWebView2)) || _coreWebView2 == IntPtr.Zero)
         {
@@ -781,6 +812,8 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 owner._appDark = text == "nexus:theme-dark";
                 ApplyImmersiveTheme(owner.Hwnd, owner._appDark);
                 owner.ApplyMicaBackdrop();
+                // Keep the maximized opaque-base colour in sync with the theme.
+                owner.ApplyBackdropForWindowState();
                 return WebView2Native.S_OK;
             }
             owner.HandleWindowAction(text);
