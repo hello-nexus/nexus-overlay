@@ -48,19 +48,14 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     private const int TopResizeGrabLogical = 4;
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 2;
     private const int PermissionStateDeny = 2;
-    // Fully-transparent ARGB for the WebView2 controller's default backdrop
-    // so the DWM Mica system backdrop shows through wherever the page paints
-    // transparent. The nexus-web page renders a transparent backdrop in the
-    // Windows shell, so this lets Mica be the window background.
+    // Fully-transparent COREWEBVIEW2_COLOR for the WebView2 controller's
+    // default backdrop so the DWM Mica system backdrop shows through wherever
+    // the page paints transparent. The nexus-web page renders a transparent
+    // backdrop in the Windows shell, so this lets Mica be the window
+    // background. Note the struct's byte order is {A,R,G,B} - the LOW byte of
+    // this uint is alpha, not the high one - and put_DefaultBackgroundColor
+    // rejects any alpha besides fully opaque / fully transparent.
     private const uint DefaultBgTransparent = 0x00000000u;
-
-    // Opaque ARGB theme backdrop (the web's --backdrop-base) used ONLY while
-    // maximized. The DWM Mica system backdrop renders black behind a maximized
-    // transparent window, so the glass page (which paints transparent) shows
-    // black. While maximized we paint this base colour instead; restored windows
-    // go back to DefaultBgTransparent so Mica shows through again.
-    private const uint DefaultBgOpaqueDark = 0xFF1A1A1Au;
-    private const uint DefaultBgOpaqueLight = 0xFFD8D8D8u;
 
     private static readonly ConcurrentDictionary<int, DashboardWindow> _instances = new();
     private static int _nextInstanceId;
@@ -85,6 +80,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     private long _webMessageToken;
     private bool _disposed;
     private bool _saveOnClose;
+    // Last WM_SIZE kind, for skipping the per-tick repeats during an
+    // interactive resize (see WM_SIZE handler).
+    private int _lastSizeKind = Native.SIZE_RESTORED;
     // Resolved in-app (dashboard) theme, pushed by the page via the
     // "nexus:theme-dark" / "nexus:theme-light" web message. Drives the
     // immersive/Mica theme so it follows the app theme, not the OS theme.
@@ -130,16 +128,10 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         _appDark = IsSystemDarkMode();
         ApplyImmersiveTheme(Hwnd, _appDark);
 
-        // Windows 11 Mica system backdrop behind the (transparent) WebView2.
-        ApplyMicaBackdrop();
-
-        // Custom title bar: extend the DWM frame into the client area so
-        // the system caption buttons (min / max / close) stay painted at
-        // the top-right while the rest of the title bar disappears - the
-        // WebView2 fills the entire client area, including the top strip.
-        // See WM_NCCALCSIZE / WM_NCHITTEST below for the matching client
-        // expansion + drag region logic.
-        ApplyCustomFrameMargins(Hwnd);
+        // Sheet-of-glass frame + Windows 11 Mica system backdrop behind the
+        // (transparent) WebView2. See WM_NCCALCSIZE / WM_NCHITTEST below for
+        // the matching client expansion + drag region logic.
+        ApplyGlassFrame();
 
         // Force a WM_NCCALCSIZE pass with the new frame settings before
         // the window is first shown. Without this the system may cache
@@ -156,18 +148,20 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
     private static void ApplyCustomFrameMargins(IntPtr hwnd)
     {
-        // Frame is no longer extended for the native caption buttons: the web
-        // draws its own min / max / close, and a caption-height top margin makes
-        // DWM paint duplicate system buttons through the transparent (Mica)
-        // WebView2. A 1px top margin is too thin for DWM to paint caption buttons
-        // into, but keeps a sliver of extended frame so the window still casts
-        // its DWM drop shadow.
+        // Sheet-of-glass margins: the whole window surface is extended frame.
+        // The previous thin top-sliver margin made DWM permanently drop the
+        // Mica backdrop on the maximize transition (composing black behind
+        // the transparent WebView2 until the window was recreated) - the same
+        // root cause as electron#41824, whose fix is this margin shape. The
+        // web draws its own min / max / close; DWMWA_CAPTION_COLOR none (set
+        // alongside the backdrop) keeps DWM from painting a caption into the
+        // extended frame.
         var margins = new Native.MARGINS
         {
-            cxLeftWidth = 0,
-            cxRightWidth = 0,
-            cyTopHeight = 1,
-            cyBottomHeight = 0,
+            cxLeftWidth = -1,
+            cxRightWidth = -1,
+            cyTopHeight = -1,
+            cyBottomHeight = -1,
         };
         var hr = Native.DwmExtendFrameIntoClientArea(hwnd, in margins);
         if (hr != 0)
@@ -269,24 +263,31 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     }
 
     // Request the Windows 11 Mica system backdrop (DWMSBT_MAINWINDOW) behind
-    // the extended frame. No-op on Win10 / pre-22000, where the call just
-    // returns a nonzero HRESULT we ignore.
+    // the extended frame, plus the attributes that keep it alive across
+    // window-state changes. No-op on Win10 / pre-22000, where the calls just
+    // return a nonzero HRESULT we ignore.
     private void ApplyMicaBackdrop()
     {
         int backdrop = Native.DWMSBT_MAINWINDOW;
         Native.DwmSetWindowAttribute(Hwnd, Native.DWMWA_SYSTEMBACKDROP_TYPE, backdrop, sizeof(int));
+        // Keeps the backdrop composed through the maximize animation instead
+        // of flashing black for its duration.
+        int hostBrush = 1;
+        Native.DwmSetWindowAttribute(Hwnd, Native.DWMWA_USE_HOSTBACKDROPBRUSH, hostBrush, sizeof(int));
+        // With sheet-of-glass margins the top of the extended frame is where
+        // a caption bar would go; suppress it so nothing paints through the
+        // transparent WebView2.
+        Native.DwmSetWindowAttribute(Hwnd, Native.DWMWA_CAPTION_COLOR, Native.DWMWA_COLOR_NONE, sizeof(int));
     }
 
-    // Mica renders black behind a maximized transparent window, so swap the
-    // WebView2 default backdrop to the opaque theme base while maximized and
-    // back to transparent (Mica) when restored — glass mode never goes black.
-    private void ApplyBackdropForWindowState()
+    // Re-assert the full glass configuration (frame margins, then backdrop).
+    // DWM drops the system backdrop on some state transitions (maximize /
+    // restore / DPI moves); re-running the sequence revives it in place, so a
+    // window that ever composes black recovers without being recreated.
+    private void ApplyGlassFrame()
     {
-        if (_controller2 == IntPtr.Zero) return;
-        uint color = Native.IsZoomed(Hwnd)
-            ? (_appDark ? DefaultBgOpaqueDark : DefaultBgOpaqueLight)
-            : DefaultBgTransparent;
-        Wv2.Ctrl2_put_DefaultBackgroundColor(_controller2, color);
+        ApplyCustomFrameMargins(Hwnd);
+        ApplyMicaBackdrop();
     }
 
     private static bool IsSystemDarkMode()
@@ -308,7 +309,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         // one while the window was hidden, which would otherwise paint stale
         // on show.
         ApplyImmersiveTheme(Hwnd, _appDark);
-        ApplyMicaBackdrop();
+        ApplyGlassFrame();
         if (Native.IsIconic(Hwnd))
         {
             Native.ShowWindow(Hwnd, Native.SW_RESTORE);
@@ -330,11 +331,10 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 return IntPtr.Zero;
 
             case Native.WM_ACTIVATE:
-                // DWM resets the extended frame margins on some
-                // activation transitions (notably maximize / restore);
-                // re-apply so the caption buttons keep painting on
-                // the extended client area.
-                ApplyCustomFrameMargins(hwnd);
+                // DWM resets the extended frame margins on some activation
+                // transitions (notably maximize / restore); re-apply the full
+                // glass sequence so the backdrop survives them.
+                ApplyGlassFrame();
                 return null; // let DefWindowProc finish standard processing
 
             case Native.WM_NCCALCSIZE:
@@ -373,12 +373,19 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                     Wv2.Ctrl_put_Bounds(_controller, rc);
                 }
                 int sizeKind = wParam.ToInt32();
-                // Mica goes black behind a maximized transparent window; paint
-                // the opaque theme base while maximized, transparent (Mica) when
-                // restored. Only the two end states matter (skip minimize).
-                if (sizeKind == Native.SIZE_MAXIMIZED || sizeKind == Native.SIZE_RESTORED)
+                // Maximize / restore are the transitions DWM is known to drop
+                // the system backdrop on; re-assert glass at both end states
+                // (skip minimize - nothing is visible there). Gate on an
+                // actual state change: WM_SIZE arrives per tick during an
+                // interactive drag-resize, all with the restored kind, and
+                // those repeats don't need the DWM round-trips.
+                if (sizeKind != _lastSizeKind)
                 {
-                    ApplyBackdropForWindowState();
+                    _lastSizeKind = sizeKind;
+                    if (sizeKind == Native.SIZE_MAXIMIZED || sizeKind == Native.SIZE_RESTORED)
+                    {
+                        ApplyGlassFrame();
+                    }
                 }
                 // Persist size only when restored - skip min/maximize so
                 // closing from maximized doesn't bake the maximized rect
@@ -412,13 +419,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                     Native.SetWindowPos(hwnd, IntPtr.Zero,
                         sug.Left, sug.Top, sug.Width, sug.Height,
                         Native.SWP_NOACTIVATE | Native.SWP_NOZORDER);
-                    // Re-extend the DWM frame after a DPI change so the
-                    // top margin tracks the new monitor's caption height.
-                    // TitleBarHeightPx / ResizeBorderThickness use
-                    // GetDpiForWindow which already updates, but the DWM
-                    // margin is a sticky pixel value baked in at apply
-                    // time - we re-apply here to keep them in step.
-                    ApplyCustomFrameMargins(hwnd);
+                    // Re-assert glass after the cross-monitor move; DPI
+                    // transitions are another spot DWM can shed the backdrop.
+                    ApplyGlassFrame();
                 }
                 return IntPtr.Zero;
 
@@ -644,9 +647,6 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         Native.GetClientRect(Hwnd, out var rc);
         Wv2.Ctrl_put_Bounds(_controller, rc);
         Wv2.Ctrl_put_IsVisible(_controller, true);
-        // If the window came up maximized, start with the opaque base (not the
-        // transparent default set just above) so Mica-black never flashes.
-        ApplyBackdropForWindowState();
 
         if (WebView2Native.Failed(Wv2.Ctrl_get_CoreWebView2(_controller, out _coreWebView2)) || _coreWebView2 == IntPtr.Zero)
         {
@@ -812,8 +812,6 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 owner._appDark = text == "nexus:theme-dark";
                 ApplyImmersiveTheme(owner.Hwnd, owner._appDark);
                 owner.ApplyMicaBackdrop();
-                // Keep the maximized opaque-base colour in sync with the theme.
-                owner.ApplyBackdropForWindowState();
                 return WebView2Native.S_OK;
             }
             owner.HandleWindowAction(text);

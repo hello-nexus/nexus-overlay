@@ -332,6 +332,16 @@ internal static unsafe class Native
     public const int DWMSBT_TRANSIENTWINDOW = 3;  // Acrylic
     public const int DWMSBT_TABBEDWINDOW = 4;     // Mica Alt (tabbed)
 
+    // Hint that the app paints transparent regions over the backdrop; keeps
+    // the backdrop composed through the maximize animation (Win11 22H2+,
+    // nonzero HRESULT ignored on older builds).
+    public const int DWMWA_USE_HOSTBACKDROPBRUSH = 17;
+
+    // Caption colour override. DWMWA_COLOR_NONE stops DWM painting any
+    // caption bar into the extended frame of a custom-frame window.
+    public const int DWMWA_CAPTION_COLOR = 35;
+    public const int DWMWA_COLOR_NONE = unchecked((int)0xFFFFFFFE);
+
     [DllImport("dwmapi.dll")]
     public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, in int pvAttribute, int cbAttribute);
 
