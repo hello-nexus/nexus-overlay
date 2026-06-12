@@ -104,7 +104,16 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         Hwnd = Win32Window.Create(
             WindowClassName,
             WindowTitle,
-            Native.WS_OVERLAPPEDWINDOW | Native.WS_CLIPCHILDREN | Native.WS_CLIPSIBLINGS,
+            // WS_SYSMENU is deliberately absent: with the sheet-of-glass
+            // extended frame, DWM paints the system caption buttons through
+            // the transparent WebView2, doubling the web-drawn min / max /
+            // close (DWMWA_CAPTION_COLOR none suppresses the caption bar but
+            // not the buttons). Without WS_SYSMENU there are no system
+            // buttons to paint, while WS_MINIMIZEBOX / WS_MAXIMIZEBOX keep
+            // Aero Snap, double-click-maximize and Win+Arrow semantics, and
+            // the web buttons drive the window over IPC (HandleWindowAction).
+            (Native.WS_OVERLAPPEDWINDOW & ~Native.WS_SYSMENU)
+                | Native.WS_CLIPCHILDREN | Native.WS_CLIPSIBLINGS,
             0u,
             x, y, w, h,
             this,
@@ -152,10 +161,13 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         // The previous thin top-sliver margin made DWM permanently drop the
         // Mica backdrop on the maximize transition (composing black behind
         // the transparent WebView2 until the window was recreated) - the same
-        // root cause as electron#41824, whose fix is this margin shape. The
-        // web draws its own min / max / close; DWMWA_CAPTION_COLOR none (set
-        // alongside the backdrop) keeps DWM from painting a caption into the
-        // extended frame.
+        // root cause as electron#41824, whose fix is this margin shape. Thin
+        // margins go black on maximize even when applied once and never
+        // re-issued - the shape itself is load-bearing, do not shrink it.
+        // The web draws its own min / max / close; the window style omits
+        // WS_SYSMENU so DWM has no system caption buttons to paint into the
+        // full-window frame (they would show through the transparent
+        // WebView2 as a doubled set).
         var margins = new Native.MARGINS
         {
             cxLeftWidth = -1,
@@ -356,10 +368,11 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             case Native.WM_NCMOUSEMOVE:
             case Native.WM_NCLBUTTONDOWN:
             case Native.WM_NCLBUTTONUP:
-                // Forward to DWM so the system caption buttons get hover
-                // paint and accept clicks. DwmDefWindowProc returns 0 for
-                // points outside its caption-button region; fall through
-                // to DefWindowProc in that case.
+                // Forward to DWM for protocol completeness. With WS_SYSMENU
+                // absent there are no system caption buttons, so this always
+                // returns 0 today and falls through to DefWindowProc; kept so
+                // DWM-owned NC interactions keep working if the style ever
+                // regains them.
                 if (Native.DwmDefWindowProc(hwnd, msg, wParam, lParam, out var dwmRes) != 0)
                 {
                     return dwmRes;
@@ -508,12 +521,10 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
     private static IntPtr? HandleNcHitTest(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
-        // Step 1: let DWM claim the system caption buttons. Returns BOOL
-        // non-zero with HTMINBUTTON / HTMAXBUTTON / HTCLOSE in plResult
-        // when the cursor sits over one of them. We render our own
-        // caption buttons inside the WebView2 (DWM can't paint into a
-        // child HWND), but DwmDefWindowProc is still called so any
-        // accessibility / system-menu paths the OS expects keep working.
+        // Step 1: give DWM first claim on the hit. With WS_SYSMENU absent
+        // there are no system caption buttons, so this returns 0 today; the
+        // web renders its own min / max / close inside the WebView2. Kept
+        // for protocol completeness should the style ever regain them.
         if (Native.DwmDefWindowProc(hwnd, msg, wParam, lParam, out var dwmResult) != 0)
         {
             return dwmResult;
