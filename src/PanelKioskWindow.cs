@@ -57,14 +57,17 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         _monitor = monitor;
         _navigationUrl = navigationUrl;
 
+        // Suppress the cursor-warp-on-touch for this monitor while the kiosk
+        // is open; balanced in Dispose (also via the ctor's catch path).
+        TouchCursorGuard.Acquire();
+
         try
         {
             var b = monitor.Bounds;
-            // WS_EX_NOACTIVATE: touching the panel must not activate the kiosk.
-            // Without it, touch on this secondary monitor activates the window and
-            // Windows warps the system cursor to the contact point, stranding the
-            // pointer on the Y70. Matches the legacy HYTE app (focusable:false) and
-            // the sibling OverlayWindow.
+            // WS_EX_NOACTIVATE keeps a touch on this secondary monitor from
+            // activating the kiosk and pulling focus off the foreground app.
+            // The tap-warps-the-cursor symptom is a separate touch->mouse
+            // promotion, suppressed by TouchCursorGuard.
             Hwnd = Win32Window.Create(
                 WindowClassName,
                 WindowTitle,
@@ -98,6 +101,22 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     /// <summary>Monitor bounds this kiosk was created for (reconcile compares
     /// against fresh enumeration to catch arrangement/resolution changes).</summary>
     public Native.RECT MonitorBounds => _monitor.Bounds;
+
+    /// <summary>
+    /// True when a screen point lies on any live kiosk's monitor. The gate
+    /// <see cref="TouchCursorGuard"/> uses to scope cursor-warp suppression to
+    /// touch on a panel screen. Reads <see cref="_instances"/> from the message-
+    /// loop thread (where the low-level hook callback also runs).
+    /// </summary>
+    public static bool PointInAnyKiosk(int x, int y)
+    {
+        foreach (var kv in _instances)
+        {
+            var b = kv.Value._monitor.Bounds;
+            if (x >= b.Left && x < b.Right && y >= b.Top && y < b.Bottom) return true;
+        }
+        return false;
+    }
 
     /// <summary>
     /// Turn the foreign-window guard on or off on the live kiosk. Idempotent:
@@ -346,6 +365,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         if (_disposed) return;
         _disposed = true;
         _instances.TryRemove(_instanceId, out _);
+        TouchCursorGuard.Release();
         _monitorGuard?.Dispose();
         _monitorGuard = null;
         try

@@ -501,6 +501,44 @@ internal static unsafe class Native
     [DllImport("dwmapi.dll")]
     public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int pvAttribute, int cbAttribute);
 
+    // ====================== Low-level mouse hook =====================
+
+    public const int WH_MOUSE_LL = 14;
+    public const int HC_ACTION = 0;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSLLHOOKSTRUCT
+    {
+        public POINT pt;
+        public uint mouseData;
+        public uint flags;
+        public uint time;
+        public nuint dwExtraInfo;
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetWindowsHookExW(int idHook,
+        delegate* unmanaged[Stdcall]<int, IntPtr, IntPtr, IntPtr> lpfn,
+        IntPtr hmod, uint dwThreadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetCursorPos(out POINT lpPoint);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetCursorPos(int X, int Y);
+
+    // Cursor-position accessibility event. Touch warps the shared cursor onto a
+    // panel monitor via SetCursorPos, which a low-level mouse hook can't see but
+    // which fires this event. OBJID_CURSOR marks the cursor object on the event.
+    public const uint EVENT_OBJECT_LOCATIONCHANGE = 0x800B;
+    public const int OBJID_CURSOR = -9;
+
     // ====================== GDI regions =====================
 
     [DllImport("gdi32.dll")]
