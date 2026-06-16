@@ -18,6 +18,11 @@ internal static class Program
     private const string ServiceOrigin = "http://localhost:9400";
     private const string MarshalerClassName = "Nexus.Overlay.Marshaler";
     private const string ShowDashboardMessageName = "Nexus.Overlay.ShowDashboard";
+    // Settings deep-link variant: ShowDashboard always opens/focuses at the
+    // page the user last had; this one also navigates to /settings (the tray
+    // "Settings" item). A dedicated message avoids cross-process string
+    // marshaling — a registered message carries no payload.
+    private const string ShowDashboardSettingsMessageName = "Nexus.Overlay.ShowDashboardSettings";
     private const string ShowPanelKioskMessageName = "Nexus.Overlay.ShowPanelKiosk";
     private const string HidePanelKioskMessageName = "Nexus.Overlay.HidePanelKiosk";
     private const string PrefsChangedMessageName = "Nexus.Overlay.PrefsChanged";
@@ -37,6 +42,7 @@ internal static class Program
     // Consecutive /displays/assignments failures (message-loop thread only).
     private static int _assignmentFetchFailures;
     private static uint _showDashboardMsg;
+    private static uint _showDashboardSettingsMsg;
     private static uint _showPanelKioskMsg;
     private static uint _hidePanelKioskMsg;
     private static uint _prefsChangedMsg;
@@ -155,6 +161,9 @@ internal static class Program
         _showDashboardMsg = Native.RegisterWindowMessageW(ShowDashboardMessageName);
         Log.Info($"registered ShowDashboard msg=0x{_showDashboardMsg:X}");
 
+        _showDashboardSettingsMsg = Native.RegisterWindowMessageW(ShowDashboardSettingsMessageName);
+        Log.Info($"registered ShowDashboardSettings msg=0x{_showDashboardSettingsMsg:X}");
+
         _showPanelKioskMsg = Native.RegisterWindowMessageW(ShowPanelKioskMessageName);
         Log.Info($"registered ShowPanelKiosk msg=0x{_showPanelKioskMsg:X}");
 
@@ -236,19 +245,27 @@ internal static class Program
     /// fresh WebView2 init + navigation — important after a wwwroot
     /// redeploy. The cold start is ~1-2s.
     /// </summary>
-    private static void ShowOrCreateDashboard()
+    // deepLinkPath: when non-null, navigate to that SPA route (e.g. "/settings"
+    // from the tray) on both create and focus. Null = the plain ShowDashboard
+    // path: a fresh window opens at "/", but an existing one is only focused,
+    // never re-navigated, so the user keeps whatever page they were on.
+    private static void ShowOrCreateDashboard(string? deepLinkPath = null)
     {
         // Dashboard is appearing - cancel any pending idle exit.
         DisarmIdleExitTimer();
         if (_dashboard is null)
         {
-            var url = $"{ServiceOrigin}/?token={Uri.EscapeDataString(_pairedToken)}";
+            var url = $"{ServiceOrigin}{deepLinkPath ?? "/"}?token={Uri.EscapeDataString(_pairedToken)}";
             _dashboard = new DashboardWindow(url);
-            Log.Info("dashboard created");
+            Log.Info($"dashboard created path={deepLinkPath ?? "/"}");
             return;
         }
+        if (deepLinkPath is not null)
+        {
+            _dashboard.Navigate($"{ServiceOrigin}{deepLinkPath}?token={Uri.EscapeDataString(_pairedToken)}");
+        }
         _dashboard.ShowAndFocus();
-        Log.Info("dashboard focused");
+        Log.Info($"dashboard focused deepLink={deepLinkPath ?? "(none)"}");
     }
 
     /// <summary>
@@ -409,6 +426,12 @@ internal static class Program
             {
                 try { ShowOrCreateDashboard(); }
                 catch (Exception ex) { Log.Error($"ShowOrCreateDashboard: {ex.Message}"); }
+                return IntPtr.Zero;
+            }
+            if (_showDashboardSettingsMsg != 0 && msg == _showDashboardSettingsMsg)
+            {
+                try { ShowOrCreateDashboard("/settings"); }
+                catch (Exception ex) { Log.Error($"ShowOrCreateDashboard(/settings): {ex.Message}"); }
                 return IntPtr.Zero;
             }
             if (_showPanelKioskMsg != 0 && msg == _showPanelKioskMsg)

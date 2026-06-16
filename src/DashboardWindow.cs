@@ -63,7 +63,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
     public IntPtr Hwnd { get; private set; }
 
-    private readonly string _navigationUrl;
+    // Mutable so a deep-link arriving mid-init (Navigate before CoreWebView2 is
+    // ready) redirects the pending InitController navigation instead of no-oping.
+    private string _navigationUrl;
     private IntPtr _env;
     private IntPtr _envCreatedHandler;
     private IntPtr _ctrlCreatedHandler;
@@ -332,6 +334,21 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         }
         Native.BringWindowToTop(Hwnd);
         Native.SetForegroundWindow(Hwnd);
+    }
+
+    // Navigate the live WebView2 to a new same-origin URL (the tray "Settings"
+    // deep-link on an already-open dashboard). Called on the marshaler/UI
+    // thread, same thread the WebView2 lives on. If CoreWebView2 isn't ready
+    // yet, redirect the pending init navigation instead.
+    public void Navigate(string url)
+    {
+        if (_coreWebView2 == IntPtr.Zero)
+        {
+            _navigationUrl = url;
+            return;
+        }
+        var hr = Wv2.Wv2_Navigate(_coreWebView2, url);
+        Log.Info($"dashboard re-navigate hr=0x{hr:X8} url={url}");
     }
 
     public IntPtr? HandleMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
