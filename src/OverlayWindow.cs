@@ -493,6 +493,13 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         catch (Exception ex) { Log.Error($"overlay dispose: {ex.Message}"); }
         if (Hwnd != IntPtr.Zero)
         {
+            // Destroy the actual HWND. Without this, the carved transparent
+            // window stays painted on screen until process exit even after
+            // the WebView2 controller has released - so a teardown (toggle
+            // off, monitor switch) leaves a stale overlay whenever something
+            // else keeps the process alive (open dashboard, kiosk). WM_DESTROY
+            // re-enters this method but the _disposed guard short-circuits it.
+            Native.DestroyWindow(Hwnd);
             Win32Window.Unregister(Hwnd);
             Hwnd = IntPtr.Zero;
         }
