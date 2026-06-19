@@ -67,7 +67,7 @@ internal sealed class NexusApi
 
     /// <summary>
     /// Monitor-panel assignments (displayId -> panelDeviceId) driving the
-    /// per-monitor kiosk reconcile. Empty list on any failure — the caller
+    /// per-monitor kiosk reconcile. Empty list on any failure - the caller
     /// treats that as "close nothing new, spawn nothing" only when the
     /// service is unreachable, so transient errors don't tear kiosks down.
     /// Null = request failed; empty list = service says no assignments.

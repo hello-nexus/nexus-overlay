@@ -12,11 +12,11 @@ namespace Nexus.Overlay;
 internal static class PanelDisplay
 {
     // EDID names returned by EnumDisplayDevicesW are usually just "Generic PnP
-    // Monitor" — Windows doesn't surface the real friendly name through that
+    // Monitor" - Windows doesn't surface the real friendly name through that
     // API. HYTE panels are identified instead by the hardware DeviceID, which
     // embeds the panel controller name and is stable per model. HYTE ships the
     // Y70 with several controllers (Realtek/BOE variants), so match any. Keep
-    // in sync with Y70DisplayProtocol.DdcPanelHardwareNames in nexus-service —
+    // in sync with Y70DisplayProtocol.DdcPanelHardwareNames in nexus-service -
     // a separate assembly, so the constant can't be shared.
     private static readonly string[] KnownPanelHardwareNames =
     {

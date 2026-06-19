@@ -14,7 +14,7 @@ namespace Nexus.Overlay;
 /// Top-level WebView2 window hosting the main Nexus dashboard URL. Lives in
 /// the same process as the floating overlay widgets so its renderer shares
 /// the browser / GPU / network / utility process tree already running for
-/// them — the memory win over msedge --app. Singleton per process (the
+/// them - the memory win over msedge --app. Singleton per process (the
 /// overlay process is itself singleton via the mutex in Program.cs).
 /// </summary>
 internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
@@ -456,13 +456,13 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 return IntPtr.Zero;
 
             case Native.WM_DWMCOLORIZATIONCOLORCHANGED:
-                // System accent / colorization changed — push the new accent.
+                // System accent / colorization changed - push the new accent.
                 PostSystemAccent();
                 return IntPtr.Zero;
 
             case Native.WM_CLOSE:
                 // Fully tear down on close so the next open does a fresh
-                // WebView2 init + navigation — picks up any newly-deployed
+                // WebView2 init + navigation - picks up any newly-deployed
                 // wwwroot. Saving bounds first; Program clears the
                 // singleton + arms idle-exit inside OnDashboardClosed.
                 if (_saveOnClose)
@@ -819,7 +819,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             if (WebView2Native.Failed(Wv2.WebMsgArgs_TryGetWebMessageAsString(args, out var text)) || text is null)
                 return WebView2Native.S_OK;
             // Gallery drop bridge: the page can't see dropped files' disk
-            // paths (web sandbox), but the host can — it reads them off the
+            // paths (web sandbox), but the host can - it reads them off the
             // message's AdditionalObjects and posts them straight back; the
             // page then registers them as sources over its own authed API.
             // Must happen here while `args` is alive, not in HandleWindowAction.

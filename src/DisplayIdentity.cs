@@ -7,7 +7,7 @@ namespace Nexus.Overlay;
 /// Resolves a GDI adapter device name (\\.\DISPLAYn) to the EDID-stable
 /// display id the service uses as the monitor-panel assignment key. The
 /// extraction must stay byte-identical to WindowsDisplayIdentity in
-/// nexus-service — a separate assembly, so the algorithm is duplicated;
+/// nexus-service - a separate assembly, so the algorithm is duplicated;
 /// keep the two in sync (same precedent as PanelDisplay's hardware names).
 /// </summary>
 internal static class DisplayIdentity
@@ -25,7 +25,7 @@ internal static class DisplayIdentity
             if (!EnumDisplayDevicesW(adapterDeviceName, 0, ref dd, 0))
             {
                 // Total API failure: the service's ResolveIdentity publishes the
-                // raw adapter name as the id in this case — return the same
+                // raw adapter name as the id in this case - return the same
                 // value so an assignment minted against it still matches.
                 return adapterDeviceName;
             }

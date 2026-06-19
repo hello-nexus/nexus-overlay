@@ -7,7 +7,7 @@ namespace Nexus.Overlay;
 /// and which to close, given the service's assignments, the currently
 /// attached displays, and the kiosks already up (displayId -> panelDeviceId).
 /// A kiosk exists iff its display is both assigned and attached AND it hosts
-/// the assignment's current panelDeviceId — demote + re-promote within one
+/// the assignment's current panelDeviceId - demote + re-promote within one
 /// poll window swaps the device id on the same display, which must close the
 /// stale kiosk and spawn a fresh one. An unplugged monitor closes the kiosk
 /// while the service keeps the assignment for replug.

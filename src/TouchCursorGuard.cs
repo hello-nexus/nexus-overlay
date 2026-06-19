@@ -10,7 +10,7 @@ namespace Nexus.Overlay;
 /// on it. Touching a touchscreen whose monitor differs from the cursor's makes
 /// Windows teleport the single shared cursor to the contact point via
 /// SetCursorPos. That move carries no mouse message (a WH_MOUSE_LL hook never
-/// sees it — verified on the Y70), so it can't be blocked; it can only be
+/// sees it - verified on the Y70), so it can't be blocked; it can only be
 /// undone. WebView2 hides the cursor on touch, so the teleport is invisible
 /// until the user moves the physical mouse, when the pointer reappears under
 /// the last tap instead of where they left it.
@@ -18,7 +18,7 @@ namespace Nexus.Overlay;
 /// Two hooks, both event-driven:
 ///   * WH_MOUSE_LL records the physical mouse position. Touch generates no
 ///     mouse events, so <see cref="_lastMousePt"/> only ever reflects the real
-///     mouse — the signal that tells a genuine mouse move onto the panel from a
+///     mouse - the signal that tells a genuine mouse move onto the panel from a
 ///     touch teleport.
 ///   * EVENT_OBJECT_LOCATIONCHANGE on the cursor fires when the cursor moves
 ///     (including the SetCursorPos teleport). When the cursor lands on a kiosk

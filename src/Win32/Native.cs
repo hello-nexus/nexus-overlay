@@ -495,7 +495,7 @@ internal static unsafe class Native
 
     // DWMWA_CLOAKED: nonzero when DWM is hiding the window (suspended UWP app,
     // or a window living on a different virtual desktop). Such windows must
-    // never be relocated — they're invisible to the user as-is.
+    // never be relocated - they're invisible to the user as-is.
     public const int DWMWA_CLOAKED = 14;
 
     [DllImport("dwmapi.dll")]

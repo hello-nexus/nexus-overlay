@@ -60,7 +60,7 @@ internal static unsafe class WebView2Native
 
     // postMessageWithAdditionalObjects support (SDK 1.0.1518.46+): args2
     // exposes the passed DOM objects; File entries surface their real disk
-    // path — the only way a web drop can become a path reference.
+    // path - the only way a web drop can become a path reference.
     public static readonly Guid IID_ICoreWebView2WebMessageReceivedEventArgs2 =
         new("06fc7ab7-c90c-4297-9389-33ca01cf6d5e");
 

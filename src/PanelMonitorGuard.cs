@@ -14,10 +14,10 @@ namespace Nexus.Overlay;
 ///
 /// Hooked via <c>SetWinEventHook</c> (OUTOFCONTEXT) on the overlay's
 /// message-loop thread, so callbacks run single-threaded with the rest of the
-/// overlay — no locking.
+/// overlay - no locking.
 ///
-/// Watches only "window came to rest" events — foreground changes, move/size
-/// drag-end, and window show — never the high-frequency
+/// Watches only "window came to rest" events - foreground changes, move/size
+/// drag-end, and window show - never the high-frequency
 /// <c>EVENT_OBJECT_LOCATIONCHANGE</c>: acting on location-change would yank a
 /// window out from under the cursor mid-drag and spin the CPU.
 /// </summary>
@@ -77,7 +77,7 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
     {
         var panelMon = Native.MonitorFromWindow(kioskHwnd, Native.MONITOR_DEFAULTTONEAREST);
 
-        // Never relocate onto a monitor another guard already owns — that
+        // Never relocate onto a monitor another guard already owns - that
         // would shove windows under a topmost kiosk (and the guards would
         // bounce them between each other).
         var monitors = Monitors.Enumerate();
@@ -136,7 +136,7 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
     private static void OnWinEvent(IntPtr hook, uint ev, IntPtr hwnd, int idObject, int idChild, uint eventThread, uint eventTime)
     {
         if (hwnd == IntPtr.Zero) return;
-        // Whole-window events only — drop carets, cursors, scrollbars, and
+        // Whole-window events only - drop carets, cursors, scrollbars, and
         // child-control sub-objects that share the OBJECT event band.
         if (idObject != Native.OBJID_WINDOW || idChild != Native.CHILDID_SELF) return;
         // Act only on "window came to rest" events; ignore the other IDs in
@@ -172,7 +172,7 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
             try { g.EvaluateAndEvict(hwnd); }
             catch (Exception ex) { Log.Error($"panel-guard sweep: {ex.Message}"); }
         }
-        return 1; // TRUE — continue enumeration
+        return 1; // TRUE - continue enumeration
     }
 
     private void EvaluateAndEvict(IntPtr hwnd)
@@ -203,7 +203,7 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
         if ((exStyle & (uint)Native.WS_EX_TOOLWINDOW) != 0) return false; // helper/tray windows
 
         // Skip windows DWM is cloaking (suspended UWP, or on another virtual
-        // desktop) — relocating an invisible window is wrong and pointless.
+        // desktop) - relocating an invisible window is wrong and pointless.
         if (Native.DwmGetWindowAttribute(hwnd, Native.DWMWA_CLOAKED, out var cloaked, sizeof(int)) == 0 && cloaked != 0)
             return false;
 
@@ -223,7 +223,7 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
     {
         // SetWindowPlacement on an already-maximized window updates its stored
         // restore rect but does NOT move the maximized window to another
-        // monitor — Windows only re-picks the maximize monitor across a
+        // monitor - Windows only re-picks the maximize monitor across a
         // restore→maximize transition. So for a maximized window: restore it,
         // move the windowed frame onto the fallback, then re-maximize there.
         bool wasMaximized = Native.IsZoomed(hwnd);
@@ -251,7 +251,7 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        // UnhookWinEvent must run on the thread that called SetWinEventHook —
+        // UnhookWinEvent must run on the thread that called SetWinEventHook -
         // both happen on the message-loop thread (kiosk ctor / kiosk dispose).
         if (_hookSystem != IntPtr.Zero) { Native.UnhookWinEvent(_hookSystem); _hookSystem = IntPtr.Zero; }
         if (_hookObject != IntPtr.Zero) { Native.UnhookWinEvent(_hookObject); _hookObject = IntPtr.Zero; }

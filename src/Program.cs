@@ -21,7 +21,7 @@ internal static class Program
     // Settings deep-link variant: ShowDashboard always opens/focuses at the
     // page the user last had; this one also navigates to /settings (the tray
     // "Settings" item). A dedicated message avoids cross-process string
-    // marshaling — a registered message carries no payload.
+    // marshaling - a registered message carries no payload.
     private const string ShowDashboardSettingsMessageName = "Nexus.Overlay.ShowDashboardSettings";
     private const string ShowPanelKioskMessageName = "Nexus.Overlay.ShowPanelKiosk";
     private const string HidePanelKioskMessageName = "Nexus.Overlay.HidePanelKiosk";
@@ -51,7 +51,7 @@ internal static class Program
     private static IntPtr _marshalerHwnd;
     private static MarshalerOwner? _marshalerOwner;
     private static Win32SynchronizationContext? _syncContext;
-    // "Should we be showing overlay widgets right now?" — enabled toggle
+    // "Should we be showing overlay widgets right now?" - enabled toggle
     // AND at least one widget pinned. Either condition flipping false
     // is treated identically: tear down + idle.
     private static bool _lastPolledShouldShow;
@@ -242,7 +242,7 @@ internal static class Program
     /// Create the dashboard window for each "Open Nexus" click. The window
     /// fully tears down on close (DashboardWindow.WM_CLOSE → DestroyWindow
     /// → OnDashboardClosed clears the singleton) so every reopen does a
-    /// fresh WebView2 init + navigation — important after a wwwroot
+    /// fresh WebView2 init + navigation - important after a wwwroot
     /// redeploy. The cold start is ~1-2s.
     /// </summary>
     // deepLinkPath: when non-null, navigate to that SPA route (e.g. "/settings"
@@ -526,7 +526,7 @@ internal static class Program
             // current kiosks untouched, but a persistently unreachable
             // service must NOT leave a dead panel painted forever: re-pair
             // once (the token churns if settings were reset), and after
-            // three consecutive failures (~15s of polls) close the kiosks —
+            // three consecutive failures (~15s of polls) close the kiosks -
             // they respawn from assignments when the service returns.
             if (_monitorKiosks is not null)
             {

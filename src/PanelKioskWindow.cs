@@ -92,7 +92,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         {
             // A throw mid-ctor (e.g. WebView2 loader missing) would otherwise
             // leak the already-shown fullscreen topmost HWND with no owner to
-            // dispose it — a permanent black window.
+            // dispose it - a permanent black window.
             Dispose();
             throw;
         }

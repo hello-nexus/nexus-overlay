@@ -4,7 +4,7 @@ namespace Nexus.Overlay.Tests;
 
 /// <summary>
 /// Stable-id extraction vectors. Must produce ids byte-identical to
-/// nexus-service's WindowsDisplayIdentity (the assignment key) — these
+/// nexus-service's WindowsDisplayIdentity (the assignment key) - these
 /// vectors mirror that algorithm's behavior.
 /// </summary>
 public class DisplayIdentityTests
