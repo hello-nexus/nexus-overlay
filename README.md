@@ -65,3 +65,10 @@ Tests live under `tests/`. They cover the AOT-safe bits (region math, prefs poll
 ## Why a separate process
 
 `nexus-service` is `ASP.NET Core / AOT` and runs as a Windows service. The overlay needs interactive desktop access (HWNDs, foreground activation, per-monitor DPI, transparent windowing) - none of which a service can do cleanly. Splitting it out also lets the overlay process exit when idle so a paired-but-empty install has no overlay process running at all.
+
+## License
+
+`nexus-overlay` is licensed under the **GNU Affero General Public License v3.0**
+(AGPL-3.0); see [`LICENSE`](LICENSE) for the full text.
+
+Copyright (C) 2026 Hello Nexus
