@@ -91,15 +91,17 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        Log.Reset();
-        Log.Info($"main start args=[{string.Join(' ', args)}]");
-
         using var mutex = new Mutex(initiallyOwned: true, SingletonMutexName, out var firstInstance);
         if (!firstInstance)
         {
             Log.Info("singleton: another instance owns the mutex; exiting");
             return 0;
         }
+
+        // Reset only after winning the singleton, so a losing relaunch appends
+        // its exit line instead of truncating the running instance's log.
+        Log.Reset();
+        Log.Info($"main start args=[{string.Join(' ', args)}]");
 
         // Set the AppUserModelID before any window is created so the
         // shell associates every overlay HWND with this AUMID. Required
