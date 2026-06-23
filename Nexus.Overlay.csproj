@@ -77,6 +77,11 @@
       <_StripFromPublish Include="$(PublishDir)nexus-overlay.pdb" />
     </ItemGroup>
     <Delete Files="@(_StripFromPublish)" />
+    <!-- The win-x64 RID publish copies the native WebView2Loader.dll from
+         runtimes/win-x64/native/ to the publish root (the copy the host
+         P/Invokes by name). It is the only native asset, so the runtimes/
+         tree is a redundant duplicate of that one DLL; drop it. -->
+    <RemoveDir Directories="$(PublishDir)runtimes" />
   </Target>
 
 </Project>
