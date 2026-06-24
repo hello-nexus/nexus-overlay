@@ -512,6 +512,25 @@ internal static class Program
             var kioskUp = _panelKiosk is not null;
             if (latest.Panel.AutoLaunch && !kioskUp) MaybeShowPanelKiosk();
             else if (!latest.Panel.AutoLaunch && kioskUp) ClosePanelKiosk();
+            else if (latest.Panel.AutoLaunch && _panelKiosk is { } kiosk && kiosk.Hwnd != IntPtr.Zero)
+            {
+                // A display rotation after the kiosk was created (Windows drives
+                // a freshly attached Y70 from its native landscape to portrait,
+                // delivered as a late WM_DISPLAYCHANGE) leaves the window sized to
+                // the stale landscape bounds, so the portrait SPA renders sideways.
+                // Recreate at the panel monitor's current bounds - the same bounds
+                // reconcile MonitorKioskManager applies to promoted-monitor kiosks.
+                var target = PanelDisplay.Find();
+                var b = kiosk.MonitorBounds;
+                if (target is not null
+                    && !(target.Bounds.Left == b.Left && target.Bounds.Top == b.Top
+                         && target.Bounds.Right == b.Right && target.Bounds.Bottom == b.Bottom))
+                {
+                    Log.Info($"panel kiosk monitor bounds changed -> {target.Bounds.Width}x{target.Bounds.Height}; recreating");
+                    ClosePanelKiosk();
+                    MaybeShowPanelKiosk();
+                }
+            }
 
             // Toggle the Y70 kiosk's monitor guard when the global
             // reserveMonitor pref flips. Promoted-monitor kiosks carry their
