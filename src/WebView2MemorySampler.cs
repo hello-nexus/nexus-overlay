@@ -8,7 +8,7 @@ namespace Nexus.Overlay;
 /// Samples the working set of the WebView2 child processes
 /// (msedgewebview2.exe) and reports to the service log via
 /// <c>/diagnostics/client-mem</c> (source=host), plus a local line in
-/// desktop-host.log. The renderer's own probe (nexus-web) can only read its JS
+/// nexus-overlay.log. The renderer's own probe (nexus-web) can only read its JS
 /// heap via performance.memory; a renderer's total working set can far exceed
 /// its JS heap, so this host number is what tells a JS-heap leak apart from a
 /// GPU/canvas one.
@@ -67,7 +67,7 @@ internal sealed class WebView2MemorySampler : IDisposable
                 Children = count,
             });
             // Also land it locally; the POST can be dropped if the service is
-            // mid-restart, and desktop-host.log is collected alongside. Same tag
+            // mid-restart, and nexus-overlay.log is collected alongside. Same tag
             // + shape the service writes for the POSTed copy, so `[client-mem]`
             // greps both logs uniformly.
             Log.Info($"[client-mem] host total={totalMb}MB largest={largestMb}MB(pid {largestPid}) children={count}");

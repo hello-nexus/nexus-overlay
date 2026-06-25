@@ -99,9 +99,9 @@ internal static class Program
             return 0;
         }
 
-        // Reset only after winning the singleton, so a losing relaunch appends
-        // its exit line instead of truncating the running instance's log.
-        Log.Reset();
+        // Rotate only after winning the singleton, so a losing relaunch appends
+        // its exit line instead of archiving the running instance's log.
+        Log.Rotate();
         Log.Info($"main start args=[{string.Join(' ', args)}]");
 
         // Set the AppUserModelID before any window is created so the
