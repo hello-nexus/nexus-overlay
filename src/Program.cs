@@ -47,6 +47,7 @@ internal static class Program
     private static uint _hidePanelKioskMsg;
     private static uint _prefsChangedMsg;
     private static NexusApi? _api;
+    private static WebView2MemorySampler? _memSampler;
     private static string _pairedToken = "";
     private static IntPtr _marshalerHwnd;
     private static MarshalerOwner? _marshalerOwner;
@@ -129,6 +130,12 @@ internal static class Program
             return 2;
         }
         Log.Info($"paired ok token len={_pairedToken.Length}");
+
+        // Report WebView2 child working sets to the service log on significant
+        // change. Runs on its own timer thread - independent of the message loop
+        // and never captures the Win32 sync context (its HttpClient awaits run on
+        // the thread pool), so it can't deadlock the not-yet-running loop.
+        _memSampler = new WebView2MemorySampler(_api);
 
         var prefs = _api.GetPreferencesAsync().GetAwaiter().GetResult();
         Log.Info($"prefs enabled={prefs.Overlay.Enabled} pinned={prefs.Overlay.Layout.Count} alwaysOnTop={prefs.Overlay.AlwaysOnTop} monitor={prefs.Overlay.Monitor}");
@@ -229,6 +236,8 @@ internal static class Program
 
         // Cleanup: dispose kiosks, then dashboard, then per-monitor overlays.
         Native.KillTimer(_marshalerHwnd, TIMER_PREFS_POLL);
+        _memSampler?.Dispose();
+        _memSampler = null;
         _monitorKiosks?.CloseAll();
         _monitorKiosks = null;
         _panelKiosk?.Dispose();

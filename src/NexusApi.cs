@@ -90,6 +90,36 @@ internal sealed class NexusApi
             return null;
         }
     }
+
+    /// <summary>
+    /// Fire-and-forget POST of a WebView2 working-set sample to
+    /// <c>/diagnostics/client-mem</c> (loopback-only). Lands in nexus-service.log
+    /// next to the renderer's own samples so a memory leak's host-side curve is
+    /// visible in the log a tester submits. Best-effort: never awaited, never
+    /// throws into the sampler.
+    /// </summary>
+    public void PostClientMem(ClientMemSample sample) => _ = PostClientMemAsync(sample);
+
+    private async Task PostClientMemAsync(ClientMemSample sample)
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/diagnostics/client-mem")
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(sample, ApiJson.Default.ClientMemSample),
+                    System.Text.Encoding.UTF8,
+                    "application/json"),
+            };
+            if (!string.IsNullOrEmpty(Token))
+                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Token);
+            using var resp = await _http.SendAsync(req).ConfigureAwait(false);
+        }
+        catch
+        {
+            /* diagnostics POST is best-effort */
+        }
+    }
 }
 
 internal sealed class PairResponse
@@ -171,6 +201,22 @@ internal sealed class DisplayAssignmentsResponse
     public System.Collections.Generic.List<DisplayAssignment> Assignments { get; set; } = new();
 }
 
+/// <summary>
+/// Host-side WebView2 working-set sample. Property names serialize camelCase
+/// (see <see cref="ApiJson"/> below) to match the service's
+/// <c>ClientMemBody</c> (Source="host"): totalWsMB, largestWsMB, largestPid,
+/// children.
+/// </summary>
+internal sealed class ClientMemSample
+{
+    public string Source { get; set; } = "host";
+    public int TotalWsMB { get; set; }
+    public int LargestWsMB { get; set; }
+    public int LargestPid { get; set; }
+    public int Children { get; set; }
+}
+
+[JsonSerializable(typeof(ClientMemSample))]
 [JsonSerializable(typeof(PairResponse))]
 [JsonSerializable(typeof(UiPrefs))]
 [JsonSerializable(typeof(OverlayBlock))]
