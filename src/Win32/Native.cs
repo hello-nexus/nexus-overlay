@@ -51,6 +51,7 @@ internal static unsafe class Native
     public const uint SWP_NOSIZE = 0x0001;
     public const uint SWP_NOACTIVATE = 0x0010;
     public const uint SWP_NOZORDER = 0x0004;
+    public const uint SWP_NOREDRAW = 0x0008;
     public const uint SWP_FRAMECHANGED = 0x0020;
     public const uint SWP_SHOWWINDOW = 0x0040;
 
@@ -268,6 +269,9 @@ internal static unsafe class Native
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetParent(IntPtr hWnd);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern int GetSystemMetrics(int nIndex);

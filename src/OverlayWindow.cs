@@ -440,7 +440,13 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         // RasterizationScale 1.0 (see OnControllerCreated), so the SPA's CSS-px
         // layout maps 1:1 to device px and the carve-out matches the widgets at
         // any display scaling.
-        Native.SetWindowRgn(Hwnd, region, true);
+        // bRedraw=false: the region is a DWM clip re-applied every compositor
+        // frame, so the new shape shows without an explicit redraw. bRedraw=true
+        // forces a full-window repaint of the whole carved region on every
+        // reportLayout, which blinks all widget cards at once (most visible when
+        // opening the context menu adds its rect). Matches the ctor's empty-region
+        // set, which already passes false.
+        Native.SetWindowRgn(Hwnd, region, false);
         Log.Info($"overlay {_monitor.Index} region rebuilt rects={rects.Count}");
     }
 
@@ -449,20 +455,28 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
     private void ApplyZOrder()
     {
         if (Hwnd == IntPtr.Zero) return;
-        Native.SetParent(Hwnd, IntPtr.Zero);
+        // Re-parent to the desktop only if something actually reparented us
+        // (defends against a WorkerW capture). An unconditional SetParent on
+        // every z-order apply repaints the window, contributing to a one-frame
+        // flash on each menu-open / drag toggle.
+        if (Native.GetParent(Hwnd) != IntPtr.Zero)
+            Native.SetParent(Hwnd, IntPtr.Zero);
 
+        // SWP_NOREDRAW: this is a regioned, DWM-composited window; the z-order
+        // change still takes effect (the compositor re-stacks next frame), but
+        // suppressing the GDI repaint avoids the full-window flash that fires on
+        // every topmost<->bottom toggle (menu open/close, drag start/end).
+        const uint zFlags = Native.SWP_NOMOVE | Native.SWP_NOSIZE
+            | Native.SWP_NOACTIVATE | Native.SWP_NOREDRAW;
         if (_alwaysOnTop)
         {
-            Native.SetWindowPos(Hwnd, Native.HWND_TOPMOST, 0, 0, 0, 0,
-                Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+            Native.SetWindowPos(Hwnd, Native.HWND_TOPMOST, 0, 0, 0, 0, zFlags);
             Log.Info($"overlay {_monitor.Index} zorder=topmost");
         }
         else
         {
-            Native.SetWindowPos(Hwnd, Native.HWND_NOTOPMOST, 0, 0, 0, 0,
-                Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
-            Native.SetWindowPos(Hwnd, Native.HWND_BOTTOM, 0, 0, 0, 0,
-                Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+            Native.SetWindowPos(Hwnd, Native.HWND_NOTOPMOST, 0, 0, 0, 0, zFlags);
+            Native.SetWindowPos(Hwnd, Native.HWND_BOTTOM, 0, 0, 0, 0, zFlags);
             Log.Info($"overlay {_monitor.Index} zorder=bottom");
         }
         _zOrderApplied = true;
