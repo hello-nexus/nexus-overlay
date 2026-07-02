@@ -108,6 +108,13 @@ internal static class WebView2Vtable
     // is on ICoreWebView2Settings3 specifically; QI separately for that IID.
     // Not wired up.
 
+    // ICoreWebView2Settings4 (extends Settings3). Adds IsPasswordAutosaveEnabled
+    // and IsGeneralAutofillEnabled. QI separately for IID_ICoreWebView2Settings4.
+    public const int Settings4_get_IsPasswordAutosaveEnabled = 25;
+    public const int Settings4_put_IsPasswordAutosaveEnabled = 26;
+    public const int Settings4_get_IsGeneralAutofillEnabled = 27;
+    public const int Settings4_put_IsGeneralAutofillEnabled = 28;
+
     // ICoreWebView2Settings9 (extends Settings8). Slots are 0-based from the
     // first IUnknown method; Settings adds 2 methods per property bumped
     // through 8 prior versions. IsNonClientRegionSupportEnabled is added at

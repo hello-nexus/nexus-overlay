@@ -689,6 +689,20 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             Wv2.Settings_put_IsStatusBarEnabled(settings, true);
             Wv2.Settings_put_IsZoomControlEnabled(settings, true);
 
+            // WebView2 defaults IsPasswordAutosaveEnabled to false; the
+            // dashboard has real sign-in forms (account login), so opt in.
+            var settings4 = Wv2.QueryInterface(settings, WebView2Native.IID_ICoreWebView2Settings4);
+            if (settings4 != IntPtr.Zero)
+            {
+                Wv2.Settings4_put_IsPasswordAutosaveEnabled(settings4, true);
+                Wv2.Settings4_put_IsGeneralAutofillEnabled(settings4, true);
+                Wv2.Release(settings4);
+            }
+            else
+            {
+                Log.Info("dashboard ICoreWebView2Settings4 not available - password autosave disabled");
+            }
+
             // ICoreWebView2Settings9 is added at SDK 1.0.2420.47; older
             // hosts return E_NOINTERFACE on QI and we silently skip - the
             // drag region just won't work there and the user falls back to

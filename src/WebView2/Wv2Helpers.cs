@@ -234,6 +234,14 @@ internal static unsafe class Wv2
         return fn(settings, v ? 1 : 0);
     }
 
+    // ===================== ICoreWebView2Settings4 =====================
+
+    public static int Settings4_put_IsPasswordAutosaveEnabled(IntPtr settings4, bool v) =>
+        SettingsPutBool(settings4, WebView2Vtable.Settings4_put_IsPasswordAutosaveEnabled, v);
+
+    public static int Settings4_put_IsGeneralAutofillEnabled(IntPtr settings4, bool v) =>
+        SettingsPutBool(settings4, WebView2Vtable.Settings4_put_IsGeneralAutofillEnabled, v);
+
     // ===================== ICoreWebView2Settings9 =====================
 
     public static int Settings9_put_IsNonClientRegionSupportEnabled(IntPtr settings9, bool v) =>
