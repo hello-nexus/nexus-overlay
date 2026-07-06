@@ -310,6 +310,14 @@ internal static class Program
         DisarmIdleExitTimer();
         var url = $"{ServiceOrigin}/panel?token={Uri.EscapeDataString(_pairedToken)}";
         _panelKiosk = new PanelKioskWindow(target, url, _lastPolledReserveMonitor);
+        var created = _panelKiosk;
+        // Drop the reference on ANY teardown, including one the OS drives
+        // directly (bypassing ClosePanelKiosk), so a dead kiosk never
+        // wedges the next reconcile poll against a disposed reference.
+        created.Destroyed = () =>
+        {
+            if (ReferenceEquals(_panelKiosk, created)) _panelKiosk = null;
+        };
         Log.Info($"panel kiosk opened on monitor={target.Index} guard={_lastPolledReserveMonitor}");
     }
 
@@ -518,7 +526,9 @@ internal static class Program
             // presence (not a cached pref value) means a Y70 hot-plug AFTER
             // panel.autoLaunch was already on gets picked up on the next
             // poll: previous poll's Find() returned null, this poll finds it.
-            var kioskUp = _panelKiosk is not null;
+            // Hwnd == 0 means the window died without going through
+            // ClosePanelKiosk; treat it as down so it relaunches.
+            var kioskUp = _panelKiosk is not null && _panelKiosk.Hwnd != IntPtr.Zero;
             if (latest.Panel.AutoLaunch && !kioskUp) MaybeShowPanelKiosk();
             else if (!latest.Panel.AutoLaunch && kioskUp) ClosePanelKiosk();
             else if (latest.Panel.AutoLaunch && _panelKiosk is { } kiosk && kiosk.Hwnd != IntPtr.Zero)

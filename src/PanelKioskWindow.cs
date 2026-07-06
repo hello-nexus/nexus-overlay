@@ -33,6 +33,14 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     public IntPtr Hwnd { get; private set; }
     public int MonitorIndex => _monitor.Index;
 
+    /// <summary>
+    /// Fires once, at the end of the one real Dispose (the _disposed guard
+    /// blocks the WM_DESTROY reentrancy below from firing it twice). Lets
+    /// the owner drop its reference when the HWND dies by a path other than
+    /// its own explicit close call.
+    /// </summary>
+    public Action? Destroyed;
+
     private MonitorInfo _monitor;
     private readonly string _navigationUrl;
     private IntPtr _env;
@@ -403,5 +411,6 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             Win32Window.Unregister(Hwnd);
             Hwnd = IntPtr.Zero;
         }
+        Destroyed?.Invoke();
     }
 }
