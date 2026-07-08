@@ -20,7 +20,7 @@ internal static class PanelDisplay
     // a separate assembly, so the constant can't be shared.
     private static readonly string[] KnownPanelHardwareNames =
     {
-        "RTK0004", "RTD1100", "RTK1234", "RTK2234", "BOE2143", "RTK409A",
+        "RTK0004", "RTD1100", "RTK1234", "RTK2234", "BOE2143", "RTK409A", "RTK2345",
     };
 
     // Last scan result. The kiosk poll runs Find() every 5 s; logging only when
