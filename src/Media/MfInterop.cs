@@ -210,6 +210,15 @@ internal static unsafe class MfInterop
         return hr;
     }
 
+    /// <summary>Injects an event; the deterministic wakeup for a blocked
+    /// GetEvent regardless of the process-wide MF startup refcount.</summary>
+    public static int EventGen_QueueEvent(IntPtr generator, uint mediaEventType)
+    {
+        var extendedType = Guid.Empty;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, uint, Guid*, int, IntPtr, int>)Wv2.Slot(generator, MfVtable.EventGen_QueueEvent);
+        return fn(generator, mediaEventType, &extendedType, 0, IntPtr.Zero);
+    }
+
     // ===================== IMFActivate =====================
 
     public static int Activate_ActivateObject(IntPtr activate, in Guid iid, out IntPtr instance)

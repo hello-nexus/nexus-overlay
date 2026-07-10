@@ -15,7 +15,6 @@ internal sealed class StreamHostManager
 {
     private readonly string _serviceOrigin;
     private readonly Dictionary<string, StreamPanelHost> _hosts = new(StringComparer.Ordinal);
-    private Dictionary<string, StreamAssignment> _lastAssignments = new(StringComparer.Ordinal);
 
     public StreamHostManager(string serviceOrigin)
     {
@@ -32,7 +31,6 @@ internal sealed class StreamHostManager
             if (!string.IsNullOrEmpty(assignment.SessionId) && !string.IsNullOrEmpty(assignment.PanelDeviceId))
                 desired[assignment.SessionId] = assignment;
         }
-        _lastAssignments = desired;
 
         var (spawn, close) = StreamHostPlan.Compute(desired.Keys.ToList(), _hosts.Keys.ToList());
 

@@ -13,7 +13,7 @@ Native AOT, no Microsoft.Web.WebView2.Core dependency: the WebView2 host calls `
 | `PanelKioskWindow` | `/panel/:deviceId` | Fullscreen tool-window for the HYTE Y70/Y80 secondary touch display, plus one per monitor the user assigns a panel to (reconciled from the service's monitor-panel assignments). Topmost, sized to its monitor, hidden from the taskbar. |
 | `StreamPanelHost` | `/panel/:deviceId` (off-screen) | Streamed-panel render host: an off-screen WebView2 captured via Windows.Graphics.Capture, hardware-encoded to H.264 (Media Foundation), and pushed to the service's `/panel/streams/{sessionId}/ingest`, which paces it onto a USB display device. Reconciled from `/panel/streams/assignments`; runs in its own `StreamWebView2` environment so its browser arguments never touch the other surfaces. |
 
-All three surfaces are the same React app from [`nexus-web`](https://github.com/hello-nexus/nexus-web); the URL path picks which view loads.
+All surfaces load the same React app from [`nexus-web`](https://github.com/hello-nexus/nexus-web); the URL path picks which view loads.
 
 ## How it's driven
 

@@ -68,6 +68,7 @@ internal static class MfVtable
     // ===================== IMFMediaEventGenerator (mfobjects.h:4615) =====================
 
     public const int EventGen_GetEvent = 3;
+    public const int EventGen_QueueEvent = 6;
 
     // ===================== IMFActivate own methods (mfobjects.h:5802) =====================
 

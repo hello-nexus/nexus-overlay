@@ -70,6 +70,8 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private long _framesPumped;
     private long _framesAtLastTick;
     private int _zeroFrameTicks;
+    private int _restartRequested;
+    private bool _restartedThisEpisode;
     private bool _engineStarted;
     private bool _disposed;
 
@@ -134,7 +136,15 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
                 return null;
 
             case Native.WM_DESTROY:
-                Dispose();
+                // External HWND destruction is a fault, not a teardown: the
+                // manager must drop its entry or the still-desired session is
+                // never respawned and a zombie Count pins IsIdle forever.
+                if (!_disposed)
+                {
+                    var destroyedCallback = Faulted;
+                    Dispose();
+                    try { destroyedCallback?.Invoke(); } catch { }
+                }
                 return IntPtr.Zero;
         }
         return null;
@@ -254,13 +264,24 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     private static int OnNavigationCompletedStatic(IntPtr self, IntPtr sender, IntPtr args)
     {
-        FindByNavHandler(self)?.OnNavigationCompleted();
+        var success = true;
+        if (args != IntPtr.Zero)
+            Wv2.NavCompletedArgs_get_IsSuccess(args, out success);
+        FindByNavHandler(self)?.OnNavigationCompleted(success);
         return WebView2Native.S_OK;
     }
 
-    private void OnNavigationCompleted()
+    private void OnNavigationCompleted(bool success)
     {
         if (_disposed || _engineStarted) return;
+        if (!success)
+        {
+            // Streaming the Chromium error page to the device helps nobody;
+            // fault and let the respawn retry the navigation.
+            Log.Error($"stream-host {SessionId}: navigation failed");
+            PostFault();
+            return;
+        }
         _engineStarted = true;
         try
         {
@@ -277,12 +298,16 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
 
     private void StartEngine()
     {
+        // Wire values are clamped so a service-side typo (fps 0) cannot
+        // become a divide-by-zero fault-respawn loop.
+        var fps = Math.Clamp(_assignment.Fps, 1, 240);
+        var bitrateKbps = Math.Clamp(_assignment.BitrateKbps, 250, 50_000);
         _d3d = D3DDevice.Create();
         _capture = new WgcCapture(Hwnd, _d3d, _pixelWidth, _pixelHeight);
         var ingest = new IngestClient(_serviceOrigin, SessionId, _pairedToken);
         ingest.Faulted = PostFault;
         _ingest = ingest;
-        _encoder = new MfEncoder(_d3d, _pixelWidth, _pixelHeight, _assignment.Fps, _assignment.BitrateKbps,
+        _encoder = new MfEncoder(_d3d, _pixelWidth, _pixelHeight, fps, bitrateKbps,
             (accessUnit, idr) => _ingest?.Send(accessUnit, idr));
 
         _pumpStop = false;
@@ -304,6 +329,22 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         if (capture is null || encoder is null) return;
         while (!_pumpStop)
         {
+            // The pump is the only thread that touches the WGC objects, so
+            // the watchdog's restart request executes here rather than
+            // racing TryGetNextFrame with a released pool.
+            if (Interlocked.Exchange(ref _restartRequested, 0) == 1)
+            {
+                try
+                {
+                    capture.Restart();
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"stream-host {SessionId}: WGC restart failed: {ex.Message}");
+                    PostFault();
+                    return;
+                }
+            }
             IntPtr texture;
             bool got;
             try
@@ -340,7 +381,9 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     // Bench-proven staleness fix: WGC on an off-screen window silently stops
     // delivering frames after minutes; recreating item+pool+session on the
     // same HWND re-hooks in under a second. Never reload the page (kills
-    // capture permanently).
+    // capture permanently). Zero frames is also what a fully static page
+    // produces, and the two are indistinguishable here, so each zero-frame
+    // episode gets exactly one restart; frames flowing again re-arms it.
     private void OnWatchdogTick()
     {
         if (_disposed || _capture is null) return;
@@ -350,21 +393,15 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         if (delta > 0)
         {
             _zeroFrameTicks = 0;
+            _restartedThisEpisode = false;
             return;
         }
         _zeroFrameTicks++;
-        if (_zeroFrameTicks < 2) return;
+        if (_zeroFrameTicks < 2 || _restartedThisEpisode) return;
         _zeroFrameTicks = 0;
-        Log.Warn($"stream-host {SessionId}: capture stale, recreating WGC session");
-        try
-        {
-            _capture.Restart();
-        }
-        catch (Exception ex)
-        {
-            Log.Error($"stream-host {SessionId}: WGC restart failed: {ex.Message}");
-            PostFault();
-        }
+        _restartedThisEpisode = true;
+        Log.Warn($"stream-host {SessionId}: no frames for two ticks, recreating WGC session");
+        Interlocked.Exchange(ref _restartRequested, 1);
     }
 
     private void PostFault()
@@ -382,18 +419,31 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         try { Native.KillTimer(Hwnd, (nuint)TIMER_CAPTURE_WATCHDOG); } catch { }
 
         _pumpStop = true;
+        var pumpExited = true;
         if (_pumpThread is not null && Thread.CurrentThread != _pumpThread)
-            _pumpThread.Join(2000);
+            pumpExited = _pumpThread.Join(2000);
         _pumpThread = null;
 
         _ingest?.Dispose();
         _ingest = null;
-        _encoder?.Dispose();
-        _encoder = null;
-        _capture?.Dispose();
-        _capture = null;
-        _d3d?.Dispose();
-        _d3d = null;
+        if (!pumpExited)
+        {
+            // The pump may still be inside a wedged TryGetNextFrame/Submit on
+            // these objects; leaking them beats releasing under a live call.
+            Log.Warn($"stream-host {SessionId}: pump did not exit; leaking capture/encoder refs");
+            _encoder = null;
+            _capture = null;
+            _d3d = null;
+        }
+        else
+        {
+            _encoder?.Dispose();
+            _encoder = null;
+            _capture?.Dispose();
+            _capture = null;
+            _d3d?.Dispose();
+            _d3d = null;
+        }
 
         if (_coreWebView2 != IntPtr.Zero)
         {

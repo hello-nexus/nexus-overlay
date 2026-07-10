@@ -57,27 +57,44 @@ internal sealed unsafe class MfEncoder : IDisposable
         _onAccessUnit = onAccessUnit;
 
         Check(MfInterop.MFStartup(MfVtable.MF_VERSION, MfVtable.MFSTARTUP_NOSOCKET), "MFStartup");
-        Check(MfInterop.MFCreateDXGIDeviceManager(out var resetToken, out _devMgr), "MFCreateDXGIDeviceManager");
-        Check(MfInterop.DevMgr_ResetDevice(_devMgr, device.Device, resetToken), "ResetDevice");
+        try
+        {
+            Check(MfInterop.MFCreateDXGIDeviceManager(out var resetToken, out _devMgr), "MFCreateDXGIDeviceManager");
+            Check(MfInterop.DevMgr_ResetDevice(_devMgr, device.Device, resetToken), "ResetDevice");
 
-        Check(MfInterop.CoCreateInstance(
-            MfVtable.CLSID_VideoProcessorMFT, IntPtr.Zero, MfVtable.CLSCTX_INPROC_SERVER,
-            MfVtable.IID_IMFTransform, out _vproc), "CoCreateInstance(VideoProcessorMFT)");
-        _enc = ActivateEncoder();
+            Check(MfInterop.CoCreateInstance(
+                MfVtable.CLSID_VideoProcessorMFT, IntPtr.Zero, MfVtable.CLSCTX_INPROC_SERVER,
+                MfVtable.IID_IMFTransform, out _vproc), "CoCreateInstance(VideoProcessorMFT)");
+            _enc = ActivateEncoder();
 
-        Check(MfInterop.Xform_ProcessMessage(_vproc, MfVtable.MFT_MESSAGE_SET_D3D_MANAGER, _devMgr), "vproc SET_D3D_MANAGER");
-        Check(MfInterop.Xform_ProcessMessage(_enc, MfVtable.MFT_MESSAGE_SET_D3D_MANAGER, _devMgr), "encoder SET_D3D_MANAGER");
+            Check(MfInterop.Xform_ProcessMessage(_vproc, MfVtable.MFT_MESSAGE_SET_D3D_MANAGER, _devMgr), "vproc SET_D3D_MANAGER");
+            Check(MfInterop.Xform_ProcessMessage(_enc, MfVtable.MFT_MESSAGE_SET_D3D_MANAGER, _devMgr), "encoder SET_D3D_MANAGER");
 
-        ConfigureTypes((uint)bitrateKbps * 1000);
+            ConfigureTypes((uint)bitrateKbps * 1000);
 
-        Check(MfInterop.Xform_ProcessMessage(_vproc, MfVtable.MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, IntPtr.Zero), "vproc BEGIN_STREAMING");
-        Check(MfInterop.Xform_ProcessMessage(_vproc, MfVtable.MFT_MESSAGE_NOTIFY_START_OF_STREAM, IntPtr.Zero), "vproc START_OF_STREAM");
-        Check(MfInterop.Xform_ProcessMessage(_enc, MfVtable.MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, IntPtr.Zero), "encoder BEGIN_STREAMING");
-        Check(MfInterop.Xform_ProcessMessage(_enc, MfVtable.MFT_MESSAGE_NOTIFY_START_OF_STREAM, IntPtr.Zero), "encoder START_OF_STREAM");
+            Check(MfInterop.Xform_ProcessMessage(_vproc, MfVtable.MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, IntPtr.Zero), "vproc BEGIN_STREAMING");
+            Check(MfInterop.Xform_ProcessMessage(_vproc, MfVtable.MFT_MESSAGE_NOTIFY_START_OF_STREAM, IntPtr.Zero), "vproc START_OF_STREAM");
+            Check(MfInterop.Xform_ProcessMessage(_enc, MfVtable.MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, IntPtr.Zero), "encoder BEGIN_STREAMING");
+            Check(MfInterop.Xform_ProcessMessage(_enc, MfVtable.MFT_MESSAGE_NOTIFY_START_OF_STREAM, IntPtr.Zero), "encoder START_OF_STREAM");
 
-        _encEvents = Wv2.QueryInterface(_enc, MfVtable.IID_IMFMediaEventGenerator);
-        if (_encEvents == IntPtr.Zero)
-            throw new InvalidOperationException("encoder MFT has no IMFMediaEventGenerator");
+            _encEvents = Wv2.QueryInterface(_enc, MfVtable.IID_IMFMediaEventGenerator);
+            if (_encEvents == IntPtr.Zero)
+                throw new InvalidOperationException("encoder MFT has no IMFMediaEventGenerator");
+        }
+        catch
+        {
+            // A construction failure must not leak the startup ref or the
+            // half-built graph: the faulted host respawns every reconcile,
+            // so a leak here compounds indefinitely on a failing box, and
+            // each leaked startup ref turns every later encoder Dispose into
+            // the leak-on-timeout path.
+            if (_encEvents != IntPtr.Zero) Wv2.Release(_encEvents);
+            if (_enc != IntPtr.Zero) Wv2.Release(_enc);
+            if (_vproc != IntPtr.Zero) Wv2.Release(_vproc);
+            if (_devMgr != IntPtr.Zero) Wv2.Release(_devMgr);
+            MfInterop.MFShutdown();
+            throw;
+        }
 
         _eventThread = new Thread(EventLoop) { IsBackground = true, Name = "mf-encoder-events" };
         _eventThread.Start();
@@ -136,16 +153,19 @@ internal sealed unsafe class MfEncoder : IDisposable
         if (_disposed) return;
         _disposed = true;
         _running = false;
-        // MFShutdown fails the event thread's blocking GetEvent, which is the
-        // only wakeup that call has.
-        MfInterop.MFShutdown();
+        // Injected event wakes the blocked GetEvent deterministically.
+        // MFShutdown cannot: it only fails GetEvent when the process-wide
+        // startup refcount hits zero, which is false whenever another stream
+        // session is live, and Join would then stall the message loop 5s on
+        // every single-session close.
+        MfInterop.EventGen_QueueEvent(_encEvents, 1);
         if (!_eventThread.Join(5000))
         {
-            // GetEvent stayed blocked (another MF consumer holds a startup
-            // ref); the encoder objects the thread may still touch are leaked
+            // The encoder objects the thread may still touch are leaked
             // deliberately rather than released under a live call.
             Log.Warn("stream-encoder: event thread did not exit; leaking encoder refs");
             DrainQueue();
+            MfInterop.MFShutdown();
             return;
         }
         DrainQueue();
@@ -153,6 +173,7 @@ internal sealed unsafe class MfEncoder : IDisposable
         if (_enc != IntPtr.Zero) Wv2.Release(_enc);
         if (_vproc != IntPtr.Zero) Wv2.Release(_vproc);
         if (_devMgr != IntPtr.Zero) Wv2.Release(_devMgr);
+        MfInterop.MFShutdown();
         Log.Info("stream-encoder: disposed");
     }
 
