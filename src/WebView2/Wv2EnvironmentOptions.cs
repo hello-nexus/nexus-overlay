@@ -23,6 +23,19 @@ namespace Nexus.Overlay.WebView2;
 internal static unsafe class Wv2EnvironmentOptions
 {
     private const string AdditionalBrowserArguments = "--disable-features=CalculateNativeWinOcclusion";
+
+    /// <summary>Bench diagnostics hook: NEXUS_STREAM_WV2_ARGS appends extra
+    /// browser args (e.g. --remote-debugging-port=9223) to the stream env
+    /// without a rebuild. Read once; the env is created once per process.</summary>
+    private static readonly string EffectiveBrowserArguments = BuildBrowserArguments();
+
+    private static string BuildBrowserArguments()
+    {
+        var extra = Environment.GetEnvironmentVariable("NEXUS_STREAM_WV2_ARGS");
+        return string.IsNullOrWhiteSpace(extra)
+            ? AdditionalBrowserArguments
+            : AdditionalBrowserArguments + " " + extra.Trim();
+    }
     // CORE_WEBVIEW_TARGET_PRODUCT_VERSION (WebView2EnvironmentOptions.h:12,
     // package 1.0.2792.45); bump with the package.
     private const string TargetCompatibleBrowserVersion = "129.0.2792.45";
@@ -113,7 +126,7 @@ internal static unsafe class Wv2EnvironmentOptions
     private static int GetAdditionalBrowserArgumentsStub(IntPtr self, IntPtr* value)
     {
         if (value == null) return WebView2Native.E_POINTER;
-        *value = Marshal.StringToCoTaskMemUni(AdditionalBrowserArguments);
+        *value = Marshal.StringToCoTaskMemUni(EffectiveBrowserArguments);
         return WebView2Native.S_OK;
     }
 

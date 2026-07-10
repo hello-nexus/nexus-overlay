@@ -43,6 +43,7 @@ internal sealed unsafe class MfEncoder : IDisposable
 
     private long _pts;
     private long _needIn;
+    private long _lastOutputTicks;
     private long _haveOut;
     private long _submitErrs;
     private long _starved;
@@ -445,7 +446,19 @@ internal sealed unsafe class MfEncoder : IDisposable
         // Recycle the encoder's pool slot before invoking the callback.
         Wv2.Release(sample);
 
-        if (accessUnit is { Length: > 0 }) _onAccessUnit(accessUnit, isIdr);
+        if (accessUnit is { Length: > 0 })
+        {
+            // Output gaps against smooth capture arrivals isolate a stall to
+            // the convert/encode stage rather than the renderer.
+            var now = System.Diagnostics.Stopwatch.GetTimestamp();
+            if (_lastOutputTicks != 0)
+            {
+                var gapMs = (now - _lastOutputTicks) * 1000 / System.Diagnostics.Stopwatch.Frequency;
+                if (gapMs > 100) Log.Warn($"stream-encoder: output gap {gapMs}ms");
+            }
+            _lastOutputTicks = now;
+            _onAccessUnit(accessUnit, isIdr);
+        }
     }
 
     // ===================== helpers =====================

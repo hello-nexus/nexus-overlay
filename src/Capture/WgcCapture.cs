@@ -56,10 +56,14 @@ internal sealed unsafe class WgcCapture : IDisposable
     /// Dequeues the next captured frame's ID3D11Texture2D. Returns false when
     /// the pool is empty. On true the caller owns the returned texture
     /// reference and must release it (MfEncoder.Submit takes that ownership).
+    /// frameTimeTicks is the frame's SystemRelativeTime (QPC-based 100ns
+    /// ticks): a gap here means the compositor produced nothing, while an
+    /// arrival gap with contiguous frame times means the poll ran late.
     /// </summary>
-    public bool TryGetNextFrame(out IntPtr texture)
+    public bool TryGetNextFrame(out IntPtr texture, out long frameTimeTicks)
     {
         texture = IntPtr.Zero;
+        frameTimeTicks = 0;
         if (_pool == IntPtr.Zero) return false;
 
         IntPtr frame;
@@ -68,6 +72,10 @@ internal sealed unsafe class WgcCapture : IDisposable
 
         try
         {
+            long frameTime;
+            var getTime = (delegate* unmanaged[Stdcall]<IntPtr, long*, int>)Wv2.Slot(frame, WgcVtable.Frame_get_SystemRelativeTime);
+            if (getTime(frame, &frameTime) >= 0) frameTimeTicks = frameTime;
+
             IntPtr surface;
             var getSurface = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Wv2.Slot(frame, WgcVtable.Frame_get_Surface);
             if (getSurface(frame, &surface) < 0 || surface == IntPtr.Zero) return false;

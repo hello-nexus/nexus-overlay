@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -31,6 +32,9 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private const int OffscreenOrigin = -4000;
     private const uint TIMER_CAPTURE_WATCHDOG = 1;
     private const uint WatchdogIntervalMs = 5000;
+    // ~6 frame intervals at 60fps: above compositor jitter, low enough to
+    // catch every stall a viewer can perceive as a time-jump.
+    private const long CaptureGapLogThresholdMs = 100;
 
     private static readonly ConcurrentDictionary<int, StreamPanelHost> _instances = new();
     private static int _nextInstanceId;
@@ -69,6 +73,8 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private volatile bool _pumpStop;
     private long _framesPumped;
     private long _framesAtLastTick;
+    private long _lastFrameArrivalTicks;
+    private long _lastFrameTimeTicks;
     private int _zeroFrameTicks;
     private int _restartRequested;
     private bool _restartedThisEpisode;
@@ -347,9 +353,10 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
             }
             IntPtr texture;
             bool got;
+            long frameTimeTicks;
             try
             {
-                got = capture.TryGetNextFrame(out texture);
+                got = capture.TryGetNextFrame(out texture, out frameTimeTicks);
             }
             catch (Exception ex)
             {
@@ -364,6 +371,24 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
                 Thread.Sleep(2);
                 continue;
             }
+            // A capture gap is a hole in the content clock: the panel holds
+            // the last frame for the gap, then content time snaps forward.
+            // frameTs localizes it: a matching frameTs gap means the
+            // compositor produced nothing (renderer/page stall); a
+            // near-frame-interval frameTs delta means this thread polled late
+            // and the pool absorbed it.
+            var nowTicks = Stopwatch.GetTimestamp();
+            if (_lastFrameArrivalTicks != 0)
+            {
+                var arrivalMs = (nowTicks - _lastFrameArrivalTicks) * 1000 / Stopwatch.Frequency;
+                if (arrivalMs > CaptureGapLogThresholdMs)
+                {
+                    var frameTsMs = (frameTimeTicks - _lastFrameTimeTicks) / 10_000;
+                    Log.Warn($"stream-host {SessionId}: capture gap arrival={arrivalMs}ms frameTs={frameTsMs}ms");
+                }
+            }
+            _lastFrameArrivalTicks = nowTicks;
+            _lastFrameTimeTicks = frameTimeTicks;
             Interlocked.Increment(ref _framesPumped);
             try
             {
