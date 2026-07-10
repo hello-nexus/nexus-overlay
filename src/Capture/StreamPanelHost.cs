@@ -32,8 +32,9 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private const int OffscreenOrigin = -4000;
     private const uint TIMER_CAPTURE_WATCHDOG = 1;
     private const uint WatchdogIntervalMs = 5000;
-    // ~6 frame intervals at 60fps: above compositor jitter, low enough to
-    // catch every stall a viewer can perceive as a time-jump.
+    // Above compositor scheduling jitter, below what a viewer reads as a
+    // time-jump. WGC is change-driven, so slow-changing content gaps
+    // legitimately on every content update; hits are sparse-logged.
     private const long CaptureGapLogThresholdMs = 100;
 
     private static readonly ConcurrentDictionary<int, StreamPanelHost> _instances = new();
@@ -75,6 +76,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private long _framesAtLastTick;
     private long _lastFrameArrivalTicks;
     private long _lastFrameTimeTicks;
+    private long _captureGapCount;
     private int _zeroFrameTicks;
     private int _restartRequested;
     private bool _restartedThisEpisode;
@@ -314,7 +316,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         ingest.Faulted = PostFault;
         _ingest = ingest;
         _encoder = new MfEncoder(_d3d, _pixelWidth, _pixelHeight, fps, bitrateKbps,
-            (accessUnit, idr) => _ingest?.Send(accessUnit, idr));
+            (accessUnit, idr) => _ingest?.Send(accessUnit, idr), SessionId);
 
         _pumpStop = false;
         _pumpThread = new Thread(PumpLoop)
@@ -393,8 +395,14 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
                 var arrivalMs = (nowTicks - _lastFrameArrivalTicks) * 1000 / Stopwatch.Frequency;
                 if (arrivalMs > CaptureGapLogThresholdMs)
                 {
-                    var frameTsMs = (frameTimeTicks - _lastFrameTimeTicks) / 10_000;
-                    Log.Warn($"stream-host {SessionId}: capture gap arrival={arrivalMs}ms frameTs={frameTsMs}ms");
+                    var count = ++_captureGapCount;
+                    if (count <= 3 || count % 100 == 0)
+                    {
+                        var frameTs = frameTimeTicks == 0 || _lastFrameTimeTicks == 0
+                            ? "?"
+                            : $"{(frameTimeTicks - _lastFrameTimeTicks) / 10_000}";
+                        Log.Warn($"stream-host {SessionId}: capture gap arrival={arrivalMs}ms frameTs={frameTs}ms (x{count})");
+                    }
                 }
             }
             _lastFrameArrivalTicks = nowTicks;

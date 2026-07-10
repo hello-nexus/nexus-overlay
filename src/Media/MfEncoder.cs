@@ -29,10 +29,14 @@ namespace Nexus.Overlay.Media;
 internal sealed unsafe class MfEncoder : IDisposable
 {
     private const int Nv12QueueCapacity = 4;
+    // Read against the host's capture-gap warns (same threshold): output
+    // gaps with clean capture arrivals isolate a stall to convert/encode.
+    private const long OutputGapLogThresholdMs = 100;
 
     private readonly int _width;
     private readonly int _height;
     private readonly int _fps;
+    private readonly string _logTag;
     private readonly Action<byte[], bool> _onAccessUnit;
     private readonly IntPtr _devMgr;
     private readonly IntPtr _vproc;
@@ -44,17 +48,19 @@ internal sealed unsafe class MfEncoder : IDisposable
     private long _pts;
     private long _needIn;
     private long _lastOutputTicks;
+    private long _outputGapCount;
     private long _haveOut;
     private long _submitErrs;
     private long _starved;
     private volatile bool _running = true;
     private bool _disposed;
 
-    public MfEncoder(D3DDevice device, int width, int height, int fps, int bitrateKbps, Action<byte[], bool> onAccessUnit)
+    public MfEncoder(D3DDevice device, int width, int height, int fps, int bitrateKbps, Action<byte[], bool> onAccessUnit, string logTag = "")
     {
         _width = width;
         _height = height;
         _fps = fps;
+        _logTag = logTag;
         _onAccessUnit = onAccessUnit;
 
         Check(MfInterop.MFStartup(MfVtable.MF_VERSION, MfVtable.MFSTARTUP_NOSOCKET), "MFStartup");
@@ -448,13 +454,18 @@ internal sealed unsafe class MfEncoder : IDisposable
 
         if (accessUnit is { Length: > 0 })
         {
-            // Output gaps against smooth capture arrivals isolate a stall to
-            // the convert/encode stage rather than the renderer.
+            // Change-driven capture makes output gaps routine on slow
+            // content; sparse-log like the starvation counter above.
             var now = System.Diagnostics.Stopwatch.GetTimestamp();
             if (_lastOutputTicks != 0)
             {
                 var gapMs = (now - _lastOutputTicks) * 1000 / System.Diagnostics.Stopwatch.Frequency;
-                if (gapMs > 100) Log.Warn($"stream-encoder: output gap {gapMs}ms");
+                if (gapMs > OutputGapLogThresholdMs)
+                {
+                    var count = ++_outputGapCount;
+                    if (count <= 3 || count % 100 == 0)
+                        Log.Warn($"stream-encoder {_logTag}: output gap {gapMs}ms (x{count})");
+                }
             }
             _lastOutputTicks = now;
             _onAccessUnit(accessUnit, isIdr);

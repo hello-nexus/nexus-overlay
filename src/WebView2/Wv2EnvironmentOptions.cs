@@ -26,7 +26,8 @@ internal static unsafe class Wv2EnvironmentOptions
 
     /// <summary>Bench diagnostics hook: NEXUS_STREAM_WV2_ARGS appends extra
     /// browser args (e.g. --remote-debugging-port=9223) to the stream env
-    /// without a rebuild. Read once; the env is created once per process.</summary>
+    /// without a rebuild. Read once; the browser process consumes the args
+    /// only when it first launches for the user-data folder.</summary>
     private static readonly string EffectiveBrowserArguments = BuildBrowserArguments();
 
     private static string BuildBrowserArguments()
