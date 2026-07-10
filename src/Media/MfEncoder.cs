@@ -72,7 +72,7 @@ internal sealed unsafe class MfEncoder : IDisposable
             Check(MfInterop.CoCreateInstance(
                 MfVtable.CLSID_VideoProcessorMFT, IntPtr.Zero, MfVtable.CLSCTX_INPROC_SERVER,
                 MfVtable.IID_IMFTransform, out _vproc), "CoCreateInstance(VideoProcessorMFT)");
-            _enc = ActivateEncoder();
+            _enc = ActivateEncoder(device.AdapterVendorId);
 
             Check(MfInterop.Xform_ProcessMessage(_vproc, MfVtable.MFT_MESSAGE_SET_D3D_MANAGER, _devMgr), "vproc SET_D3D_MANAGER");
             Check(MfInterop.Xform_ProcessMessage(_enc, MfVtable.MFT_MESSAGE_SET_D3D_MANAGER, _devMgr), "encoder SET_D3D_MANAGER");
@@ -186,7 +186,7 @@ internal sealed unsafe class MfEncoder : IDisposable
 
     // ===================== construction =====================
 
-    private IntPtr ActivateEncoder()
+    private IntPtr ActivateEncoder(uint adapterVendorId)
     {
         var outputType = new MFT_REGISTER_TYPE_INFO
         {
@@ -203,8 +203,12 @@ internal sealed unsafe class MfEncoder : IDisposable
             if (count == 0)
                 throw new InvalidOperationException("no hardware async H.264 encoder MFT");
 
+            var names = new string?[count];
+            for (var i = 0; i < count; i++)
+                MfInterop.Attr_GetAllocatedString(((IntPtr*)activates)[i], MfVtable.MFT_FRIENDLY_NAME_Attribute, out names[i]);
+
             var lastHr = 0;
-            for (uint i = 0; i < count; i++)
+            foreach (var i in EncoderSelect.ActivationOrder(names, adapterVendorId))
             {
                 // The top-ranked activate can fail (bench-hit: E_OUTOFMEMORY);
                 // fall through to the next one.
@@ -230,8 +234,7 @@ internal sealed unsafe class MfEncoder : IDisposable
                     Wv2.Release(enc);
                     continue;
                 }
-                MfInterop.Attr_GetAllocatedString(activate, MfVtable.MFT_FRIENDLY_NAME_Attribute, out var name);
-                Log.Info($"stream-encoder: activated MFT #{i} '{name ?? "unknown"}'");
+                Log.Info($"stream-encoder: activated MFT #{i} '{names[i] ?? "unknown"}'");
                 return enc;
             }
             throw new InvalidOperationException($"all {count} hardware encoder MFTs failed; last hr=0x{lastHr:X8}");
