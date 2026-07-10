@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
+using Nexus.Overlay.Capture;
 using Nexus.Overlay.Win32;
 
 namespace Nexus.Overlay;
@@ -41,6 +42,8 @@ internal static class Program
     private static MonitorKioskManager? _monitorKiosks;
     // Consecutive /displays/assignments failures (message-loop thread only).
     private static int _assignmentFetchFailures;
+    private static StreamHostManager? _streamHosts;
+    private static int _streamFetchFailures;
     private static uint _showDashboardMsg;
     private static uint _showDashboardSettingsMsg;
     private static uint _showPanelKioskMsg;
@@ -213,6 +216,11 @@ internal static class Program
         // Promoted-monitor kiosks: one fullscreen window per assignment.
         // Independent of panel.autoLaunch (that toggle is the Y70 kiosk's).
         _monitorKiosks = new MonitorKioskManager(ServiceOrigin);
+
+        // Streamed-panel render hosts: reconciled from the prefs poll (the
+        // coordinator's push nudge lands within a poll cycle of a session
+        // appearing, so no startup fetch is needed here).
+        _streamHosts = new StreamHostManager(ServiceOrigin);
         if (initialAssignments is { Count: > 0 })
         {
             try { _monitorKiosks.Reconcile(initialAssignments, _pairedToken); }
@@ -238,6 +246,10 @@ internal static class Program
         Native.KillTimer(_marshalerHwnd, TIMER_PREFS_POLL);
         _memSampler?.Dispose();
         _memSampler = null;
+        // Stream hosts first: their encoders and capture pumps must stop
+        // before any shared teardown touches the windows they capture.
+        _streamHosts?.CloseAll();
+        _streamHosts = null;
         _monitorKiosks?.CloseAll();
         _monitorKiosks = null;
         _panelKiosk?.Dispose();
@@ -345,6 +357,10 @@ internal static class Program
             return false;
         }
         if (_monitorKiosks is { Count: > 0 })
+        {
+            return false;
+        }
+        if (_streamHosts is { Count: > 0 })
         {
             return false;
         }
@@ -593,6 +609,30 @@ internal static class Program
                     Log.Warn($"assignments unreachable {_assignmentFetchFailures}x; closing monitor kiosks");
                     _assignmentFetchFailures = 0;
                     _monitorKiosks.CloseAll();
+                    MaybeArmIdleExitTimer();
+                }
+            }
+
+            // Streamed-panel render hosts: same fetch/failure semantics as
+            // the monitor kiosks above (single failed fetch keeps hosts,
+            // three in a row closes them; they respawn from assignments when
+            // the service returns with fresh boot-scoped sessionIds).
+            if (_streamHosts is not null)
+            {
+                var streams = await _api.GetStreamAssignmentsAsync();
+                if (streams is not null)
+                {
+                    _streamFetchFailures = 0;
+                    var hadHosts = _streamHosts.Count > 0;
+                    _streamHosts.Reconcile(streams, _pairedToken);
+                    if (_streamHosts.Count > 0) DisarmIdleExitTimer();
+                    else if (hadHosts) MaybeArmIdleExitTimer();
+                }
+                else if (_streamHosts.Count > 0 && ++_streamFetchFailures >= 3)
+                {
+                    Log.Warn($"stream assignments unreachable {_streamFetchFailures}x; closing stream hosts");
+                    _streamFetchFailures = 0;
+                    _streamHosts.CloseAll();
                     MaybeArmIdleExitTimer();
                 }
             }

@@ -151,6 +151,12 @@ internal static unsafe class Wv2
         return hr;
     }
 
+    public static int Wv2_remove_NavigationCompleted(IntPtr wv2, long token)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, long, int>)Slot(wv2, WebView2Vtable.Wv2_remove_NavigationCompleted);
+        return fn(wv2, token);
+    }
+
     public static int Wv2_add_NavigationStarting(IntPtr wv2, IntPtr handler, out long token)
     {
         long t;

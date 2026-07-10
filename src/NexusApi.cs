@@ -92,6 +92,31 @@ internal sealed class NexusApi
     }
 
     /// <summary>
+    /// Desired streamed-panel sessions driving the off-screen render-host
+    /// reconcile. Same null/empty semantics as
+    /// <see cref="GetDisplayAssignmentsAsync"/>: null = request failed,
+    /// empty = service says no sessions.
+    /// </summary>
+    public async Task<System.Collections.Generic.List<StreamAssignment>?> GetStreamAssignmentsAsync()
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, "/panel/streams/assignments");
+            if (!string.IsNullOrEmpty(Token))
+                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Token);
+            using var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode) return null;
+            await using var stream = await resp.Content.ReadAsStreamAsync();
+            var doc = await JsonSerializer.DeserializeAsync(stream, ApiJson.Default.StreamAssignmentsResponse);
+            return doc?.Assignments ?? new System.Collections.Generic.List<StreamAssignment>();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Fire-and-forget POST of a WebView2 working-set sample to
     /// <c>/diagnostics/client-mem</c> (loopback-only). Lands in nexus-service.log
     /// next to the renderer's own samples so a memory leak's host-side curve is
@@ -202,6 +227,35 @@ internal sealed class DisplayAssignmentsResponse
 }
 
 /// <summary>
+/// One desired streamed-panel session (GET /panel/streams/assignments).
+/// SessionIds are boot-scoped and re-minted on any config change, so the
+/// reconcile diff is a pure spawn/close on sessionId.
+/// </summary>
+internal sealed class StreamAssignment
+{
+    [JsonPropertyName("sessionId")]
+    public string SessionId { get; set; } = "";
+    [JsonPropertyName("panelDeviceId")]
+    public string PanelDeviceId { get; set; } = "";
+    [JsonPropertyName("cssWidth")]
+    public int CssWidth { get; set; }
+    [JsonPropertyName("cssHeight")]
+    public int CssHeight { get; set; }
+    [JsonPropertyName("dpr")]
+    public double Dpr { get; set; } = 1.0;
+    [JsonPropertyName("fps")]
+    public int Fps { get; set; } = 60;
+    [JsonPropertyName("bitrateKbps")]
+    public int BitrateKbps { get; set; } = 8000;
+}
+
+internal sealed class StreamAssignmentsResponse
+{
+    [JsonPropertyName("assignments")]
+    public System.Collections.Generic.List<StreamAssignment> Assignments { get; set; } = new();
+}
+
+/// <summary>
 /// Host-side WebView2 working-set sample. Property names serialize camelCase
 /// (see <see cref="ApiJson"/> below) to match the service's
 /// <c>ClientMemBody</c> (Source="host"): totalWsMB, largestWsMB, largestPid,
@@ -226,6 +280,9 @@ internal sealed class ClientMemSample
 [JsonSerializable(typeof(DisplayAssignment))]
 [JsonSerializable(typeof(DisplayAssignmentsResponse))]
 [JsonSerializable(typeof(System.Collections.Generic.List<DisplayAssignment>))]
+[JsonSerializable(typeof(StreamAssignment))]
+[JsonSerializable(typeof(StreamAssignmentsResponse))]
+[JsonSerializable(typeof(System.Collections.Generic.List<StreamAssignment>))]
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 internal partial class ApiJson : JsonSerializerContext
 {

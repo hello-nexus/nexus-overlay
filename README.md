@@ -11,6 +11,7 @@ Native AOT, no Microsoft.Web.WebView2.Core dependency: the WebView2 host calls `
 | `DashboardWindow` | `/` | The main Nexus dashboard. Replaces the old `msedge --app` spawn the tray used. Native Windows 11 Mica backdrop behind a transparent WebView2, themed to the in-app theme. Hidden, not destroyed, when the user clicks X so the next open is instant. |
 | `OverlayWindow` (one per monitor) | `/overlay` | Transparent, click-through-where-empty floating widgets. `SetWindowRgn` carves the window down to the widget rectangles reported by the SPA so input outside them falls through to the desktop. |
 | `PanelKioskWindow` | `/panel/:deviceId` | Fullscreen tool-window for the HYTE Y70/Y80 secondary touch display, plus one per monitor the user assigns a panel to (reconciled from the service's monitor-panel assignments). Topmost, sized to its monitor, hidden from the taskbar. |
+| `StreamPanelHost` | `/panel/:deviceId` (off-screen) | Streamed-panel render host: an off-screen WebView2 captured via Windows.Graphics.Capture, hardware-encoded to H.264 (Media Foundation), and pushed to the service's `/panel/streams/{sessionId}/ingest`, which paces it onto a USB display device. Reconciled from `/panel/streams/assignments`; runs in its own `StreamWebView2` environment so its browser arguments never touch the other surfaces. |
 
 All three surfaces are the same React app from [`nexus-web`](https://github.com/hello-nexus/nexus-web); the URL path picks which view loads.
 
@@ -19,7 +20,7 @@ All three surfaces are the same React app from [`nexus-web`](https://github.com/
 `nexus-overlay.exe` runs as a per-session singleton (named `Local\Nexus.Overlay.Singleton`). The tray in [`nexus-service`](https://github.com/hello-nexus/nexus-service) signals it by registered Win32 messages:
 
 - `Nexus.Overlay.ShowDashboard` - show / focus the dashboard window.
-- `Nexus.Overlay.ShowPanelKioskWindow` / `…HidePanelKiosk` - toggle the Y70/Y80 panel.
+- `Nexus.Overlay.ShowPanelKiosk` / `…HidePanelKiosk` - toggle the Y70/Y80 panel.
 - `Nexus.Overlay.PrefsChanged` - re-read overlay preferences (enabled toggle, always-on-top, monitor selection) from the service.
 
 When no surface needs to be visible (overlays disabled, no widgets pinned, dashboard hidden, panel hidden) the process self-terminates after a short grace window. The next "Open Nexus" click re-spawns it.
@@ -41,6 +42,8 @@ src/
   RegionLayout.cs         # SPA-reported widget rects → SetWindowRgn
   NexusApi.cs             # tiny REST/WS client to nexus-service for prefs + auth
   Logger.cs               # rolling file logger
+  Capture/                # streamed panels: off-screen host + manager + hand-rolled Windows.Graphics.Capture / D3D11 interop
+  Media/                  # streamed panels: hand-rolled Media Foundation H.264 encoder, frame framing, ingest client
   WebView2/               # hand-rolled WebView2 COM bindings (no MSWebView2.Core)
   Win32/                  # P/Invoke surface (windows, monitors, regions, messages)
 ```

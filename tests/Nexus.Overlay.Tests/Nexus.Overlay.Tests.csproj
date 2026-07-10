@@ -28,6 +28,9 @@
          (pure) is exercised here. -->
     <Compile Include="..\..\src\DisplayIdentity.cs" Link="src\DisplayIdentity.cs" />
     <Compile Include="..\..\src\MonitorKioskPlan.cs" Link="src\MonitorKioskPlan.cs" />
+    <Compile Include="..\..\src\Media\AnnexB.cs" Link="src\Media\AnnexB.cs" />
+    <Compile Include="..\..\src\Media\FrameFraming.cs" Link="src\Media\FrameFraming.cs" />
+    <Compile Include="..\..\src\Capture\StreamHostPlan.cs" Link="src\Capture\StreamHostPlan.cs" />
   </ItemGroup>
 
 </Project>
