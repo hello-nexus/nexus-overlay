@@ -156,9 +156,9 @@ internal sealed unsafe class MfEncoder : IDisposable
         // Injected event wakes the blocked GetEvent deterministically.
         // MFShutdown cannot: it only fails GetEvent when the process-wide
         // startup refcount hits zero, which is false whenever another stream
-        // session is live, and Join would then stall the message loop 5s on
-        // every single-session close.
-        MfInterop.EventGen_QueueEvent(_encEvents, 1);
+        // session is live, and the Join below would then stall the message
+        // loop for its full timeout on every single-session close.
+        MfInterop.EventGen_QueueEvent(_encEvents, MfVtable.MEError);
         if (!_eventThread.Join(5000))
         {
             // The encoder objects the thread may still touch are leaked

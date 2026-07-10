@@ -147,7 +147,7 @@ internal static class Program
         var initialAssignments = _api.GetDisplayAssignmentsAsync().GetAwaiter().GetResult();
         // Stream assignments must also be fetched at startup: when the
         // coordinator spawns this process for a stream session and nothing
-        // else is on screen, the 3s idle-exit fires before the first 5s
+        // else is on screen, the idle-exit grace elapses before the first
         // prefs poll would ever see the session, and the process dies in a
         // spawn loop.
         var initialStreamAssignments = _api.GetStreamAssignmentsAsync().GetAwaiter().GetResult();

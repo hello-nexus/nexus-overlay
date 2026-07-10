@@ -70,6 +70,11 @@ internal static class MfVtable
     public const int EventGen_GetEvent = 3;
     public const int EventGen_QueueEvent = 6;
 
+    // MediaEventType MEError (mfobjects.h); the dispose wake uses it because
+    // EventLoop dispatches only the two transform events and re-checks
+    // _running on everything else.
+    public const uint MEError = 1;
+
     // ===================== IMFActivate own methods (mfobjects.h:5802) =====================
 
     public const int Activate_ActivateObject = 33;
