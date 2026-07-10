@@ -145,6 +145,12 @@ internal static class Program
         // Same no-sync-context rule as pair/prefs: fetch the initial monitor
         // assignments before the message loop exists.
         var initialAssignments = _api.GetDisplayAssignmentsAsync().GetAwaiter().GetResult();
+        // Stream assignments must also be fetched at startup: when the
+        // coordinator spawns this process for a stream session and nothing
+        // else is on screen, the 3s idle-exit fires before the first 5s
+        // prefs poll would ever see the session, and the process dies in a
+        // spawn loop.
+        var initialStreamAssignments = _api.GetStreamAssignmentsAsync().GetAwaiter().GetResult();
         _lastPolledShouldShow = ShouldShowOverlays(prefs);
         _lastPolledAlwaysOnTop = prefs.Overlay.AlwaysOnTop;
         _lastPolledMonitorIndex = prefs.Overlay.Monitor;
@@ -217,10 +223,14 @@ internal static class Program
         // Independent of panel.autoLaunch (that toggle is the Y70 kiosk's).
         _monitorKiosks = new MonitorKioskManager(ServiceOrigin);
 
-        // Streamed-panel render hosts: reconciled from the prefs poll (the
-        // coordinator's push nudge lands within a poll cycle of a session
-        // appearing, so no startup fetch is needed here).
+        // Streamed-panel render hosts: reconciled at startup (see the fetch
+        // above) and from every prefs poll after that.
         _streamHosts = new StreamHostManager(ServiceOrigin);
+        if (initialStreamAssignments is { Count: > 0 })
+        {
+            try { _streamHosts.Reconcile(initialStreamAssignments, _pairedToken); }
+            catch (Exception ex) { Log.Error($"startup stream-host reconcile: {ex.Message}"); }
+        }
         if (initialAssignments is { Count: > 0 })
         {
             try { _monitorKiosks.Reconcile(initialAssignments, _pairedToken); }
