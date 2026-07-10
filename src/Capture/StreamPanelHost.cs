@@ -333,6 +333,16 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         var capture = _capture;
         var encoder = _encoder;
         if (capture is null || encoder is null) return;
+        // Decimate capture (compositor rate, ~60Hz) down to the assignment
+        // fps. The assignment runs below the device's display rate on
+        // purpose: with production under consumption the delivery chain
+        // (socket, adb window, device fifo) stays empty and frames arrive
+        // writer-paced; at parity one transient leaves those buffers
+        // standing full and the render-on-arrival player turns the
+        // congestion into visible time snaps.
+        var targetFps = Math.Clamp(_assignment.Fps, 1, 240);
+        var submitStartTicks = 0L;
+        var submitted = 0L;
         while (!_pumpStop)
         {
             // The pump is the only thread that touches the WGC objects, so
@@ -390,6 +400,23 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
             _lastFrameArrivalTicks = nowTicks;
             _lastFrameTimeTicks = frameTimeTicks;
             Interlocked.Increment(ref _framesPumped);
+            if (submitStartTicks == 0) submitStartTicks = nowTicks;
+            var allowed = 1 + (nowTicks - submitStartTicks) * targetFps / Stopwatch.Frequency;
+            if (allowed - submitted > 3)
+            {
+                // A capture gap banked budget; spending it would burst the
+                // chain at compositor rate. Re-anchor instead.
+                submitStartTicks = nowTicks;
+                submitted = 0;
+            }
+            else if (submitted >= allowed)
+            {
+                // Over the fps budget: skip this frame. The texture is
+                // caller-owned and would otherwise leak.
+                Wv2.Release(texture);
+                continue;
+            }
+            submitted++;
             try
             {
                 encoder.Submit(texture);
