@@ -41,11 +41,6 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     // the WebView2 child covers the client rect, leaving only this edge strip
     // to grab. 12 matches Edge / Settings / Microsoft Store custom frames.
     private const int ResizeGrabLogical = 12;
-    // Top inset is smaller because the React drag strip forwards events via
-    // IsNonClientRegionSupportEnabled and WM_NCHITTEST returns HTTOP for the
-    // top few px. 4px direct non-client is the fallback for clicks outside
-    // the drag region (e.g. the gutter right of the caption buttons).
-    private const int TopResizeGrabLogical = 4;
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 2;
     private const int PermissionStateDeny = 2;
     // Fully-transparent COREWEBVIEW2_COLOR for the WebView2 controller's
@@ -192,12 +187,6 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         // it does at 100%.
         var dpi = Native.GetDpiForWindow(hwnd);
         return (int)Math.Round(ResizeGrabLogical * (dpi / 96.0));
-    }
-
-    private static int TopResizeBorderThickness(IntPtr hwnd)
-    {
-        var dpi = Native.GetDpiForWindow(hwnd);
-        return (int)Math.Round(TopResizeGrabLogical * (dpi / 96.0));
     }
 
     private static int TitleBarHeightPx(IntPtr hwnd)

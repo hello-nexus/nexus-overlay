@@ -14,10 +14,8 @@ internal static unsafe class Native
 {
     // Extended styles.
     public const int GWL_EXSTYLE = -20;
-    public const int WS_EX_LAYERED = 0x00080000;
     public const int WS_EX_TOOLWINDOW = 0x00000080;
     public const int WS_EX_NOACTIVATE = 0x08000000;
-    public const int WS_EX_TRANSPARENT = 0x00000020;
     public const int WS_EX_TOPMOST = 0x00000008;
 
     // Window styles.
@@ -75,7 +73,6 @@ internal static unsafe class Native
     public const uint WM_NCMOUSEMOVE = 0x00A0;
     public const uint WM_NCLBUTTONDOWN = 0x00A1;
     public const uint WM_NCLBUTTONUP = 0x00A2;
-    public const uint WM_DWMNCRENDERINGCHANGED = 0x031F;
     public const uint WM_TIMER = 0x0113;
     public const uint WM_DISPLAYCHANGE = 0x007E;
     public const uint WM_DPICHANGED = 0x02E0;
