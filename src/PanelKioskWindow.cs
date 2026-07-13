@@ -22,6 +22,17 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private const string WindowTitle = "Nexus Panel";
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 3;
     private const int PermissionStateDeny = 2;
+    private static readonly UIntPtr TIMER_PAINT_POLL = new(11);
+    private const uint PaintPollIntervalMs = 2_000;
+    // A first-paint performance entry exists only once the renderer's
+    // compositor produced a frame. NavigationCompleted alone is not proof of
+    // content: a kiosk created seconds after logon can report a successful
+    // navigation while the renderer sits parked pre-first-paint (bench-hit
+    // on the Y70 - 14MB renderer, no SPA execution, transparent window). A
+    // parked renderer also never answers ExecuteScript, so either way the
+    // confirmation stays unset and the owner's watchdog recreates.
+    private const string PaintProbeScript =
+        "(function(){try{return performance.getEntriesByType('paint').length>0}catch(e){return false}})()";
     // The panel SPA paints its own opaque background; this controls the
     // brief flash between WebView2 attach and first paint.
     private const uint DefaultBgArgbOpaqueBlack = 0xFF000000u;
@@ -32,6 +43,16 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
 
     public IntPtr Hwnd { get; private set; }
     public int MonitorIndex => _monitor.Index;
+
+    /// <summary>
+    /// True once the renderer reports a first-paint performance entry (see
+    /// PaintProbeScript). The owner's poll recreates a kiosk whose content
+    /// never confirms.
+    /// </summary>
+    public bool HasConfirmedContent { get; private set; }
+
+    /// <summary>Milliseconds since construction; the content-watchdog deadline base.</summary>
+    public long AgeMs => Environment.TickCount64 - _createdTick;
 
     /// <summary>
     /// Fires once, at the end of the one real Dispose (the _disposed guard
@@ -47,14 +68,18 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private IntPtr _envCreatedHandler;
     private IntPtr _ctrlCreatedHandler;
     private IntPtr _navStartingHandler;
+    private IntPtr _navCompletedHandler;
+    private IntPtr _execScriptHandler;
     private IntPtr _newWindowHandler;
     private IntPtr _permissionHandler;
     private IntPtr _controller;
     private IntPtr _controller2;
     private IntPtr _coreWebView2;
     private long _navStartingToken;
+    private long _navCompletedToken;
     private long _newWindowToken;
     private long _permissionToken;
+    private readonly long _createdTick = Environment.TickCount64;
     private PanelMonitorGuard? _monitorGuard;
     private bool _disposed;
 
@@ -171,6 +196,14 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 }
                 return IntPtr.Zero;
 
+            case Native.WM_TIMER:
+                if (wParam == (IntPtr)(long)TIMER_PAINT_POLL.ToUInt64())
+                {
+                    ProbePaint();
+                    return IntPtr.Zero;
+                }
+                return null;
+
             case Native.WM_DESTROY:
                 Dispose();
                 return IntPtr.Zero;
@@ -271,6 +304,9 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         _navStartingHandler = WebView2Callbacks.CreateNavigationStartingHandler(&OnNavigationStartingStatic);
         Wv2.Wv2_add_NavigationStarting(_coreWebView2, _navStartingHandler, out _navStartingToken);
 
+        _navCompletedHandler = WebView2Callbacks.CreateNavigationCompletedHandler(&OnNavigationCompletedStatic);
+        Wv2.Wv2_add_NavigationCompleted(_coreWebView2, _navCompletedHandler, out _navCompletedToken);
+
         _newWindowHandler = WebView2Callbacks.CreateNewWindowRequestedHandler(&OnNewWindowRequestedStatic);
         Wv2.Wv2_add_NewWindowRequested(_coreWebView2, _newWindowHandler, out _newWindowToken);
 
@@ -302,6 +338,62 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             }
         }
         catch (Exception ex) { Log.Error($"panel-kiosk NavStarting: {ex.Message}"); }
+        return WebView2Native.S_OK;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnNavigationCompletedStatic(IntPtr self, IntPtr sender, IntPtr args)
+    {
+        var owner = FindByNavCompletedHandler(self);
+        if (owner is null) return WebView2Native.S_OK;
+        var ok = false;
+        var status = 0;
+        if (args != IntPtr.Zero)
+        {
+            Wv2.NavCompletedArgs_get_IsSuccess(args, out ok);
+            Wv2.NavCompletedArgs_get_WebErrorStatus(args, out status);
+        }
+        Log.Info($"panel-kiosk navigation completed ok={ok} webErr={status}");
+        if (ok) owner.StartPaintConfirmationPoll();
+        return WebView2Native.S_OK;
+    }
+
+    private void StartPaintConfirmationPoll()
+    {
+        if (_disposed || HasConfirmedContent || Hwnd == IntPtr.Zero) return;
+        if (_execScriptHandler == IntPtr.Zero)
+        {
+            _execScriptHandler = WebView2Callbacks.CreateExecuteScriptCompletedHandler(&OnExecuteScriptCompletedStatic);
+        }
+        Native.SetTimer(Hwnd, TIMER_PAINT_POLL, PaintPollIntervalMs, IntPtr.Zero);
+        ProbePaint();
+    }
+
+    private void ProbePaint()
+    {
+        if (_disposed || _coreWebView2 == IntPtr.Zero || _execScriptHandler == IntPtr.Zero) return;
+        if (HasConfirmedContent)
+        {
+            Native.KillTimer(Hwnd, TIMER_PAINT_POLL);
+            return;
+        }
+        Wv2.Wv2_ExecuteScript(_coreWebView2, PaintProbeScript, _execScriptHandler);
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnExecuteScriptCompletedStatic(IntPtr self, int errorCode, IntPtr resultJsonPtr)
+    {
+        var owner = FindByExecScriptHandler(self);
+        if (owner is null || owner._disposed) return WebView2Native.S_OK;
+        if (WebView2Native.Failed(errorCode) || resultJsonPtr == IntPtr.Zero) return WebView2Native.S_OK;
+        // resultJsonPtr is caller-owned (LPCWSTR in param); borrow, don't free.
+        var json = Marshal.PtrToStringUni(resultJsonPtr);
+        if (json == "true")
+        {
+            owner.HasConfirmedContent = true;
+            Native.KillTimer(owner.Hwnd, TIMER_PAINT_POLL);
+            Log.Info($"panel-kiosk first paint confirmed {owner.AgeMs} ms after create");
+        }
         return WebView2Native.S_OK;
     }
 
@@ -363,6 +455,10 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     { foreach (var kv in _instances) if (kv.Value._ctrlCreatedHandler == h) return kv.Value; return null; }
     private static PanelKioskWindow? FindByNavStartingHandler(IntPtr h)
     { foreach (var kv in _instances) if (kv.Value._navStartingHandler == h) return kv.Value; return null; }
+    private static PanelKioskWindow? FindByNavCompletedHandler(IntPtr h)
+    { foreach (var kv in _instances) if (kv.Value._navCompletedHandler == h) return kv.Value; return null; }
+    private static PanelKioskWindow? FindByExecScriptHandler(IntPtr h)
+    { foreach (var kv in _instances) if (kv.Value._execScriptHandler == h) return kv.Value; return null; }
     private static PanelKioskWindow? FindByNewWindowHandler(IntPtr h)
     { foreach (var kv in _instances) if (kv.Value._newWindowHandler == h) return kv.Value; return null; }
     private static PanelKioskWindow? FindByPermissionHandler(IntPtr h)
@@ -381,6 +477,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             if (_coreWebView2 != IntPtr.Zero)
             {
                 if (_navStartingToken != 0) { Wv2.Wv2_remove_NavigationStarting(_coreWebView2, _navStartingToken); _navStartingToken = 0; }
+                if (_navCompletedToken != 0) { Wv2.Wv2_remove_NavigationCompleted(_coreWebView2, _navCompletedToken); _navCompletedToken = 0; }
                 if (_newWindowToken != 0) { Wv2.Wv2_remove_NewWindowRequested(_coreWebView2, _newWindowToken); _newWindowToken = 0; }
                 if (_permissionToken != 0) { Wv2.Wv2_remove_PermissionRequested(_coreWebView2, _permissionToken); _permissionToken = 0; }
             }
@@ -396,6 +493,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             if (_envCreatedHandler != IntPtr.Zero) { Wv2.Release(_envCreatedHandler); _envCreatedHandler = IntPtr.Zero; }
             if (_ctrlCreatedHandler != IntPtr.Zero) { Wv2.Release(_ctrlCreatedHandler); _ctrlCreatedHandler = IntPtr.Zero; }
             if (_navStartingHandler != IntPtr.Zero) { Wv2.Release(_navStartingHandler); _navStartingHandler = IntPtr.Zero; }
+            if (_navCompletedHandler != IntPtr.Zero) { Wv2.Release(_navCompletedHandler); _navCompletedHandler = IntPtr.Zero; }
+            if (_execScriptHandler != IntPtr.Zero) { Wv2.Release(_execScriptHandler); _execScriptHandler = IntPtr.Zero; }
             if (_newWindowHandler != IntPtr.Zero) { Wv2.Release(_newWindowHandler); _newWindowHandler = IntPtr.Zero; }
             if (_permissionHandler != IntPtr.Zero) { Wv2.Release(_permissionHandler); _permissionHandler = IntPtr.Zero; }
         }

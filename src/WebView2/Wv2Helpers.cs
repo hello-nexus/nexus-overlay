@@ -124,6 +124,12 @@ internal static unsafe class Wv2
         fixed (char* j = json) return fn(wv2, j);
     }
 
+    public static int Wv2_ExecuteScript(IntPtr wv2, string script, IntPtr completedHandler)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, char*, IntPtr, int>)Slot(wv2, WebView2Vtable.Wv2_ExecuteScript);
+        fixed (char* s = script) return fn(wv2, s, completedHandler);
+    }
+
     public static int Wv2_get_Settings(IntPtr wv2, out IntPtr settings)
     {
         IntPtr s;

@@ -33,6 +33,28 @@ internal static class Program
     // the process exits. Sized to absorb the tray's launch -> ShowDashboard
     // message race at startup.
     private const uint IdleExitDelayMs = 3_000;
+    // Idle grace while panel.autoLaunch is on and a kiosk is expected but
+    // not up (never opened early in process life, or a recreate is mid-
+    // flight). On a cold boot the HYTE panel can enumerate (or surface its
+    // real PnP hardware id) well after this process starts, and the default
+    // grace is shorter than the poll interval - the process would exit
+    // before the first PanelDisplay.Find() retry, and a clean exit is
+    // deliberately not respawned by the service, so the kiosk never appears
+    // until a settings toggle. Long enough for the poll + WM_DISPLAYCHANGE
+    // to catch a slow panel.
+    private const uint PanelPendingIdleExitDelayMs = 120_000;
+    // The never-opened arm of the extended grace applies only this long
+    // after process start (the boot/spawn window). Without the age scope,
+    // every dashboard open/close on a PC with no HYTE panel would linger
+    // the full extended grace, since panel.autoLaunch defaults on.
+    private const long PanelPendingGraceWindowMs = 600_000;
+    // Deadline for a kiosk navigation to confirm content before the poll
+    // recreates the window (the same remedy as the settings toggle). After
+    // KioskRecreateFastAttempts unconfirmed recreates, stretch the deadline
+    // so a persistently broken WebView2 doesn't churn processes every poll.
+    private const long KioskContentDeadlineMs = 20_000;
+    private const long KioskContentDeadlineSlowMs = 120_000;
+    private const int KioskRecreateFastAttempts = 3;
 
     private static readonly List<OverlayWindow> Overlays = new();
     private static DashboardWindow? _dashboard;
@@ -65,6 +87,24 @@ internal static class Program
     // panel.reserveMonitor pref; a prefs change flips the guard on the live
     // kiosk without recreating it.
     private static bool _lastPolledReserveMonitor = true;
+    // Mirrored panel.autoLaunch; with it on and a kiosk expected but not up,
+    // idle-exit uses the extended grace so the poll can catch a slow-
+    // enumerating panel.
+    private static bool _lastPolledPanelAutoLaunch;
+    private static bool _panelKioskEverOpened;
+    // True from a recreate's Close until the reopen succeeds. A recreate's
+    // MaybeShowPanelKiosk can miss transiently (the Y70 drops out of display
+    // enumeration mid-mode-change); without this the Close re-arms the SHORT
+    // idle grace (a kiosk has opened before) and the process can exit before
+    // the poll retries. Expires after PanelPendingGraceWindowMs so a panel
+    // that vanished for good mid-recreate doesn't extend every later idle
+    // transition for the process lifetime.
+    private static bool _kioskReopenPending;
+    private static long _kioskReopenPendingSetTick;
+    // Consecutive kiosk recreates whose content never confirmed; picks the
+    // fast vs slow watchdog deadline. Reset when a navigation confirms.
+    private static int _kioskUnconfirmedRecreates;
+    private static readonly long _processStartTick = Environment.TickCount64;
 
     private static bool ShouldShowOverlays(UiPrefs p)
         => p.Overlay.Enabled && p.Overlay.Layout.Count > 0;
@@ -155,6 +195,7 @@ internal static class Program
         _lastPolledAlwaysOnTop = prefs.Overlay.AlwaysOnTop;
         _lastPolledMonitorIndex = prefs.Overlay.Monitor;
         _lastPolledReserveMonitor = prefs.Panel.ReserveMonitor;
+        _lastPolledPanelAutoLaunch = prefs.Panel.AutoLaunch;
 
         // Now safe to install: WebView2 callbacks fire on this thread once
         // the message loop is pumping, and the sync context drains via the
@@ -332,6 +373,8 @@ internal static class Program
         DisarmIdleExitTimer();
         var url = $"{ServiceOrigin}/panel?token={Uri.EscapeDataString(_pairedToken)}";
         _panelKiosk = new PanelKioskWindow(target, url, _lastPolledReserveMonitor);
+        _panelKioskEverOpened = true;
+        _kioskReopenPending = false;
         var created = _panelKiosk;
         // Drop the reference on ANY teardown, including one the OS drives
         // directly (bypassing ClosePanelKiosk), so a dead kiosk never
@@ -381,8 +424,15 @@ internal static class Program
     {
         if (_marshalerHwnd == IntPtr.Zero) return;
         if (!IsIdle()) return;
-        Native.SetTimer(_marshalerHwnd, TIMER_IDLE_EXIT, IdleExitDelayMs, IntPtr.Zero);
-        Log.Info($"idle: arming exit timer for {IdleExitDelayMs} ms");
+        var neverOpenedInBootWindow = !_panelKioskEverOpened
+            && Environment.TickCount64 - _processStartTick < PanelPendingGraceWindowMs;
+        var reopenPending = _kioskReopenPending
+            && Environment.TickCount64 - _kioskReopenPendingSetTick < PanelPendingGraceWindowMs;
+        var delay = _lastPolledPanelAutoLaunch && (neverOpenedInBootWindow || reopenPending)
+            ? PanelPendingIdleExitDelayMs
+            : IdleExitDelayMs;
+        Native.SetTimer(_marshalerHwnd, TIMER_IDLE_EXIT, delay, IntPtr.Zero);
+        Log.Info($"idle: arming exit timer for {delay} ms");
     }
 
     private static void DisarmIdleExitTimer()
@@ -547,6 +597,7 @@ internal static class Program
         try
         {
             var latest = await _api.GetPreferencesAsync();
+            _lastPolledPanelAutoLaunch = latest.Panel.AutoLaunch;
 
             // Reconcile kiosk state against the toggle. Using actual window
             // presence (not a cached pref value) means a Y70 hot-plug AFTER
@@ -559,19 +610,52 @@ internal static class Program
             else if (!latest.Panel.AutoLaunch && kioskUp) ClosePanelKiosk();
             else if (latest.Panel.AutoLaunch && _panelKiosk is { } kiosk && kiosk.Hwnd != IntPtr.Zero)
             {
+                // Content watchdog: a kiosk whose navigation never completes
+                // holds an empty WebView2 - the window composites transparent
+                // and the desktop shows on the panel, while Hwnd-presence says
+                // "up". Recreating the window (what the settings toggle does)
+                // reliably recovers; do it automatically once the deadline
+                // passes without a confirmed navigation.
+                var recreated = false;
+                if (kiosk.HasConfirmedContent)
+                {
+                    _kioskUnconfirmedRecreates = 0;
+                }
+                else
+                {
+                    var deadline = _kioskUnconfirmedRecreates >= KioskRecreateFastAttempts
+                        ? KioskContentDeadlineSlowMs
+                        : KioskContentDeadlineMs;
+                    if (kiosk.AgeMs > deadline)
+                    {
+                        _kioskUnconfirmedRecreates++;
+                        Log.Warn($"panel kiosk content unconfirmed after {kiosk.AgeMs} ms (attempt {_kioskUnconfirmedRecreates}); recreating");
+                        _kioskReopenPending = true;
+                        _kioskReopenPendingSetTick = Environment.TickCount64;
+                        ClosePanelKiosk();
+                        MaybeShowPanelKiosk();
+                        recreated = true;
+                    }
+                }
+
                 // A display rotation after the kiosk was created (Windows drives
                 // a freshly attached Y70 from its native landscape to portrait,
                 // delivered as a late WM_DISPLAYCHANGE) leaves the window sized to
                 // the stale landscape bounds, so the portrait SPA renders sideways.
                 // Recreate at the panel monitor's current bounds - the same bounds
                 // reconcile MonitorKioskManager applies to promoted-monitor kiosks.
-                var target = PanelDisplay.Find();
+                // Skipped on the tick that already recreated: `kiosk` is the
+                // disposed instance, and a stale-bounds compare against it would
+                // close the fresh window.
+                var target = recreated ? null : PanelDisplay.Find();
                 var b = kiosk.MonitorBounds;
                 if (target is not null
                     && !(target.Bounds.Left == b.Left && target.Bounds.Top == b.Top
                          && target.Bounds.Right == b.Right && target.Bounds.Bottom == b.Bottom))
                 {
                     Log.Info($"panel kiosk monitor bounds changed -> {target.Bounds.Width}x{target.Bounds.Height}; recreating");
+                    _kioskReopenPending = true;
+                    _kioskReopenPendingSetTick = Environment.TickCount64;
                     ClosePanelKiosk();
                     MaybeShowPanelKiosk();
                 }
