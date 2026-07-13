@@ -23,6 +23,14 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 3;
     private const int PermissionStateDeny = 2;
     private static readonly UIntPtr TIMER_PAINT_POLL = new(11);
+    // Watchdog policy shared by both kiosk owners (Program's Y70 branch and
+    // MonitorKioskManager): deadline for a navigation to confirm content
+    // before the owner recreates the window (the settings-toggle remedy,
+    // automated). After RecreateFastAttempts unconfirmed recreates, the slow
+    // deadline keeps a persistently broken WebView2 from churning spawns.
+    internal const long ContentDeadlineMs = 20_000;
+    internal const long ContentDeadlineSlowMs = 120_000;
+    internal const int RecreateFastAttempts = 3;
     private const uint PaintPollIntervalMs = 2_000;
     // A first-paint performance entry exists only once the renderer's
     // compositor produced a frame. NavigationCompleted alone is not proof of

@@ -22,6 +22,10 @@ internal sealed class MonitorKioskManager
 
     private readonly string _serviceOrigin;
     private readonly Dictionary<string, KioskEntry> _kiosks = new(StringComparer.Ordinal);
+    // Consecutive recreates per displayId whose content never confirmed;
+    // picks the fast vs slow watchdog deadline. Reset on confirm or on any
+    // non-watchdog close.
+    private readonly Dictionary<string, int> _unconfirmedRecreates = new(StringComparer.Ordinal);
 
     public MonitorKioskManager(string serviceOrigin)
     {
@@ -32,6 +36,37 @@ internal sealed class MonitorKioskManager
 
     public void Reconcile(IReadOnlyList<DisplayAssignment> assignments, string pairedToken)
     {
+        // Content watchdog, same policy as the Y70 kiosk: a window whose
+        // navigation never produced a first paint composites transparent
+        // (the desktop shows through) while Hwnd-presence reads "up". Close
+        // it; the spawn plan below reopens it in the same pass. Mark the
+        // reopen pending so a transient monitor-enumeration miss cannot
+        // idle-exit the process before the next poll retries.
+        List<string>? staleContent = null;
+        foreach (var (displayId, entry) in _kiosks)
+        {
+            if (entry.Window.HasConfirmedContent)
+            {
+                _unconfirmedRecreates.Remove(displayId);
+                continue;
+            }
+            var attempts = _unconfirmedRecreates.TryGetValue(displayId, out var n) ? n : 0;
+            var deadline = attempts >= PanelKioskWindow.RecreateFastAttempts
+                ? PanelKioskWindow.ContentDeadlineSlowMs
+                : PanelKioskWindow.ContentDeadlineMs;
+            if (entry.Window.AgeMs > deadline)
+            {
+                _unconfirmedRecreates[displayId] = attempts + 1;
+                Log.Warn($"monitor-kiosk content unconfirmed display={displayId} after {entry.Window.AgeMs} ms (attempt {attempts + 1}); recreating");
+                (staleContent ??= new List<string>()).Add(displayId);
+            }
+        }
+        if (staleContent is not null)
+        {
+            Program.NotifyKioskReopenPending();
+            foreach (var displayId in staleContent) CloseKiosk(displayId, "content unconfirmed", keepWatchdogState: true);
+        }
+
         var monitors = Monitors.Enumerate();
         var byDisplayId = new Dictionary<string, MonitorInfo>(StringComparer.Ordinal);
         foreach (var monitor in monitors)
@@ -109,8 +144,11 @@ internal sealed class MonitorKioskManager
         }
     }
 
-    private void CloseKiosk(string displayId, string reason)
+    private void CloseKiosk(string displayId, string reason, bool keepWatchdogState = false)
     {
+        // A departing/demoted display starts fresh on re-promote; only a
+        // watchdog recreate carries its attempt count into the respawn.
+        if (!keepWatchdogState) _unconfirmedRecreates.Remove(displayId);
         if (!_kiosks.Remove(displayId, out var entry)) return;
         try { entry.Window.Dispose(); }
         catch (Exception ex) { Log.Error($"monitor-kiosk dispose {displayId}: {ex.Message}"); }
@@ -127,5 +165,6 @@ internal sealed class MonitorKioskManager
             try { entry.Window.Dispose(); } catch { /* best-effort */ }
         }
         _kiosks.Clear();
+        _unconfirmedRecreates.Clear();
     }
 }

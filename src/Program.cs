@@ -48,13 +48,6 @@ internal static class Program
     // every dashboard open/close on a PC with no HYTE panel would linger
     // the full extended grace, since panel.autoLaunch defaults on.
     private const long PanelPendingGraceWindowMs = 600_000;
-    // Deadline for a kiosk navigation to confirm content before the poll
-    // recreates the window (the same remedy as the settings toggle). After
-    // KioskRecreateFastAttempts unconfirmed recreates, stretch the deadline
-    // so a persistently broken WebView2 doesn't churn processes every poll.
-    private const long KioskContentDeadlineMs = 20_000;
-    private const long KioskContentDeadlineSlowMs = 120_000;
-    private const int KioskRecreateFastAttempts = 3;
 
     private static readonly List<OverlayWindow> Overlays = new();
     private static DashboardWindow? _dashboard;
@@ -426,13 +419,27 @@ internal static class Program
         if (!IsIdle()) return;
         var neverOpenedInBootWindow = !_panelKioskEverOpened
             && Environment.TickCount64 - _processStartTick < PanelPendingGraceWindowMs;
+        // Reopen-pending applies regardless of panel.autoLaunch: monitor
+        // kiosks recreate independently of the Y70 toggle, and only actual
+        // recreate paths set the flag.
         var reopenPending = _kioskReopenPending
             && Environment.TickCount64 - _kioskReopenPendingSetTick < PanelPendingGraceWindowMs;
-        var delay = _lastPolledPanelAutoLaunch && (neverOpenedInBootWindow || reopenPending)
+        var delay = reopenPending || (_lastPolledPanelAutoLaunch && neverOpenedInBootWindow)
             ? PanelPendingIdleExitDelayMs
             : IdleExitDelayMs;
         Native.SetTimer(_marshalerHwnd, TIMER_IDLE_EXIT, delay, IntPtr.Zero);
         Log.Info($"idle: arming exit timer for {delay} ms");
+    }
+
+    /// <summary>
+    /// A kiosk recreate (Y70 branch or MonitorKioskManager) is mid-flight:
+    /// arm the extended idle grace so a transient display-enumeration miss
+    /// between the Close and the reopen cannot idle-exit the process.
+    /// </summary>
+    internal static void NotifyKioskReopenPending()
+    {
+        _kioskReopenPending = true;
+        _kioskReopenPendingSetTick = Environment.TickCount64;
     }
 
     private static void DisarmIdleExitTimer()
@@ -623,15 +630,14 @@ internal static class Program
                 }
                 else
                 {
-                    var deadline = _kioskUnconfirmedRecreates >= KioskRecreateFastAttempts
-                        ? KioskContentDeadlineSlowMs
-                        : KioskContentDeadlineMs;
+                    var deadline = _kioskUnconfirmedRecreates >= PanelKioskWindow.RecreateFastAttempts
+                        ? PanelKioskWindow.ContentDeadlineSlowMs
+                        : PanelKioskWindow.ContentDeadlineMs;
                     if (kiosk.AgeMs > deadline)
                     {
                         _kioskUnconfirmedRecreates++;
                         Log.Warn($"panel kiosk content unconfirmed after {kiosk.AgeMs} ms (attempt {_kioskUnconfirmedRecreates}); recreating");
-                        _kioskReopenPending = true;
-                        _kioskReopenPendingSetTick = Environment.TickCount64;
+                        NotifyKioskReopenPending();
                         ClosePanelKiosk();
                         MaybeShowPanelKiosk();
                         recreated = true;
@@ -654,8 +660,7 @@ internal static class Program
                          && target.Bounds.Right == b.Right && target.Bounds.Bottom == b.Bottom))
                 {
                     Log.Info($"panel kiosk monitor bounds changed -> {target.Bounds.Width}x{target.Bounds.Height}; recreating");
-                    _kioskReopenPending = true;
-                    _kioskReopenPendingSetTick = Environment.TickCount64;
+                    NotifyKioskReopenPending();
                     ClosePanelKiosk();
                     MaybeShowPanelKiosk();
                 }
