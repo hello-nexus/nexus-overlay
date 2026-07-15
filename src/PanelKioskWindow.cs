@@ -72,6 +72,10 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
 
     private MonitorInfo _monitor;
     private readonly string _navigationUrl;
+    private readonly bool _refitOnDisplayChange;
+    // EDID-stable id of the display this kiosk hosts; the key WM_DISPLAYCHANGE
+    // re-resolves the monitor by. Same value MonitorKioskManager keys on.
+    private readonly string _stableDisplayId;
     private IntPtr _env;
     private IntPtr _envCreatedHandler;
     private IntPtr _ctrlCreatedHandler;
@@ -91,12 +95,18 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private PanelMonitorGuard? _monitorGuard;
     private bool _disposed;
 
-    public PanelKioskWindow(MonitorInfo monitor, string navigationUrl, bool guardMonitor)
+    /// <param name="refitOnDisplayChange">Refit this kiosk to its own display's
+    /// fresh bounds directly from WM_DISPLAYCHANGE, ahead of the owner's
+    /// reconcile. Off for the Y70 kiosk, whose owner drives bounds changes.</param>
+    public PanelKioskWindow(MonitorInfo monitor, string navigationUrl, bool guardMonitor,
+        bool refitOnDisplayChange = false)
     {
         _instanceId = Interlocked.Increment(ref _nextInstanceId);
         _instances[_instanceId] = this;
         _monitor = monitor;
         _navigationUrl = navigationUrl;
+        _refitOnDisplayChange = refitOnDisplayChange;
+        _stableDisplayId = DisplayIdentity.ResolveStableId(monitor.DeviceName);
 
         // Suppress the cursor-warp-on-touch for this monitor while the kiosk
         // is open; balanced in Dispose (also via the ctor's catch path).
@@ -109,13 +119,19 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             // activating the kiosk and pulling focus off the foreground app.
             // The tap-warps-the-cursor symptom is a separate touch->mouse
             // promotion, suppressed by TouchCursorGuard.
+            //
+            // Black class background: the region a Refit exposes erases to
+            // black instead of to the desktop until the WebView2 covers it.
+            // The class carries no CS_HREDRAW/CS_VREDRAW, so a resize erases
+            // only that newly exposed region, never over live content.
             Hwnd = Win32Window.Create(
                 WindowClassName,
                 WindowTitle,
                 Native.WS_POPUP,
                 (uint)(Native.WS_EX_TOOLWINDOW | Native.WS_EX_TOPMOST | Native.WS_EX_NOACTIVATE),
                 b.Left, b.Top, b.Width, b.Height,
-                this);
+                this,
+                hbrBackground: Native.GetStockObject(Native.BLACK_BRUSH));
 
             Log.Info($"panel-kiosk ctor monitor={monitor.Index} bounds={b.Left},{b.Top},{b.Width}x{b.Height} hwnd=0x{Hwnd:X} url={navigationUrl}");
 
@@ -178,6 +194,60 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         }
     }
 
+    /// <summary>
+    /// Move the live kiosk onto <paramref name="monitor"/>'s current bounds
+    /// (rotation or resolution change on the same display). The resulting
+    /// WM_SIZE re-bounds the existing WebView2 controller, so the content
+    /// resizes in place: no destroy, no re-navigate, no first paint to wait
+    /// for. <see cref="HasConfirmedContent"/> stays set for that reason - the
+    /// renderer that painted is the one being resized.
+    /// </summary>
+    public void Refit(MonitorInfo monitor)
+    {
+        if (_disposed || Hwnd == IntPtr.Zero) return;
+        _monitor = monitor;
+        var b = monitor.Bounds;
+        Native.SetWindowPos(Hwnd, IntPtr.Zero, b.Left, b.Top, b.Width, b.Height,
+            Native.SWP_NOACTIVATE | Native.SWP_NOZORDER);
+        // The guard resolved its HMONITOR and bounds from the window's old
+        // rect at Start; both are stale after the move. Restart it against
+        // the new rect (SetWindowPos above already placed the window there).
+        if (_monitorGuard is not null)
+        {
+            _monitorGuard.Dispose();
+            _monitorGuard = PanelMonitorGuard.Start(Hwnd, _monitor);
+        }
+        Log.Info($"panel-kiosk refit monitor={monitor.Index} bounds={b.Left},{b.Top},{b.Width}x{b.Height} hwnd=0x{Hwnd:X}");
+    }
+
+    /// <summary>
+    /// Re-resolve this kiosk's own display by its EDID-stable id and refit
+    /// when its bounds moved. Resolved by identity rather than by
+    /// MonitorFromWindow: mid-rotation the window still spans the pre-rotation
+    /// rect, which can overlap a neighbouring monitor more than the panel it
+    /// belongs to, and nearest-monitor would then move the kiosk onto that
+    /// neighbour.
+    /// </summary>
+    private void RefitToOwnDisplay()
+    {
+        if (_disposed || Hwnd == IntPtr.Zero || string.IsNullOrEmpty(_stableDisplayId)) return;
+        try
+        {
+            foreach (var m in Monitors.Enumerate())
+            {
+                if (!string.Equals(DisplayIdentity.ResolveStableId(m.DeviceName), _stableDisplayId, StringComparison.Ordinal))
+                    continue;
+                if (SameBounds(m.Bounds, _monitor.Bounds)) return;
+                Refit(m);
+                return;
+            }
+        }
+        catch (Exception ex) { Log.Error($"panel-kiosk display-change refit: {ex.Message}"); }
+    }
+
+    private static bool SameBounds(Native.RECT a, Native.RECT b)
+        => a.Left == b.Left && a.Top == b.Top && a.Right == b.Right && a.Bottom == b.Bottom;
+
     public IntPtr? HandleMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
         switch (msg)
@@ -185,6 +255,14 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             case WM_INIT_CONTROLLER:
                 InitController();
                 return IntPtr.Zero;
+
+            case Native.WM_DISPLAYCHANGE:
+                // Refit here rather than waiting for the owner's reconcile:
+                // that path is gated behind two service HTTP round-trips, and
+                // until it lands the window still spans its pre-rotation rect,
+                // leaving the uncovered part of the panel showing the desktop.
+                if (_refitOnDisplayChange) RefitToOwnDisplay();
+                return null;
 
             case Native.WM_SIZE:
                 if (_controller != IntPtr.Zero)

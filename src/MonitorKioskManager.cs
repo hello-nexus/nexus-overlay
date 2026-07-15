@@ -87,23 +87,26 @@ internal sealed class MonitorKioskManager
 
         // Arrangement/resolution changes don't alter the attached-id set, so
         // the plan alone would no-op while the kiosk window no longer covers
-        // its monitor (and the guard holds a stale HMONITOR). Close those
-        // here; the plan then respawns them at the fresh bounds.
+        // its monitor (and the guard holds a stale HMONITOR). Refit in place
+        // and keep the kiosk: a close+respawn shows the desktop from the
+        // destroy until the replacement WebView2's first paint, which the user
+        // sees on a display that rotates live (Xeneon Edge). The kiosk's own
+        // WM_DISPLAYCHANGE usually refits before this runs, leaving the compare
+        // below equal.
         var existing = new Dictionary<string, string>(StringComparer.Ordinal);
-        var boundsChanged = new List<string>();
         foreach (var (displayId, entry) in _kiosks)
         {
             if (byDisplayId.TryGetValue(displayId, out var monitor)
                 && !SameBounds(entry.Window.MonitorBounds, monitor.Bounds))
             {
-                boundsChanged.Add(displayId);
-                continue;
+                try
+                {
+                    entry.Window.Refit(monitor);
+                    Log.Info($"monitor-kiosk refit display={displayId} -> {monitor.Bounds.Width}x{monitor.Bounds.Height}");
+                }
+                catch (Exception ex) { Log.Error($"monitor-kiosk refit {displayId}: {ex.Message}"); }
             }
             existing[displayId] = entry.PanelDeviceId;
-        }
-        foreach (var displayId in boundsChanged)
-        {
-            CloseKiosk(displayId, "bounds changed");
         }
 
         var (spawn, close) = MonitorKioskPlan.Compute(assignmentMap, byDisplayId.Keys, existing);
@@ -122,7 +125,7 @@ internal sealed class MonitorKioskManager
                 var url = $"{_serviceOrigin}/panel/{Uri.EscapeDataString(entry.PanelDeviceId)}?token={Uri.EscapeDataString(pairedToken)}";
                 _kiosks[entry.DisplayId] = new KioskEntry
                 {
-                    Window = new PanelKioskWindow(monitor, url, reserve),
+                    Window = new PanelKioskWindow(monitor, url, reserve, refitOnDisplayChange: true),
                     PanelDeviceId = entry.PanelDeviceId,
                     Reserve = reserve,
                 };
