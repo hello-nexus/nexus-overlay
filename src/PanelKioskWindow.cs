@@ -36,9 +36,10 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     // compositor produced a frame. NavigationCompleted alone is not proof of
     // content: a kiosk created seconds after logon can report a successful
     // navigation while the renderer sits parked pre-first-paint (bench-hit
-    // on the Y70 - 14MB renderer, no SPA execution, transparent window). A
-    // parked renderer also never answers ExecuteScript, so either way the
-    // confirmation stays unset and the owner's watchdog recreates.
+    // on the Y70 - 14MB renderer, no SPA execution; the kiosk shows only the
+    // opaque default background). A parked renderer also never answers
+    // ExecuteScript, so either way the confirmation stays unset and the
+    // owner's watchdog recreates.
     private const string PaintProbeScript =
         "(function(){try{return performance.getEntriesByType('paint').length>0}catch(e){return false}})()";
     // COREWEBVIEW2_COLOR passed as a raw uint: the LOW byte is alpha (see
