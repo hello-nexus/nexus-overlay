@@ -557,10 +557,4 @@ internal static unsafe class Native
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern int SetWindowRgn(IntPtr hWnd, IntPtr hRgn, bool bRedraw);
-
-    // Stock objects are owned by the system: never pass one to DeleteObject.
-    public const int BLACK_BRUSH = 4;
-
-    [DllImport("gdi32.dll")]
-    public static extern IntPtr GetStockObject(int fnObject);
 }
