@@ -41,9 +41,11 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     // confirmation stays unset and the owner's watchdog recreates.
     private const string PaintProbeScript =
         "(function(){try{return performance.getEntriesByType('paint').length>0}catch(e){return false}})()";
-    // The panel SPA paints its own opaque background; this controls the
-    // brief flash between WebView2 attach and first paint.
-    private const uint DefaultBgArgbOpaqueBlack = 0xFF000000u;
+    // COREWEBVIEW2_COLOR passed as a raw uint: the LOW byte is alpha (see
+    // DashboardWindow.DefaultBgTransparent). Alpha 0 lets a page that paints
+    // a transparent background composite over the desktop (the panel theme's
+    // background-off mode); in every other mode the SPA paints opaque.
+    private const uint DefaultBgTransparent = 0x00000000u;
 
     private static readonly ConcurrentDictionary<int, PanelKioskWindow> _instances = new();
     private static int _nextInstanceId;
@@ -120,18 +122,17 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             // The tap-warps-the-cursor symptom is a separate touch->mouse
             // promotion, suppressed by TouchCursorGuard.
             //
-            // Black class background: the region a Refit exposes erases to
-            // black instead of to the desktop until the WebView2 covers it.
-            // The class carries no CS_HREDRAW/CS_VREDRAW, so a resize erases
-            // only that newly exposed region, never over live content.
+            // No class background brush: an erase would paint over the
+            // desktop pixels the transparent WebView2 lets through (same as
+            // OverlayWindow). A Refit-exposed region shows the desktop until
+            // the WebView2 covers it.
             Hwnd = Win32Window.Create(
                 WindowClassName,
                 WindowTitle,
                 Native.WS_POPUP,
                 (uint)(Native.WS_EX_TOOLWINDOW | Native.WS_EX_TOPMOST | Native.WS_EX_NOACTIVATE),
                 b.Left, b.Top, b.Width, b.Height,
-                this,
-                hbrBackground: Native.GetStockObject(Native.BLACK_BRUSH));
+                this);
 
             Log.Info($"panel-kiosk ctor monitor={monitor.Index} bounds={b.Left},{b.Top},{b.Width}x{b.Height} hwnd=0x{Hwnd:X} url={navigationUrl}");
 
@@ -361,7 +362,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         _controller2 = Wv2.QueryInterface(controller, Wv2.IID_ICoreWebView2Controller2);
         if (_controller2 != IntPtr.Zero)
         {
-            Wv2.Ctrl2_put_DefaultBackgroundColor(_controller2, DefaultBgArgbOpaqueBlack);
+            Wv2.Ctrl2_put_DefaultBackgroundColor(_controller2, DefaultBgTransparent);
         }
 
         Native.GetClientRect(Hwnd, out var rc);
