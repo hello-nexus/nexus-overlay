@@ -34,6 +34,13 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
     private static int _nextGuardId;
     private readonly int _guardId;
 
+    // While the session is locked, Windows parks lock-experience windows on
+    // every monitor, the panel included; evicting one drops a panel-sized
+    // band over the primary display's own lock screen. Written and read only
+    // on the message-loop thread (WinEvent callbacks, the EnumWindows sweep,
+    // and WM_WTSSESSION_CHANGE all arrive there).
+    private static bool _sessionLocked;
+
     private readonly IntPtr _kioskHwnd;
     private readonly IntPtr _panelMonitor;       // HMONITOR of the panel display
     private readonly Native.RECT _panelBounds;   // for excluding this monitor as another guard's fallback
@@ -99,9 +106,66 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
         }
 
         guard.InstallHooks();
-        guard.SweepExisting();
+        SweepAll();
         Log.Info($"panel-guard started panelMon=0x{panelMon:X} fallbackWork={guard._fallbackWork.Left},{guard._fallbackWork.Top} {guard._fallbackWork.Width}x{guard._fallbackWork.Height}");
         return guard;
+    }
+
+    /// <summary>Seed <see cref="_sessionLocked"/> at process start. WTS
+    /// notifications deliver only transitions, so a guard created while the
+    /// session is already locked (service respawn, kiosk watchdog recreate)
+    /// would otherwise sweep lock windows off the panel.</summary>
+    public static void InitializeSessionLockState()
+    {
+        _sessionLocked = QuerySessionLocked();
+        if (_sessionLocked) Log.Info("panel-guard: session locked at startup; evictions suspended");
+    }
+
+    /// <summary>Handles WM_WTSSESSION_CHANGE (forwarded by the marshaler
+    /// window). Unlock re-sweeps every guard so a window that landed on a
+    /// panel during the locked span is relocated once it matters.</summary>
+    public static void OnSessionChange(IntPtr wParam)
+    {
+        switch ((int)wParam)
+        {
+            case Native.WTS_SESSION_LOCK:
+                _sessionLocked = true;
+                Log.Info("panel-guard: session locked; evictions suspended");
+                break;
+            case Native.WTS_SESSION_UNLOCK:
+                _sessionLocked = false;
+                Log.Info("panel-guard: session unlocked; evictions resumed");
+                if (!_active.IsEmpty)
+                {
+                    try { SweepAll(); }
+                    catch (Exception ex) { Log.Error($"panel-guard unlock sweep: {ex.Message}"); }
+                }
+                break;
+        }
+    }
+
+    private static bool QuerySessionLocked()
+    {
+        try
+        {
+            if (!Native.WTSQuerySessionInformationW(IntPtr.Zero, Native.WTS_CURRENT_SESSION,
+                    Native.WTSSessionInfoEx, out var buf, out var len) || buf == IntPtr.Zero)
+                return false;
+            try
+            {
+                if (len < (uint)sizeof(Native.WTSINFOEX_PREFIX)) return false;
+                var info = *(Native.WTSINFOEX_PREFIX*)buf;
+                // UNKNOWN (0xFFFFFFFF) is treated as unlocked so a failed
+                // query cannot suspend evictions permanently.
+                return info.Level == 1 && info.SessionFlags == Native.WTS_SESSIONSTATE_LOCK;
+            }
+            finally { Native.WTSFreeMemory(buf); }
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"panel-guard lock-state query: {ex.Message}");
+            return false;
+        }
     }
 
     private static bool IsGuardedBounds(Native.RECT bounds)
@@ -154,10 +218,10 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
         }
     }
 
-    /// <summary>Evict anything already sitting on the panel when the guard
-    /// starts (e.g. an app the user left maximized there before the kiosk
-    /// launched).</summary>
-    private void SweepExisting()
+    /// <summary>Evict anything already sitting on a guarded monitor (e.g. an
+    /// app the user left maximized there before the kiosk launched). One
+    /// EnumWindows pass; the callback evaluates every active guard.</summary>
+    private static void SweepAll()
     {
         Native.EnumWindows(&OnEnumWindow, IntPtr.Zero);
     }
@@ -178,14 +242,17 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
     private void EvaluateAndEvict(IntPtr hwnd)
     {
         if (!_hasFallback) return;
+        if (_sessionLocked) return;
         var root = Native.GetAncestor(hwnd, Native.GA_ROOT);
         if (root == IntPtr.Zero) root = hwnd;
         if (root == _kioskHwnd) return;
-        if (!ShouldEvict(root)) return;
         // Is the window actually on the panel? Use the same nearest-monitor
         // rule Windows uses to assign a window to a display, so we agree with
-        // the OS about which monitor "owns" it.
+        // the OS about which monitor "owns" it. Checked before ShouldEvict:
+        // that predicate ends in a process-image query only windows resting
+        // on the panel should pay.
         if (Native.MonitorFromWindow(root, Native.MONITOR_DEFAULTTONEAREST) != _panelMonitor) return;
+        if (!ShouldEvict(root)) return;
         Relocate(root);
     }
 
@@ -216,7 +283,33 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
             foreach (var skip in ShellClasses)
                 if (name.SequenceEqual(skip)) return false;
         }
+
+        // The lock notification and the lock window's own SHOW event arrive
+        // through the same message queue with no ordering guarantee, so
+        // lock-experience processes are exempt regardless of _sessionLocked.
+        if (IsLockScreenProcess(pid)) return false;
         return true;
+    }
+
+    private static bool IsLockScreenProcess(uint pid)
+    {
+        var h = Native.OpenProcess(Native.PROCESS_QUERY_LIMITED_INFORMATION, false, pid);
+        if (h == IntPtr.Zero) return false;
+        try
+        {
+            Span<char> path = stackalloc char[512];
+            uint len = (uint)path.Length;
+            fixed (char* p = path)
+            {
+                if (!Native.QueryFullProcessImageNameW(h, 0, p, ref len)) return false;
+            }
+            var name = path.Slice(0, (int)len);
+            int slash = name.LastIndexOf('\\');
+            if (slash >= 0) name = name.Slice(slash + 1);
+            return name.Equals("LockApp.exe", StringComparison.OrdinalIgnoreCase)
+                || name.Equals("LogonUI.exe", StringComparison.OrdinalIgnoreCase);
+        }
+        finally { Native.CloseHandle(h); }
     }
 
     private void Relocate(IntPtr hwnd)

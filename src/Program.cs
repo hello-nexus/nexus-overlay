@@ -206,6 +206,16 @@ internal static class Program
         _syncContext.Bind(_marshalerHwnd);
         Log.Info($"marshaler hwnd=0x{_marshalerHwnd:X}");
 
+        // Lock/unlock notifications drive the panel-monitor guard's suspend
+        // state; without them the guard evicts the lock screen's per-monitor
+        // windows off the panel onto the primary display. Seed only when
+        // registration succeeded: a locked seed with no unlock delivery would
+        // suspend the guard for the process lifetime.
+        if (Native.WTSRegisterSessionNotification(_marshalerHwnd, Native.NOTIFY_FOR_THIS_SESSION))
+            PanelMonitorGuard.InitializeSessionLockState();
+        else
+            Log.Warn($"WTSRegisterSessionNotification failed err={Marshal.GetLastWin32Error()}; lock-state suspend disabled");
+
         // Register the cross-process message used by the tray's "Open Nexus"
         // path. Both sender (nexus-service TrayIcon) and receiver (us) call
         // RegisterWindowMessageW with the same string and get the same ID
@@ -288,6 +298,7 @@ internal static class Program
 
         // Cleanup: dispose kiosks, then dashboard, then per-monitor overlays.
         Native.KillTimer(_marshalerHwnd, TIMER_PREFS_POLL);
+        Native.WTSUnRegisterSessionNotification(_marshalerHwnd);
         _memSampler?.Dispose();
         _memSampler = null;
         // Stream hosts first: their encoders and capture pumps must stop
@@ -561,6 +572,11 @@ internal static class Program
                 // kiosk on an unplugged monitor closes (and a replugged
                 // assigned monitor respawns) without waiting for the poll.
                 _ = PollPrefsAsync();
+                return IntPtr.Zero;
+            }
+            if (msg == Native.WM_WTSSESSION_CHANGE)
+            {
+                PanelMonitorGuard.OnSessionChange(wParam);
                 return IntPtr.Zero;
             }
             return null;
