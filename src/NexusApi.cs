@@ -72,7 +72,7 @@ internal sealed class NexusApi
     /// service is unreachable, so transient errors don't tear kiosks down.
     /// Null = request failed; empty list = service says no assignments.
     /// </summary>
-    public async Task<System.Collections.Generic.List<DisplayAssignment>?> GetDisplayAssignmentsAsync()
+    public async Task<DisplayAssignmentsResponse?> GetDisplayAssignmentsAsync()
     {
         try
         {
@@ -82,8 +82,8 @@ internal sealed class NexusApi
             using var resp = await _http.SendAsync(req);
             if (!resp.IsSuccessStatusCode) return null;
             await using var stream = await resp.Content.ReadAsStreamAsync();
-            var doc = await JsonSerializer.DeserializeAsync(stream, ApiJson.Default.DisplayAssignmentsResponse);
-            return doc?.Assignments ?? new System.Collections.Generic.List<DisplayAssignment>();
+            return await JsonSerializer.DeserializeAsync(stream, ApiJson.Default.DisplayAssignmentsResponse)
+                ?? new DisplayAssignmentsResponse();
         }
         catch
         {
@@ -218,12 +218,20 @@ internal sealed class DisplayAssignment
     /// <summary>Per-panel "keep clear of other windows" (record setting; default on).</summary>
     [JsonPropertyName("reserveMonitor")]
     public bool ReserveMonitor { get; set; } = true;
+    /// <summary>Panel backdrop: "desktop" hosts this kiosk as a transparent
+    /// window so the live desktop shows through. Absent = opaque.</summary>
+    [JsonPropertyName("backdrop")]
+    public string Backdrop { get; set; } = "";
 }
 
 internal sealed class DisplayAssignmentsResponse
 {
     [JsonPropertyName("assignments")]
     public System.Collections.Generic.List<DisplayAssignment> Assignments { get; set; } = new();
+    /// <summary>Backdrop of the Y70's own panel record; that kiosk opens from
+    /// hardware detection, so it has no assignment entry to carry it.</summary>
+    [JsonPropertyName("panelBackdrop")]
+    public string PanelBackdrop { get; set; } = "";
 }
 
 /// <summary>

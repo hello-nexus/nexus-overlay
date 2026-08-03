@@ -19,6 +19,10 @@ namespace Nexus.Overlay;
 internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
 {
     private const string WindowClassName = "Nexus.Overlay.PanelKiosk";
+    // Separate class because the background brush is a class property: the
+    // see-through kiosk must erase to nothing, so the desktop stays visible
+    // wherever the page is transparent.
+    private const string SeeThroughClassName = "Nexus.Overlay.PanelKioskClear";
     private const string WindowTitle = "Nexus Panel";
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 3;
     private const int PermissionStateDeny = 2;
@@ -48,10 +52,16 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     // background itself (the desktop-wallpaper mode is an in-page image, so
     // the page is never transparent).
     private const uint DefaultBgOpaqueBlack = 0x000000FFu;
+    // Alpha 0: WebView2 composites the page over whatever is behind the HWND,
+    // so a page that paints no background shows the live desktop. Hit-testing
+    // is by window region, not pixel alpha, so the panel still takes every
+    // click and touch - do not pair this with WS_EX_TRANSPARENT.
+    private const uint DefaultBgTransparent = 0x00000000u;
 
     private static readonly ConcurrentDictionary<int, PanelKioskWindow> _instances = new();
     private static int _nextInstanceId;
     private readonly int _instanceId;
+    private readonly bool _seeThrough;
 
     public IntPtr Hwnd { get; private set; }
     public int MonitorIndex => _monitor.Index;
@@ -97,14 +107,16 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private long _permissionToken;
     private readonly long _createdTick = Environment.TickCount64;
     private PanelMonitorGuard? _monitorGuard;
+    private PanelTaskbarGuard? _taskbarGuard;
     private bool _disposed;
 
     /// <param name="refitOnDisplayChange">Refit this kiosk to its own display's
     /// fresh bounds directly from WM_DISPLAYCHANGE, ahead of the owner's
     /// reconcile. Off for the Y70 kiosk, whose owner drives bounds changes.</param>
     public PanelKioskWindow(MonitorInfo monitor, string navigationUrl, bool guardMonitor,
-        bool refitOnDisplayChange = false)
+        bool refitOnDisplayChange = false, bool seeThrough = false)
     {
+        _seeThrough = seeThrough;
         _instanceId = Interlocked.Increment(ref _nextInstanceId);
         _instances[_instanceId] = this;
         _monitor = monitor;
@@ -129,19 +141,23 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             // The class carries no CS_HREDRAW/CS_VREDRAW, so a resize erases
             // only that newly exposed region, never over live content.
             Hwnd = Win32Window.Create(
-                WindowClassName,
+                seeThrough ? SeeThroughClassName : WindowClassName,
                 WindowTitle,
                 Native.WS_POPUP,
                 (uint)(Native.WS_EX_TOOLWINDOW | Native.WS_EX_TOPMOST | Native.WS_EX_NOACTIVATE),
                 b.Left, b.Top, b.Width, b.Height,
                 this,
-                hbrBackground: Native.GetStockObject(Native.BLACK_BRUSH));
+                hbrBackground: seeThrough ? IntPtr.Zero : Native.GetStockObject(Native.BLACK_BRUSH));
 
             Log.Info($"panel-kiosk ctor monitor={monitor.Index} bounds={b.Left},{b.Top},{b.Width}x{b.Height} hwnd=0x{Hwnd:X} url={navigationUrl}");
 
             // Show the window before WebView2 attaches; the controller paints
             // over it once init finishes.
             Native.ShowWindow(Hwnd, Native.SW_SHOWNOACTIVATE);
+            // Only see-through hides it: an opaque kiosk already covers the
+            // taskbar, and hiding another process's window is worth doing only
+            // when it would otherwise be visible through the panel.
+            if (seeThrough) _taskbarGuard = PanelTaskbarGuard.Start(Hwnd);
             StartWebView2Init();
 
             // When reserveMonitor is on, guard the panel monitor: relocate any
@@ -178,6 +194,13 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         }
         return false;
     }
+
+    /// <summary>
+    /// Re-hide a taskbar the shell restored on the see-through kiosk's
+    /// monitor. Called from the owner's reconcile poll; a no-op for an opaque
+    /// kiosk, which covers the taskbar anyway.
+    /// </summary>
+    public void ReassertTaskbar() => _taskbarGuard?.Reassert();
 
     /// <summary>
     /// Turn the foreign-window guard on or off on the live kiosk. Idempotent:
@@ -221,6 +244,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             _monitorGuard.Dispose();
             _monitorGuard = PanelMonitorGuard.Start(Hwnd, _monitor);
         }
+        _taskbarGuard?.Retarget(Hwnd);
         Log.Info($"panel-kiosk refit monitor={monitor.Index} bounds={b.Left},{b.Top},{b.Width}x{b.Height} hwnd=0x{Hwnd:X}");
     }
 
@@ -365,7 +389,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         _controller2 = Wv2.QueryInterface(controller, Wv2.IID_ICoreWebView2Controller2);
         if (_controller2 != IntPtr.Zero)
         {
-            Wv2.Ctrl2_put_DefaultBackgroundColor(_controller2, DefaultBgOpaqueBlack);
+            Wv2.Ctrl2_put_DefaultBackgroundColor(_controller2,
+                _seeThrough ? DefaultBgTransparent : DefaultBgOpaqueBlack);
         }
 
         Native.GetClientRect(Hwnd, out var rc);
@@ -560,6 +585,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         _disposed = true;
         _instances.TryRemove(_instanceId, out _);
         TouchCursorGuard.Release();
+        _taskbarGuard?.Dispose();
+        _taskbarGuard = null;
         _monitorGuard?.Dispose();
         _monitorGuard = null;
         try

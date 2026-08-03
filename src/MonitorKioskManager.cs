@@ -18,6 +18,7 @@ internal sealed class MonitorKioskManager
         public required PanelKioskWindow Window { get; init; }
         public required string PanelDeviceId { get; init; }
         public required bool Reserve { get; set; }
+        public required bool SeeThrough { get; init; }
     }
 
     private readonly string _serviceOrigin;
@@ -78,11 +79,13 @@ internal sealed class MonitorKioskManager
 
         var assignmentMap = new Dictionary<string, string>(StringComparer.Ordinal);
         var reserveById = new Dictionary<string, bool>(StringComparer.Ordinal);
+        var seeThroughById = new Dictionary<string, bool>(StringComparer.Ordinal);
         foreach (var assignment in assignments)
         {
             if (string.IsNullOrEmpty(assignment.DisplayId) || string.IsNullOrEmpty(assignment.PanelDeviceId)) continue;
             assignmentMap[assignment.DisplayId] = assignment.PanelDeviceId;
             reserveById[assignment.DisplayId] = assignment.ReserveMonitor;
+            seeThroughById[assignment.DisplayId] = assignment.Backdrop == "desktop";
         }
 
         // Arrangement/resolution changes don't alter the attached-id set, so
@@ -94,6 +97,7 @@ internal sealed class MonitorKioskManager
         // WM_DISPLAYCHANGE usually refits before this runs, leaving the compare
         // below equal.
         var existing = new Dictionary<string, string>(StringComparer.Ordinal);
+        List<string>? backdropChanged = null;
         foreach (var (displayId, entry) in _kiosks)
         {
             if (byDisplayId.TryGetValue(displayId, out var monitor)
@@ -106,7 +110,29 @@ internal sealed class MonitorKioskManager
                 }
                 catch (Exception ex) { Log.Error($"monitor-kiosk refit {displayId}: {ex.Message}"); }
             }
+            // The background brush and the WebView2 default background are
+            // fixed at creation, so a backdrop switch is a recreate. The plan
+            // only closes kiosks whose display lost its assignment, so this
+            // one has to be closed here; omitting it from `existing` is what
+            // makes the plan spawn the replacement in the same pass.
+            // Only when the display is still assigned: an unassigned one has
+            // no desired backdrop, and the plan's close path owns it with the
+            // accurate reason.
+            var wantSeeThrough = seeThroughById.TryGetValue(displayId, out var st) && st;
+            if (assignmentMap.ContainsKey(displayId) && wantSeeThrough != entry.SeeThrough)
+            {
+                (backdropChanged ??= new List<string>()).Add(displayId);
+                continue;
+            }
+            entry.Window.ReassertTaskbar();
             existing[displayId] = entry.PanelDeviceId;
+        }
+        if (backdropChanged is not null)
+        {
+            foreach (var displayId in backdropChanged)
+            {
+                CloseKiosk(displayId, "backdrop changed");
+            }
         }
 
         var (spawn, close) = MonitorKioskPlan.Compute(assignmentMap, byDisplayId.Keys, existing);
@@ -122,14 +148,16 @@ internal sealed class MonitorKioskManager
             try
             {
                 var reserve = reserveById.TryGetValue(entry.DisplayId, out var r) ? r : true;
+                var seeThrough = seeThroughById.TryGetValue(entry.DisplayId, out var st2) && st2;
                 var url = $"{_serviceOrigin}/panel/{Uri.EscapeDataString(entry.PanelDeviceId)}?token={Uri.EscapeDataString(pairedToken)}";
                 _kiosks[entry.DisplayId] = new KioskEntry
                 {
-                    Window = new PanelKioskWindow(monitor, url, reserve, refitOnDisplayChange: true),
+                    Window = new PanelKioskWindow(monitor, url, reserve, refitOnDisplayChange: true, seeThrough: seeThrough),
                     PanelDeviceId = entry.PanelDeviceId,
                     Reserve = reserve,
+                    SeeThrough = seeThrough,
                 };
-                Log.Info($"monitor-kiosk opened display={entry.DisplayId} device={entry.PanelDeviceId} monitor={monitor.Index} guard={reserve}");
+                Log.Info($"monitor-kiosk opened display={entry.DisplayId} device={entry.PanelDeviceId} monitor={monitor.Index} guard={reserve} seeThrough={seeThrough}");
             }
             catch (Exception ex)
             {

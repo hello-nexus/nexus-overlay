@@ -80,6 +80,10 @@ internal static class Program
     // panel.reserveMonitor pref; a prefs change flips the guard on the live
     // kiosk without recreating it.
     private static bool _lastPolledReserveMonitor = true;
+    // Y70 backdrop from the last assignments poll. See-through is fixed at
+    // window creation, so a change here recreates the kiosk rather than
+    // toggling it in place.
+    private static bool _lastPolledPanelSeeThrough;
     // Mirrored panel.autoLaunch; with it on and a kiosk expected but not up,
     // idle-exit uses the extended grace so the poll can catch a slow-
     // enumerating panel.
@@ -140,6 +144,11 @@ internal static class Program
         Log.Rotate();
         Log.Info($"main start args=[{string.Join(' ', args)}]");
 
+        // A see-through kiosk hides the taskbar on its monitor, and that
+        // outlives a crash. Restoring unconditionally at startup is the only
+        // recovery path the user does not have to know about.
+        PanelTaskbarGuard.RestoreAll();
+
         // Set the AppUserModelID before any window is created so the
         // shell associates every overlay HWND with this AUMID. Required
         // for the cross-desktop pin via PinAppID later.
@@ -177,7 +186,9 @@ internal static class Program
         Log.Info($"prefs enabled={prefs.Overlay.Enabled} pinned={prefs.Overlay.Layout.Count} alwaysOnTop={prefs.Overlay.AlwaysOnTop} monitor={prefs.Overlay.Monitor}");
         // Same no-sync-context rule as pair/prefs: fetch the initial monitor
         // assignments before the message loop exists.
-        var initialAssignments = _api.GetDisplayAssignmentsAsync().GetAwaiter().GetResult();
+        var initialAssignmentsResponse = _api.GetDisplayAssignmentsAsync().GetAwaiter().GetResult();
+        _lastPolledPanelSeeThrough = IsSeeThrough(initialAssignmentsResponse?.PanelBackdrop);
+        var initialAssignments = initialAssignmentsResponse?.Assignments;
         // Stream assignments must also be fetched at startup: when the
         // coordinator spawns this process for a stream session and nothing
         // else is on screen, the idle-exit grace elapses before the first
@@ -365,7 +376,8 @@ internal static class Program
         if (target is null) return;
         DisarmIdleExitTimer();
         var url = $"{ServiceOrigin}/panel?token={Uri.EscapeDataString(_pairedToken)}";
-        _panelKiosk = new PanelKioskWindow(target, url, _lastPolledReserveMonitor);
+        _panelKiosk = new PanelKioskWindow(target, url, _lastPolledReserveMonitor,
+            seeThrough: _lastPolledPanelSeeThrough);
         _panelKioskEverOpened = true;
         _kioskReopenPending = false;
         var created = _panelKiosk;
@@ -376,8 +388,11 @@ internal static class Program
         {
             if (ReferenceEquals(_panelKiosk, created)) _panelKiosk = null;
         };
-        Log.Info($"panel kiosk opened on monitor={target.Index} guard={_lastPolledReserveMonitor}");
+        Log.Info($"panel kiosk opened on monitor={target.Index} guard={_lastPolledReserveMonitor} seeThrough={_lastPolledPanelSeeThrough}");
     }
+
+    private static bool IsSeeThrough(string? backdrop) =>
+        string.Equals(backdrop, "desktop", StringComparison.Ordinal);
 
     private static void ClosePanelKiosk()
     {
@@ -698,8 +713,22 @@ internal static class Program
                 if (assignments is not null)
                 {
                     _assignmentFetchFailures = 0;
+                    // The Y70 kiosk is opened from hardware detection, so its
+                    // backdrop rides the assignments response rather than an
+                    // entry in it. See-through is fixed at window creation.
+                    var wantSeeThrough = IsSeeThrough(assignments.PanelBackdrop);
+                    if (wantSeeThrough != _lastPolledPanelSeeThrough)
+                    {
+                        _lastPolledPanelSeeThrough = wantSeeThrough;
+                        Log.Info($"assignments poll: panel backdrop seeThrough -> {wantSeeThrough}");
+                        if (_panelKiosk is not null)
+                        {
+                            ClosePanelKiosk();
+                            MaybeShowPanelKiosk();
+                        }
+                    }
                     var hadKiosks = _monitorKiosks.Count > 0;
-                    _monitorKiosks.Reconcile(assignments, _pairedToken);
+                    _monitorKiosks.Reconcile(assignments.Assignments, _pairedToken);
                     if (_monitorKiosks.Count > 0) DisarmIdleExitTimer();
                     else if (hadKiosks) MaybeArmIdleExitTimer();
                 }
