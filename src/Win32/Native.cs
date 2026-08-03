@@ -502,6 +502,60 @@ internal static unsafe class Native
     [DllImport("dwmapi.dll")]
     public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int pvAttribute, int cbAttribute);
 
+    // ====================== Session change notifications =====================
+
+    public const uint WM_WTSSESSION_CHANGE = 0x02B1;
+    public const int WTS_SESSION_LOCK = 0x7;
+    public const int WTS_SESSION_UNLOCK = 0x8;
+    public const uint NOTIFY_FOR_THIS_SESSION = 0;
+
+    [DllImport("wtsapi32.dll", SetLastError = true)]
+    public static extern bool WTSRegisterSessionNotification(IntPtr hWnd, uint dwFlags);
+
+    [DllImport("wtsapi32.dll", SetLastError = true)]
+    public static extern bool WTSUnRegisterSessionNotification(IntPtr hWnd);
+
+    public const uint WTS_CURRENT_SESSION = unchecked((uint)-1);
+    // WTS_INFO_CLASS.WTSSessionInfoEx
+    public const int WTSSessionInfoEx = 25;
+    // WTSINFOEX_LEVEL1_W.SessionFlags values. Win10+ semantics (the
+    // documented Win7 lock/unlock inversion predates the 19041 floor);
+    // UNKNOWN is 0xFFFFFFFF.
+    public const int WTS_SESSIONSTATE_LOCK = 0;
+    public const int WTS_SESSIONSTATE_UNLOCK = 1;
+
+    [DllImport("wtsapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern bool WTSQuerySessionInformationW(
+        IntPtr hServer, uint sessionId, int infoClass, out IntPtr buffer, out uint bytesReturned);
+
+    [DllImport("wtsapi32.dll")]
+    public static extern void WTSFreeMemory(IntPtr memory);
+
+    // Leading fields of WTSINFOEXW (x64): Level at 0; the Data union starts
+    // at 8 because WTSINFOEX_LEVEL1_W carries LARGE_INTEGER members (8-byte
+    // alignment). Only the fields before the union's WCHAR arrays are mapped.
+    [StructLayout(LayoutKind.Explicit)]
+    public struct WTSINFOEX_PREFIX
+    {
+        [FieldOffset(0)] public uint Level;
+        [FieldOffset(8)] public uint SessionId;
+        [FieldOffset(12)] public int SessionState;
+        [FieldOffset(16)] public int SessionFlags;
+    }
+
+    // ====================== Process image query =====================
+
+    public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode, EntryPoint = "QueryFullProcessImageNameW")]
+    public static extern bool QueryFullProcessImageNameW(IntPtr hProcess, uint dwFlags, char* lpExeName, ref uint lpdwSize);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CloseHandle(IntPtr hObject);
+
     // ====================== Low-level mouse hook =====================
 
     public const int WH_MOUSE_LL = 14;
