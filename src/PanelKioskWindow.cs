@@ -149,7 +149,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 this,
                 hbrBackground: seeThrough ? IntPtr.Zero : Native.GetStockObject(Native.BLACK_BRUSH));
 
-            Log.Info($"panel-kiosk ctor monitor={monitor.Index} bounds={b.Left},{b.Top},{b.Width}x{b.Height} hwnd=0x{Hwnd:X} url={navigationUrl}");
+            Log.Info($"panel-kiosk ctor monitor={monitor.Index} bounds={b.Left},{b.Top},{b.Width}x{b.Height} hwnd=0x{Hwnd:X} url={LogRedact.Url(navigationUrl)}");
 
             // Show the window before WebView2 attaches; the controller paints
             // over it once init finishes.
@@ -429,7 +429,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         Wv2.Wv2_add_PermissionRequested(_coreWebView2, _permissionHandler, out _permissionToken);
 
         var hr = Wv2.Wv2_Navigate(_coreWebView2, _navigationUrl);
-        Log.Info($"panel-kiosk Navigate hr=0x{hr:X8} url={_navigationUrl}");
+        Log.Info($"panel-kiosk Navigate hr=0x{hr:X8} url={LogRedact.Url(_navigationUrl)}");
 
         // Re-assert topmost AFTER WebView2 attach. Some controller-init
         // paths reorder windows; this guarantees we land on top.
@@ -449,7 +449,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             {
                 Wv2.NavStartingArgs_put_Cancel(args, true);
                 ShellOpenExternal(uri);
-                Log.Info($"panel-kiosk external nav redirected: {uri}");
+                Log.Info($"panel-kiosk external nav redirected: {LogRedact.Url(uri)}");
             }
         }
         catch (Exception ex) { Log.Error($"panel-kiosk NavStarting: {ex.Message}"); }
@@ -522,7 +522,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             Wv2.NewWindowArgs_get_Uri(args, out var uri);
             Wv2.NewWindowArgs_put_Handled(args, true);
             ShellOpenExternal(uri);
-            Log.Info($"panel-kiosk new-window routed: {uri}");
+            Log.Info($"panel-kiosk new-window routed: {LogRedact.Url(uri)}");
         }
         catch (Exception ex) { Log.Error($"panel-kiosk NewWindow: {ex.Message}"); }
         return WebView2Native.S_OK;

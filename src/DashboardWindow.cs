@@ -148,7 +148,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOZORDER
             | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
 
-        Log.Info($"dashboard ctor bounds={x},{y},{w}x{h} hwnd=0x{Hwnd:X} url={navigationUrl}");
+        Log.Info($"dashboard ctor bounds={x},{y},{w}x{h} hwnd=0x{Hwnd:X} url={LogRedact.Url(navigationUrl)}");
         StartWebView2Init();
     }
 
@@ -337,7 +337,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             return;
         }
         var hr = Wv2.Wv2_Navigate(_coreWebView2, url);
-        Log.Info($"dashboard re-navigate hr=0x{hr:X8} url={url}");
+        Log.Info($"dashboard re-navigate hr=0x{hr:X8} url={LogRedact.Url(url)}");
     }
 
     public IntPtr? HandleMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
@@ -747,7 +747,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         if (WebView2Native.Failed(injectHr)) Log.Error($"dashboard AddScriptToExecuteOnDocumentCreated hr=0x{injectHr:X8}");
 
         var hr = Wv2.Wv2_Navigate(_coreWebView2, _navigationUrl);
-        Log.Info($"dashboard Navigate hr=0x{hr:X8} url={_navigationUrl}");
+        Log.Info($"dashboard Navigate hr=0x{hr:X8} url={LogRedact.Url(_navigationUrl)}");
 
         // Reveal the window only after the controller is attached so
         // there's no flash of pre-WebView2 caption-bar-only frame.
@@ -770,7 +770,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             {
                 Wv2.NavStartingArgs_put_Cancel(args, true);
                 ShellOpenExternal(uri);
-                Log.Info($"dashboard external nav redirected to default browser: {uri}");
+                Log.Info($"dashboard external nav redirected to default browser: {LogRedact.Url(uri)}");
             }
         }
         catch (Exception ex) { Log.Error($"dashboard NavStarting: {ex.Message}"); }
@@ -787,7 +787,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             Wv2.NewWindowArgs_get_Uri(args, out var uri);
             Wv2.NewWindowArgs_put_Handled(args, true);
             ShellOpenExternal(uri);
-            Log.Info($"dashboard target=_blank routed to default browser: {uri}");
+            Log.Info($"dashboard target=_blank routed to default browser: {LogRedact.Url(uri)}");
         }
         catch (Exception ex) { Log.Error($"dashboard NewWindow: {ex.Message}"); }
         return WebView2Native.S_OK;

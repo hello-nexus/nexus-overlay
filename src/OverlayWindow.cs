@@ -73,7 +73,7 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         var emptyRgn = Native.CreateRectRgn(0, 0, 1, 1);
         Native.SetWindowRgn(Hwnd, emptyRgn, false);
 
-        Log.Info($"overlay ctor monitor={monitor.Index} bounds={b.Left},{b.Top},{b.Width}x{b.Height} hwnd=0x{Hwnd:X} url={navigationUrl}");
+        Log.Info($"overlay ctor monitor={monitor.Index} bounds={b.Left},{b.Top},{b.Width}x{b.Height} hwnd=0x{Hwnd:X} url={LogRedact.Url(navigationUrl)}");
 
         Native.ShowWindow(Hwnd, Native.SW_SHOWNOACTIVATE);
 
@@ -311,7 +311,7 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
 
         // Navigate.
         var hr = Wv2.Wv2_Navigate(_coreWebView2, _navigationUrl);
-        Log.Info($"overlay {_monitor.Index} Navigate hr=0x{hr:X8} url={_navigationUrl}");
+        Log.Info($"overlay {_monitor.Index} Navigate hr=0x{hr:X8} url={LogRedact.Url(_navigationUrl)}");
 
         ApplyZOrder();
 
