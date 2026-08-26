@@ -357,6 +357,21 @@ internal static class Program
         Log.Info($"dashboard focused deepLink={deepLinkPath ?? "(none)"}");
     }
 
+    /// <summary>Deep-link path out of a WM_COPYDATA payload, or null when it is not ours or not a same-origin path.</summary>
+    private static string? ReadDeepLinkPath(IntPtr lParam)
+    {
+        if (_showDashboardMsg == 0 || lParam == IntPtr.Zero) return null;
+        var cds = Marshal.PtrToStructure<Native.COPYDATASTRUCT>(lParam);
+        if ((uint)cds.dwData.ToInt64() != _showDashboardMsg) return null;
+        if (cds.lpData == IntPtr.Zero || cds.cbData <= 0 || cds.cbData > 1024) return null;
+        var path = Marshal.PtrToStringUni(cds.lpData, cds.cbData / 2)?.TrimEnd('\0');
+        // Only an absolute same-origin path; "//host" and "/\host" are
+        // protocol-relative and would navigate the dashboard off-origin.
+        if (string.IsNullOrEmpty(path) || path![0] != '/') return null;
+        if (path.Length > 1 && (path[1] == '/' || path[1] == '\\')) return null;
+        return path;
+    }
+
     /// <summary>
     /// Invoked by DashboardWindow on WM_CLOSE before DestroyWindow tears
     /// down the HWND. Clears the singleton so the next ShowDashboard
@@ -548,6 +563,21 @@ internal static class Program
                     Log.Info("idle exit: no widgets, dashboard hidden; quitting");
                     Native.PostQuitMessage(0);
                 }
+                return IntPtr.Zero;
+            }
+            if (msg == Native.WM_COPYDATA)
+            {
+                // A registered message carries no payload, so the service sends
+                // an arbitrary deep-link path this way (dwData = the registered
+                // ShowDashboard id, which is what identifies it as ours).
+                try
+                {
+                    var path = ReadDeepLinkPath(lParam);
+                    if (path is null) return IntPtr.Zero;
+                    ShowOrCreateDashboard(path);
+                    return (IntPtr)1;
+                }
+                catch (Exception ex) { Log.Error($"deep link: {ex.Message}"); }
                 return IntPtr.Zero;
             }
             if (_showDashboardMsg != 0 && msg == _showDashboardMsg)

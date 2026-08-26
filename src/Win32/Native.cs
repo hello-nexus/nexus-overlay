@@ -67,7 +67,17 @@ internal static unsafe class Native
     public const uint WM_ACTIVATE = 0x0006;
     public const uint WM_CLOSE = 0x0010;
     public const uint WM_GETMINMAXINFO = 0x0024;
+    public const uint WM_COPYDATA = 0x004A;
     public const uint WM_NCCALCSIZE = 0x0083;
+
+    /// <summary>WM_COPYDATA payload; dwData carries the sender's registered message id.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct COPYDATASTRUCT
+    {
+        public IntPtr dwData;
+        public int cbData;
+        public IntPtr lpData;
+    }
     public const uint WM_NCHITTEST = 0x0084;
     public const uint WM_NCACTIVATE = 0x0086;
     public const uint WM_NCMOUSEMOVE = 0x00A0;
