@@ -344,18 +344,22 @@ internal static class Program
         DisarmIdleExitTimer();
         if (_dashboard is null)
         {
-            var url = $"{ServiceOrigin}{deepLinkPath ?? "/"}?token={Uri.EscapeDataString(_pairedToken)}";
+            var url = DashboardUrl(deepLinkPath ?? "/");
             _dashboard = new DashboardWindow(url);
             Log.Info($"dashboard created path={deepLinkPath ?? "/"}");
             return;
         }
         if (deepLinkPath is not null)
         {
-            _dashboard.Navigate($"{ServiceOrigin}{deepLinkPath}?token={Uri.EscapeDataString(_pairedToken)}");
+            _dashboard.Navigate(DashboardUrl(deepLinkPath));
         }
         _dashboard.ShowAndFocus();
         Log.Info($"dashboard focused deepLink={deepLinkPath ?? "(none)"}");
     }
+
+    /// <summary>Dashboard URL for a path, joining the token with the separator the path itself needs; a deep link may already carry a query.</summary>
+    private static string DashboardUrl(string path)
+        => $"{ServiceOrigin}{path}{(path.Contains('?') ? '&' : '?')}token={Uri.EscapeDataString(_pairedToken)}";
 
     /// <summary>Deep-link path out of a WM_COPYDATA payload, or null when it is not ours or not a same-origin path.</summary>
     private static string? ReadDeepLinkPath(IntPtr lParam)
