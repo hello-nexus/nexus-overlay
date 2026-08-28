@@ -255,6 +255,8 @@ internal sealed class StreamAssignment
     public int Fps { get; set; } = 60;
     [JsonPropertyName("bitrateKbps")]
     public int BitrateKbps { get; set; } = 8000;
+    [JsonPropertyName("codec")]
+    public string Codec { get; set; } = "h264";
 }
 
 internal sealed class StreamAssignmentsResponse

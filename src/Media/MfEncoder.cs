@@ -26,7 +26,7 @@ namespace Nexus.Overlay.Media;
 /// dedicated blocking-GetEvent thread. Dispose must come after the pump has
 /// stopped submitting.
 /// </summary>
-internal sealed unsafe class MfEncoder : IDisposable
+internal sealed unsafe class MfEncoder : IFrameSink
 {
     private const int Nv12QueueCapacity = 4;
     // Read against the host's capture-gap warns (same threshold): output

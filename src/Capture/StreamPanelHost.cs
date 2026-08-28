@@ -68,7 +68,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
 
     private D3DDevice? _d3d;
     private WgcCapture? _capture;
-    private MfEncoder? _encoder;
+    private IFrameSink? _encoder;
     private IngestClient? _ingest;
     private Thread? _pumpThread;
     private volatile bool _pumpStop;
@@ -315,8 +315,15 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         var ingest = new IngestClient(_serviceOrigin, SessionId, _pairedToken);
         ingest.Faulted = PostFault;
         _ingest = ingest;
-        _encoder = new MfEncoder(_d3d, _pixelWidth, _pixelHeight, fps, bitrateKbps,
-            (accessUnit, idr) => _ingest?.Send(accessUnit, idr), SessionId);
+        // Raw frames go to glass that takes a framebuffer (the Kraken LCD); everything
+        // else is hardware-encoded. Same Submit contract either way.
+        var raw = string.Equals(_assignment.Codec, "rawBgra", StringComparison.OrdinalIgnoreCase);
+        Log.Info($"stream-host {SessionId}: codec='{_assignment.Codec}' sink={(raw ? "raw" : "h264")}");
+        _encoder = raw
+            ? new RawFrameSink(_d3d, _pixelWidth, _pixelHeight,
+                (frame, key) => _ingest?.Send(frame, key), SessionId)
+            : new MfEncoder(_d3d, _pixelWidth, _pixelHeight, fps, bitrateKbps,
+                (accessUnit, idr) => _ingest?.Send(accessUnit, idr), SessionId);
 
         _pumpStop = false;
         _pumpThread = new Thread(PumpLoop)
