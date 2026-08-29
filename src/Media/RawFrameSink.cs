@@ -15,9 +15,9 @@ namespace Nexus.Overlay.Media;
 /// Only viable for a small, slow panel: a 640x640 frame is 1.6 MB, where H.264 would be
 /// a few tens of KB.
 ///
-/// Submit runs on the capture pump thread; there is no queue and no worker, so a slow
-/// consumer backpressures the pump directly, which is the behaviour we want when the
-/// device is the bottleneck.
+/// Submit runs on the capture pump thread. The consumer (IngestClient) queues what it is
+/// handed without copying, so each frame gets its own array: reusing one buffer would let
+/// every queued frame alias the bytes the next Submit is still overwriting.
 /// </summary>
 internal sealed unsafe class RawFrameSink : IFrameSink
 {
@@ -26,7 +26,6 @@ internal sealed unsafe class RawFrameSink : IFrameSink
     private readonly string _logTag;
     private readonly Action<byte[], bool> _onFrame;
     private readonly IntPtr _context;
-    private readonly byte[] _frame;
 
     private IntPtr _staging;
     private bool _disposed;
@@ -37,7 +36,6 @@ internal sealed unsafe class RawFrameSink : IFrameSink
         _height = height;
         _onFrame = onFrame;
         _logTag = logTag;
-        _frame = new byte[width * height * 4];
 
         var getContext = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, void>)
             Wv2.Slot(device.Device, D3D11Vtable.Device_GetImmediateContext);
@@ -103,17 +101,19 @@ internal sealed unsafe class RawFrameSink : IFrameSink
             Log.Error($"{_logTag}: staging Map failed: 0x{hr:X8}");
             return;
         }
+        // Sized here rather than reused across calls: the consumer queues the reference.
+        int rowBytes = _width * 4;
+        var frame = new byte[rowBytes * _height];
         try
         {
             // RowPitch is the driver's stride and is >= width*4; copy row by row so the
             // callback always receives tightly packed rows.
-            int rowBytes = _width * 4;
             var src = (byte*)mapped.pData;
-            fixed (byte* dst = _frame)
+            fixed (byte* dst = frame)
             {
                 if (mapped.RowPitch == (uint)rowBytes)
                 {
-                    Buffer.MemoryCopy(src, dst, _frame.Length, _frame.Length);
+                    Buffer.MemoryCopy(src, dst, frame.Length, frame.Length);
                 }
                 else
                 {
@@ -132,7 +132,7 @@ internal sealed unsafe class RawFrameSink : IFrameSink
         }
 
         // Every raw frame stands alone, so each one is a keyframe.
-        _onFrame(_frame, true);
+        _onFrame(frame, true);
     }
 
     public void Dispose()
