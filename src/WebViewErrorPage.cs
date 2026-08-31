@@ -45,8 +45,8 @@ public static class WebViewErrorPage
         sb.Append("</style></head><body><div class=\"box\">");
         sb.Append("<h1>This page didn't load</h1>");
         sb.Append("<p>").Append(Escape(detail)).Append("<code>").Append(Escape(url)).Append("</code></p>");
-        sb.Append("<button class=\"primary\" onclick=\"location.replace('").Append(Escape(url)).Append("')\">Try again</button>");
-        sb.Append("<button onclick=\"location.replace('").Append(Escape(homeUrl)).Append("')\">Back to Nexus</button>");
+        sb.Append("<button class=\"primary\" onclick=\"location.replace('").Append(ForScript(url)).Append("')\">Try again</button>");
+        sb.Append("<button onclick=\"location.replace('").Append(ForScript(homeUrl)).Append("')\">Back to Nexus</button>");
         sb.Append("</div></body></html>");
         return sb.ToString();
     }
@@ -58,6 +58,17 @@ public static class WebViewErrorPage
         Timeout => "Nexus took too long to answer.",
         _ => "Nexus couldn't open this page.",
     };
+
+    /// <summary>
+    /// A URL sitting inside a JS string literal inside an HTML attribute: the
+    /// attribute is decoded before the script is parsed, so an entity-escaped
+    /// quote would still close the literal. Percent-encode the quotes instead,
+    /// which a URL carries harmlessly.
+    /// </summary>
+    private static string ForScript(string url) => Escape(url
+        .Replace("'", "%27", StringComparison.Ordinal)
+        .Replace("\"", "%22", StringComparison.Ordinal)
+        .Replace("\\", "%5C", StringComparison.Ordinal));
 
     private static string Escape(string s) => s
         .Replace("&", "&amp;", StringComparison.Ordinal)
