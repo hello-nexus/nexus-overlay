@@ -61,10 +61,13 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     // Mutable so a deep-link arriving mid-init (Navigate before CoreWebView2 is
     // ready) redirects the pending InitController navigation instead of no-oping.
     private string _navigationUrl;
+    /// <summary>The URL the window opened on: where the failure page's "Back to Nexus" returns to.</summary>
+    private readonly string _homeUrl;
     private IntPtr _env;
     private IntPtr _envCreatedHandler;
     private IntPtr _ctrlCreatedHandler;
     private IntPtr _navStartingHandler;
+    private IntPtr _navCompletedHandler;
     private IntPtr _newWindowHandler;
     private IntPtr _permissionHandler;
     private IntPtr _webMessageHandler;
@@ -72,6 +75,10 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     private IntPtr _controller2;
     private IntPtr _coreWebView2;
     private long _navStartingToken;
+    private long _navCompletedToken;
+    // Set while the shell's own failure document is up, so its load does not
+    // read as another failed navigation.
+    private bool _showingErrorPage;
     private long _newWindowToken;
     private long _permissionToken;
     private long _webMessageToken;
@@ -89,6 +96,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     {
         _instanceId = Interlocked.Increment(ref _nextInstanceId);
         _instances[_instanceId] = this;
+        _homeUrl = navigationUrl;
         _navigationUrl = navigationUrl;
 
         var (x, y, w, h) = ResolveInitialBounds();
@@ -721,6 +729,12 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         var navHr = Wv2.Wv2_add_NavigationStarting(_coreWebView2, _navStartingHandler, out _navStartingToken);
         if (WebView2Native.Failed(navHr)) Log.Error($"dashboard add_NavigationStarting failed hr=0x{navHr:X8}");
 
+        // A failed navigation otherwise paints Edge's own error page, which reads
+        // as a broken app rather than a Nexus screen.
+        _navCompletedHandler = WebView2Callbacks.CreateNavigationCompletedHandler(&OnNavigationCompletedStatic);
+        var navcHr = Wv2.Wv2_add_NavigationCompleted(_coreWebView2, _navCompletedHandler, out _navCompletedToken);
+        if (WebView2Native.Failed(navcHr)) Log.Error($"dashboard add_NavigationCompleted failed hr=0x{navcHr:X8}");
+
         _newWindowHandler = WebView2Callbacks.CreateNewWindowRequestedHandler(&OnNewWindowRequestedStatic);
         var nwHr = Wv2.Wv2_add_NewWindowRequested(_coreWebView2, _newWindowHandler, out _newWindowToken);
         if (WebView2Native.Failed(nwHr)) Log.Error($"dashboard add_NewWindowRequested failed hr=0x{nwHr:X8}");
@@ -774,6 +788,32 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             }
         }
         catch (Exception ex) { Log.Error($"dashboard NavStarting: {ex.Message}"); }
+        return WebView2Native.S_OK;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnNavigationCompletedStatic(IntPtr self, IntPtr sender, IntPtr args)
+    {
+        var owner = FindByNavCompletedHandler(self);
+        if (owner is null) return WebView2Native.S_OK;
+        var ok = false;
+        var status = 0;
+        if (args != IntPtr.Zero)
+        {
+            Wv2.NavCompletedArgs_get_IsSuccess(args, out ok);
+            Wv2.NavCompletedArgs_get_WebErrorStatus(args, out status);
+        }
+        if (ok)
+        {
+            owner._showingErrorPage = false;
+            return WebView2Native.S_OK;
+        }
+        Log.Info($"dashboard navigation failed webErr={status} url={LogRedact.Url(owner._navigationUrl)}");
+        if (owner._showingErrorPage || !WebViewErrorPage.ShouldShow(status)) return WebView2Native.S_OK;
+        owner._showingErrorPage = true;
+        var html = WebViewErrorPage.Html(owner._navigationUrl, status, owner._homeUrl);
+        var hr = Wv2.Wv2_NavigateToString(owner._coreWebView2, html);
+        if (WebView2Native.Failed(hr)) Log.Error($"dashboard NavigateToString hr=0x{hr:X8}");
         return WebView2Native.S_OK;
     }
 
@@ -1061,6 +1101,13 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         return null;
     }
 
+    private static DashboardWindow? FindByNavCompletedHandler(IntPtr handler)
+    {
+        foreach (var kv in _instances)
+            if (kv.Value._navCompletedHandler == handler) return kv.Value;
+        return null;
+    }
+
     private static DashboardWindow? FindByNewWindowHandler(IntPtr handler)
     {
         foreach (var kv in _instances)
@@ -1096,6 +1143,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             if (_coreWebView2 != IntPtr.Zero)
             {
                 if (_navStartingToken != 0) { Wv2.Wv2_remove_NavigationStarting(_coreWebView2, _navStartingToken); _navStartingToken = 0; }
+                if (_navCompletedToken != 0) { Wv2.Wv2_remove_NavigationCompleted(_coreWebView2, _navCompletedToken); _navCompletedToken = 0; }
                 if (_newWindowToken != 0) { Wv2.Wv2_remove_NewWindowRequested(_coreWebView2, _newWindowToken); _newWindowToken = 0; }
                 if (_permissionToken != 0) { Wv2.Wv2_remove_PermissionRequested(_coreWebView2, _permissionToken); _permissionToken = 0; }
                 if (_webMessageToken != 0) { Wv2.Wv2_remove_WebMessageReceived(_coreWebView2, _webMessageToken); _webMessageToken = 0; }

@@ -118,6 +118,12 @@ internal static unsafe class Wv2
         fixed (char* u = url) return fn(wv2, u);
     }
 
+    public static int Wv2_NavigateToString(IntPtr wv2, string html)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, char*, int>)Slot(wv2, WebView2Vtable.Wv2_NavigateToString);
+        fixed (char* h = html) return fn(wv2, h);
+    }
+
     public static int Wv2_PostWebMessageAsJson(IntPtr wv2, string json)
     {
         var fn = (delegate* unmanaged[Stdcall]<IntPtr, char*, int>)Slot(wv2, WebView2Vtable.Wv2_PostWebMessageAsJson);
