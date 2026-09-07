@@ -29,7 +29,7 @@ When no surface needs to be visible (overlays disabled, no widgets pinned, dashb
 
 ```
 src/
-  Program.cs              # entry, singleton mutex, prefs polling, idle exit
+  Program.cs              # entry, singleton mutex, state reconcile, idle exit
   DashboardWindow.cs      # / dashboard window
   OverlayWindow.cs        # /overlay per-monitor widget host (transparent, regioned)
   PanelKioskWindow.cs     # /panel/:deviceId fullscreen kiosk (Y70/Y80)
@@ -40,7 +40,7 @@ src/
   PanelMonitorGuard.cs    # relocates foreign windows off the kiosk's monitor
   PanelGuardGeometry.cs   # pure placement math for evicted windows
   RegionLayout.cs         # SPA-reported widget rects → SetWindowRgn
-  NexusApi.cs             # tiny REST/WS client to nexus-service for prefs + auth
+  NexusApi.cs             # tiny REST client to nexus-service for /pair + /overlay/state
   Logger.cs               # rolling file logger
   Capture/                # streamed panels: off-screen host + manager + hand-rolled Windows.Graphics.Capture / D3D11 interop
   Media/                  # streamed panels: hand-rolled Media Foundation H.264 encoder, frame framing, ingest client
@@ -63,7 +63,7 @@ The csproj is `<PublishAot>true</PublishAot>` and Windows-only (`net10.0-windows
 dotnet test
 ```
 
-Tests live under `tests/`. They cover the AOT-safe bits (region math, prefs polling, idle exit) - the WebView2 surfaces are exercised end-to-end via the service's integration harness.
+Tests live under `tests/`. They cover the AOT-safe bits (region math, kiosk plan math, state parsing) - the WebView2 surfaces are exercised end-to-end via the service's integration harness.
 
 ## Why a separate process
 

@@ -29,25 +29,8 @@ internal static class Program
     private const string PrefsChangedMessageName = "Nexus.Overlay.PrefsChanged";
     private static readonly UIntPtr TIMER_PREFS_POLL = new(1);
     private static readonly UIntPtr TIMER_IDLE_EXIT = new(2);
-    // Grace window after going idle (no widgets, dashboard hidden) before
-    // the process exits. Sized to absorb the tray's launch -> ShowDashboard
-    // message race at startup.
-    private const uint IdleExitDelayMs = 3_000;
-    // Idle grace while panel.autoLaunch is on and a kiosk is expected but
-    // not up (never opened early in process life, or a recreate is mid-
-    // flight). On a cold boot the HYTE panel can enumerate (or surface its
-    // real PnP hardware id) well after this process starts, and the default
-    // grace is shorter than the poll interval - the process would exit
-    // before the first PanelDisplay.Find() retry, and a clean exit is
-    // deliberately not respawned by the service, so the kiosk never appears
-    // until a settings toggle. Long enough for the poll + WM_DISPLAYCHANGE
-    // to catch a slow panel.
-    private const uint PanelPendingIdleExitDelayMs = 120_000;
-    // The never-opened arm of the extended grace applies only this long
-    // after process start (the boot/spawn window). Without the age scope,
-    // every dashboard open/close on a PC with no HYTE panel would linger
-    // the full extended grace, since panel.autoLaunch defaults on.
-    private const long PanelPendingGraceWindowMs = 600_000;
+    private const uint IdleExitDelayMs = 30_000;
+    private const long StateUnreachableExitMs = 60_000;
 
     private static readonly List<OverlayWindow> Overlays = new();
     private static DashboardWindow? _dashboard;
@@ -55,10 +38,7 @@ internal static class Program
     // Kiosks for user-promoted monitors, reconciled from /displays/assignments.
     // Distinct from _panelKiosk (the auto-detected Y70).
     private static MonitorKioskManager? _monitorKiosks;
-    // Consecutive /displays/assignments failures (message-loop thread only).
-    private static int _assignmentFetchFailures;
     private static StreamHostManager? _streamHosts;
-    private static int _streamFetchFailures;
     private static uint _showDashboardMsg;
     private static uint _showDashboardSettingsMsg;
     private static uint _showPanelKioskMsg;
@@ -70,41 +50,12 @@ internal static class Program
     private static IntPtr _marshalerHwnd;
     private static MarshalerOwner? _marshalerOwner;
     private static Win32SynchronizationContext? _syncContext;
-    // "Should we be showing overlay widgets right now?" - enabled toggle
-    // AND at least one widget pinned. Either condition flipping false
-    // is treated identically: tear down + idle.
-    private static bool _lastPolledShouldShow;
-    private static bool _lastPolledAlwaysOnTop;
-    private static int _lastPolledMonitorIndex = -1;
-    // Whether the panel-monitor guard should run. Mirrored from the
-    // panel.reserveMonitor pref; a prefs change flips the guard on the live
-    // kiosk without recreating it.
-    private static bool _lastPolledReserveMonitor = true;
-    // Y70 backdrop from the last assignments poll. See-through is fixed at
-    // window creation, so a change here recreates the kiosk rather than
-    // toggling it in place.
-    private static bool _lastPolledPanelSeeThrough;
-    // Mirrored panel.autoLaunch; with it on and a kiosk expected but not up,
-    // idle-exit uses the extended grace so the poll can catch a slow-
-    // enumerating panel.
-    private static bool _lastPolledPanelAutoLaunch;
-    private static bool _panelKioskEverOpened;
-    // True from a recreate's Close until the reopen succeeds. A recreate's
-    // MaybeShowPanelKiosk can miss transiently (the Y70 drops out of display
-    // enumeration mid-mode-change); without this the Close re-arms the SHORT
-    // idle grace (a kiosk has opened before) and the process can exit before
-    // the poll retries. Expires after PanelPendingGraceWindowMs so a panel
-    // that vanished for good mid-recreate doesn't extend every later idle
-    // transition for the process lifetime.
-    private static bool _kioskReopenPending;
-    private static long _kioskReopenPendingSetTick;
-    // Consecutive kiosk recreates whose content never confirmed; picks the
-    // fast vs slow watchdog deadline. Reset when a navigation confirms.
+    private static OverlayState? _state;
+    private static long _stateUnreachableSinceTick;
     private static int _kioskUnconfirmedRecreates;
-    private static readonly long _processStartTick = Environment.TickCount64;
+    private static bool _idleTimerArmed;
 
-    private static bool ShouldShowOverlays(UiPrefs p)
-        => p.Overlay.Enabled && p.Overlay.Layout.Count > 0;
+    private static bool ShouldShowOverlays(OverlayState s) => s.OverlayEnabled && s.Pinned > 0;
 
     public static void SetAllAlwaysOnTop(bool value)
     {
@@ -122,7 +73,7 @@ internal static class Program
     /// </summary>
     public static void MoveAllToMonitor(int value)
     {
-        _lastPolledMonitorIndex = value;
+        if (_state is not null) _state.Monitor = value;
         foreach (var overlay in Overlays)
         {
             try { overlay.MoveToMonitor(value); } catch (Exception ex) { Log.Error($"MoveToMonitor: {ex.Message}"); }
@@ -164,42 +115,11 @@ internal static class Program
 
         _api = new NexusApi(ServiceOrigin);
 
-        // Pair + initial prefs synchronously before the message loop or
-        // sync context exist. The HttpClient await chain must NOT capture
-        // our Win32SynchronizationContext here - if it did, the continuation
-        // would post back to the not-yet-running message loop and deadlock.
-        _pairedToken = _api.PairAsync().GetAwaiter().GetResult();
-        if (string.IsNullOrEmpty(_pairedToken))
-        {
-            Log.Error("pair returned empty token; service unreachable?");
-            return 2;
-        }
-        Log.Info($"paired ok token len={_pairedToken.Length}");
-
-        // Report WebView2 child working sets to the service log on significant
-        // change. Runs on its own timer thread - independent of the message loop
-        // and never captures the Win32 sync context (its HttpClient awaits run on
-        // the thread pool), so it can't deadlock the not-yet-running loop.
+        // Before the message loop exists nothing captures a sync context, so
+        // blocking on the HTTP client here cannot deadlock.
+        var state = BootAsync().GetAwaiter().GetResult();
+        if (state is null) return 2;
         _memSampler = new WebView2MemorySampler(_api);
-
-        var prefs = _api.GetPreferencesAsync().GetAwaiter().GetResult();
-        Log.Info($"prefs enabled={prefs.Overlay.Enabled} pinned={prefs.Overlay.Layout.Count} alwaysOnTop={prefs.Overlay.AlwaysOnTop} monitor={prefs.Overlay.Monitor}");
-        // Same no-sync-context rule as pair/prefs: fetch the initial monitor
-        // assignments before the message loop exists.
-        var initialAssignmentsResponse = _api.GetDisplayAssignmentsAsync().GetAwaiter().GetResult();
-        _lastPolledPanelSeeThrough = IsSeeThrough(initialAssignmentsResponse?.PanelBackdrop);
-        var initialAssignments = initialAssignmentsResponse?.Assignments;
-        // Stream assignments must also be fetched at startup: when the
-        // coordinator spawns this process for a stream session and nothing
-        // else is on screen, the idle-exit grace elapses before the first
-        // prefs poll would ever see the session, and the process dies in a
-        // spawn loop.
-        var initialStreamAssignments = _api.GetStreamAssignmentsAsync().GetAwaiter().GetResult();
-        _lastPolledShouldShow = ShouldShowOverlays(prefs);
-        _lastPolledAlwaysOnTop = prefs.Overlay.AlwaysOnTop;
-        _lastPolledMonitorIndex = prefs.Overlay.Monitor;
-        _lastPolledReserveMonitor = prefs.Panel.ReserveMonitor;
-        _lastPolledPanelAutoLaunch = prefs.Panel.AutoLaunch;
 
         // Now safe to install: WebView2 callbacks fire on this thread once
         // the message loop is pumping, and the sync context drains via the
@@ -245,64 +165,20 @@ internal static class Program
 
         // Register the push-notify message that the user-session helper
         // posts from `overlay.prefsChanged`. Receiving it kicks
-        // PollPrefsAsync immediately so user-visible toggles feel instant
+        // the poll immediately so user-visible toggles feel instant
         // instead of waiting for the next 5 s poll tick.
         _prefsChangedMsg = Native.RegisterWindowMessageW(PrefsChangedMessageName);
         Log.Info($"registered PrefsChanged msg=0x{_prefsChangedMsg:X}");
 
-        // Overlay widgets only spawn when the toggle is on AND at least
-        // one widget is pinned. With either condition false we stay
-        // resident only long enough for the tray's "Open Nexus" to post
-        // ShowDashboard; otherwise we idle out after the grace window.
-        if (_lastPolledShouldShow)
-        {
-            CreateOverlay(prefs.Overlay.Monitor, prefs.Overlay.AlwaysOnTop);
-        }
-        else
-        {
-            Log.Info($"no overlay widgets to show (enabled={prefs.Overlay.Enabled} pinned={prefs.Overlay.Layout.Count}); staying resident for on-demand dashboard");
-        }
-
-        // Panel kiosk auto-launch: when panel.autoLaunch is on AND a
-        // recognized HYTE touch panel is connected, open the fullscreen
-        // kiosk window on it. Swallow exceptions so a kiosk-init failure
-        // doesn't take down the whole overlay process before the message
-        // loop is even up.
-        if (prefs.Panel.AutoLaunch)
-        {
-            try { MaybeShowPanelKiosk(); }
-            catch (Exception ex) { Log.Error($"startup MaybeShowPanelKiosk: {ex.Message}"); }
-        }
-
-        // Promoted-monitor kiosks: one fullscreen window per assignment.
-        // Independent of panel.autoLaunch (that toggle is the Y70 kiosk's).
         _monitorKiosks = new MonitorKioskManager(ServiceOrigin);
-
-        // Streamed-panel render hosts: reconciled at startup (see the fetch
-        // above) and from every prefs poll after that.
         _streamHosts = new StreamHostManager(ServiceOrigin);
-        if (initialStreamAssignments is { Count: > 0 })
-        {
-            try { _streamHosts.Reconcile(initialStreamAssignments, _pairedToken); }
-            catch (Exception ex) { Log.Error($"startup stream-host reconcile: {ex.Message}"); }
-        }
-        if (initialAssignments is { Count: > 0 })
-        {
-            try { _monitorKiosks.Reconcile(initialAssignments, _pairedToken); }
-            catch (Exception ex) { Log.Error($"startup monitor-kiosk reconcile: {ex.Message}"); }
-        }
-
-        // Arm the idle-exit timer only if nothing landed on screen. With any
-        // of overlays/kiosk/dashboard up, IsIdle returns false and the call
-        // no-ops.
-        MaybeArmIdleExitTimer();
+        Apply(state);
 
         // Pin the overlay's AppID across virtual desktops. Process-level
         // pin, not per-overlay - one call covers every HWND we own. Idempotent
         // (IsAppIdPinned check inside) so repeated overlay restarts don't churn.
         VirtualDesktopPin.TryPinApp();
 
-        // Poll prefs every 5s for changes to the always-on-top toggle.
         Native.SetTimer(_marshalerHwnd, TIMER_PREFS_POLL, 5000, IntPtr.Zero);
 
         var result = MessageLoop.Run(_syncContext);
@@ -405,11 +281,10 @@ internal static class Program
         // Find() logs the scan result on change; no per-poll line needed here.
         if (target is null) return;
         DisarmIdleExitTimer();
-        var url = $"{ServiceOrigin}/panel?token={Uri.EscapeDataString(_pairedToken)}";
-        _panelKiosk = new PanelKioskWindow(target, url, _lastPolledReserveMonitor,
-            seeThrough: _lastPolledPanelSeeThrough);
-        _panelKioskEverOpened = true;
-        _kioskReopenPending = false;
+        var seeThrough = IsSeeThrough(_state?.Y70Backdrop);
+        var reserve = _state?.ReserveMonitor ?? true;
+        var url = $"{ServiceOrigin}/panel?token={Uri.EscapeDataString(_pairedToken)}{(seeThrough ? "&backdrop=desktop" : "")}";
+        _panelKiosk = new PanelKioskWindow(target, url, reserve, seeThrough: seeThrough);
         var created = _panelKiosk;
         // Drop the reference on ANY teardown, including one the OS drives
         // directly (bypassing ClosePanelKiosk), so a dead kiosk never
@@ -418,7 +293,7 @@ internal static class Program
         {
             if (ReferenceEquals(_panelKiosk, created)) _panelKiosk = null;
         };
-        Log.Info($"panel kiosk opened on monitor={target.Index} guard={_lastPolledReserveMonitor} seeThrough={_lastPolledPanelSeeThrough}");
+        Log.Info($"panel kiosk opened on monitor={target.Index} guard={reserve} seeThrough={seeThrough}");
     }
 
     private static bool IsSeeThrough(string? backdrop) =>
@@ -460,36 +335,18 @@ internal static class Program
 
     private static void MaybeArmIdleExitTimer()
     {
-        if (_marshalerHwnd == IntPtr.Zero) return;
-        if (!IsIdle()) return;
-        var neverOpenedInBootWindow = !_panelKioskEverOpened
-            && Environment.TickCount64 - _processStartTick < PanelPendingGraceWindowMs;
-        // Reopen-pending applies regardless of panel.autoLaunch: monitor
-        // kiosks recreate independently of the Y70 toggle, and only actual
-        // recreate paths set the flag.
-        var reopenPending = _kioskReopenPending
-            && Environment.TickCount64 - _kioskReopenPendingSetTick < PanelPendingGraceWindowMs;
-        var delay = reopenPending || (_lastPolledPanelAutoLaunch && neverOpenedInBootWindow)
-            ? PanelPendingIdleExitDelayMs
-            : IdleExitDelayMs;
-        Native.SetTimer(_marshalerHwnd, TIMER_IDLE_EXIT, delay, IntPtr.Zero);
-        Log.Info($"idle: arming exit timer for {delay} ms");
-    }
-
-    /// <summary>
-    /// A kiosk recreate (Y70 branch or MonitorKioskManager) is mid-flight:
-    /// arm the extended idle grace so a transient display-enumeration miss
-    /// between the Close and the reopen cannot idle-exit the process.
-    /// </summary>
-    internal static void NotifyKioskReopenPending()
-    {
-        _kioskReopenPending = true;
-        _kioskReopenPendingSetTick = Environment.TickCount64;
+        // SetTimer on a live id restarts its countdown, so arming on every poll
+        // would hold the process open forever.
+        if (_marshalerHwnd == IntPtr.Zero || _idleTimerArmed || !IsIdle()) return;
+        _idleTimerArmed = true;
+        Native.SetTimer(_marshalerHwnd, TIMER_IDLE_EXIT, IdleExitDelayMs, IntPtr.Zero);
+        Log.Info($"idle: arming exit timer for {IdleExitDelayMs} ms");
     }
 
     private static void DisarmIdleExitTimer()
     {
         if (_marshalerHwnd == IntPtr.Zero) return;
+        _idleTimerArmed = false;
         Native.KillTimer(_marshalerHwnd, TIMER_IDLE_EXIT);
     }
 
@@ -538,12 +395,13 @@ internal static class Program
     /// </summary>
     private static void TearDownOverlays()
     {
+        if (Overlays.Count == 0) return;
         foreach (var o in Overlays) o.Dispose();
         Overlays.Clear();
         Log.Info("overlays torn down");
     }
 
-    // Marshaler-window owner: handles WM_TIMER for the prefs poll and
+    // Marshaler-window owner: handles WM_TIMER for the state poll and
     // serves as the sync-context drain destination via the registered
     // drain message (the message loop intercepts before reaching us).
     // Also receives the cross-process ShowDashboard message that the
@@ -554,7 +412,7 @@ internal static class Program
         {
             if (msg == Native.WM_TIMER && wParam == (IntPtr)(long)TIMER_PREFS_POLL.ToUInt64())
             {
-                _ = PollPrefsAsync();
+                _ = PollAsync();
                 return IntPtr.Zero;
             }
             if (msg == Native.WM_TIMER && wParam == (IntPtr)(long)TIMER_IDLE_EXIT.ToUInt64())
@@ -562,6 +420,7 @@ internal static class Program
                 // Idle grace window elapsed. Re-check idle to guard against
                 // a widget toggle / dashboard reopen racing the timer fire.
                 Native.KillTimer(_marshalerHwnd, TIMER_IDLE_EXIT);
+                _idleTimerArmed = false;
                 if (IsIdle())
                 {
                     Log.Info("idle exit: no widgets, dashboard hidden; quitting");
@@ -612,7 +471,7 @@ internal static class Program
             {
                 // Service signaled a settings change; repoll without
                 // waiting for the next timer tick.
-                _ = PollPrefsAsync();
+                _ = PollAsync();
                 return IntPtr.Zero;
             }
             if (msg == Native.WM_DISPLAYCHANGE)
@@ -620,7 +479,7 @@ internal static class Program
                 // Monitor hot-plug / arrangement change: re-reconcile so a
                 // kiosk on an unplugged monitor closes (and a replugged
                 // assigned monitor respawns) without waiting for the poll.
-                _ = PollPrefsAsync();
+                _ = PollAsync();
                 return IntPtr.Zero;
             }
             if (msg == Native.WM_WTSSESSION_CHANGE)
@@ -632,16 +491,31 @@ internal static class Program
         }
     }
 
-    // Poll coalescing: the timer, the PrefsChanged push, and WM_DISPLAYCHANGE
-    // (often delivered several times per topology change) all fire-and-forget
-    // PollPrefsAsync, and its awaits interleave on the message-loop thread. An
-    // older poll's response landing after a newer poll's reconcile would apply
-    // a stale assignments snapshot; serialize instead and re-run once if a
-    // trigger arrived mid-flight. Both flags only touch the loop thread.
+    private static async System.Threading.Tasks.Task<OverlayState?> BootAsync()
+    {
+        var delay = 1000;
+        for (var attempt = 0; attempt < 12; attempt++)
+        {
+            if (attempt > 0) await System.Threading.Tasks.Task.Delay(delay);
+            delay = Math.Min(delay * 2, 10_000);
+            if (string.IsNullOrEmpty(_pairedToken)) _pairedToken = await _api!.PairAsync();
+            if (string.IsNullOrEmpty(_pairedToken)) continue;
+            var state = await _api!.GetStateAsync();
+            if (state is null) continue;
+            Log.Info($"paired ok token len={_pairedToken.Length}");
+            return state;
+        }
+        Log.Error("service unreachable at start; exiting");
+        return null;
+    }
+
+    // The timer, the PrefsChanged push and WM_DISPLAYCHANGE all fire this;
+    // one poll runs at a time and re-runs once if a trigger landed mid-flight,
+    // so a stale response never lands over a newer one.
     private static bool _pollInFlight;
     private static bool _pollRequeued;
 
-    private static async System.Threading.Tasks.Task PollPrefsAsync()
+    private static async System.Threading.Tasks.Task PollAsync()
     {
         if (_pollInFlight)
         {
@@ -654,7 +528,7 @@ internal static class Program
             do
             {
                 _pollRequeued = false;
-                await PollPrefsOnceAsync();
+                await PollOnceAsync();
             } while (_pollRequeued);
         }
         finally
@@ -663,211 +537,117 @@ internal static class Program
         }
     }
 
-    private static async System.Threading.Tasks.Task PollPrefsOnceAsync()
+    private static async System.Threading.Tasks.Task PollOnceAsync()
     {
         if (_api is null) return;
         try
         {
-            var latest = await _api.GetPreferencesAsync();
-            _lastPolledPanelAutoLaunch = latest.Panel.AutoLaunch;
-
-            // Reconcile kiosk state against the toggle. Using actual window
-            // presence (not a cached pref value) means a Y70 hot-plug AFTER
-            // panel.autoLaunch was already on gets picked up on the next
-            // poll: previous poll's Find() returned null, this poll finds it.
-            // Hwnd == 0 means the window died without going through
-            // ClosePanelKiosk; treat it as down so it relaunches.
-            var kioskUp = _panelKiosk is not null && _panelKiosk.Hwnd != IntPtr.Zero;
-            if (latest.Panel.AutoLaunch && !kioskUp) MaybeShowPanelKiosk();
-            else if (!latest.Panel.AutoLaunch && kioskUp) ClosePanelKiosk();
-            else if (latest.Panel.AutoLaunch && _panelKiosk is { } kiosk && kiosk.Hwnd != IntPtr.Zero)
+            var state = await _api.GetStateAsync();
+            if (state is null)
             {
-                // Content watchdog: a kiosk whose navigation never completes
-                // holds an empty WebView2 - the window composites transparent
-                // and the desktop shows on the panel, while Hwnd-presence says
-                // "up". Recreating the window (what the settings toggle does)
-                // reliably recovers; do it automatically once the deadline
-                // passes without a confirmed navigation.
-                var recreated = false;
-                if (kiosk.HasConfirmedContent)
+                var refreshed = await _api.PairAsync();
+                if (!string.IsNullOrEmpty(refreshed))
                 {
-                    _kioskUnconfirmedRecreates = 0;
-                }
-                else
-                {
-                    var deadline = _kioskUnconfirmedRecreates >= PanelKioskWindow.RecreateFastAttempts
-                        ? PanelKioskWindow.ContentDeadlineSlowMs
-                        : PanelKioskWindow.ContentDeadlineMs;
-                    if (kiosk.AgeMs > deadline)
-                    {
-                        _kioskUnconfirmedRecreates++;
-                        Log.Warn($"panel kiosk content unconfirmed after {kiosk.AgeMs} ms (attempt {_kioskUnconfirmedRecreates}); recreating");
-                        NotifyKioskReopenPending();
-                        ClosePanelKiosk();
-                        MaybeShowPanelKiosk();
-                        recreated = true;
-                    }
-                }
-
-                // A display rotation after the kiosk was created (Windows drives
-                // a freshly attached Y70 from its native landscape to portrait,
-                // delivered as a late WM_DISPLAYCHANGE) leaves the window sized to
-                // the stale landscape bounds, so the portrait SPA renders sideways.
-                // Recreate at the panel monitor's current bounds - the same bounds
-                // reconcile MonitorKioskManager applies to promoted-monitor kiosks.
-                // Skipped on the tick that already recreated: `kiosk` is the
-                // disposed instance, and a stale-bounds compare against it would
-                // close the fresh window.
-                var target = recreated ? null : PanelDisplay.Find();
-                var b = kiosk.MonitorBounds;
-                if (target is not null
-                    && !(target.Bounds.Left == b.Left && target.Bounds.Top == b.Top
-                         && target.Bounds.Right == b.Right && target.Bounds.Bottom == b.Bottom))
-                {
-                    Log.Info($"panel kiosk monitor bounds changed -> {target.Bounds.Width}x{target.Bounds.Height}; recreating");
-                    NotifyKioskReopenPending();
-                    ClosePanelKiosk();
-                    MaybeShowPanelKiosk();
+                    _pairedToken = refreshed;
+                    state = await _api.GetStateAsync();
                 }
             }
-
-            // Toggle the Y70 kiosk's monitor guard when the global
-            // reserveMonitor pref flips. Promoted-monitor kiosks carry their
-            // own per-panel reserve on the assignment (handled in Reconcile).
-            if (latest.Panel.ReserveMonitor != _lastPolledReserveMonitor)
+            if (state is null)
             {
-                _lastPolledReserveMonitor = latest.Panel.ReserveMonitor;
-                _panelKiosk?.SetMonitorGuard(_lastPolledReserveMonitor);
-                Log.Info($"prefs poll: reserveMonitor -> {_lastPolledReserveMonitor}");
-            }
-
-            // Reconcile promoted-monitor kiosks against the service's
-            // assignment list. A single failed fetch (service hiccup) keeps
-            // current kiosks untouched, but a persistently unreachable
-            // service must NOT leave a dead panel painted forever: re-pair
-            // once (the token churns if settings were reset), and after
-            // three consecutive failures (~15s of polls) close the kiosks -
-            // they respawn from assignments when the service returns.
-            if (_monitorKiosks is not null)
-            {
-                var assignments = await _api.GetDisplayAssignmentsAsync();
-                if (assignments is null)
+                var now = Environment.TickCount64;
+                if (_stateUnreachableSinceTick == 0) _stateUnreachableSinceTick = now;
+                else if (now - _stateUnreachableSinceTick > StateUnreachableExitMs && !IsIdle())
                 {
-                    var refreshed = await _api.PairAsync();
-                    if (!string.IsNullOrEmpty(refreshed))
-                    {
-                        _pairedToken = refreshed;
-                        assignments = await _api.GetDisplayAssignmentsAsync();
-                    }
+                    Log.Warn($"service unreachable for {StateUnreachableExitMs} ms; exiting");
+                    Native.PostQuitMessage(0);
                 }
-                if (assignments is not null)
-                {
-                    _assignmentFetchFailures = 0;
-                    // The Y70 kiosk is opened from hardware detection, so its
-                    // backdrop rides the assignments response rather than an
-                    // entry in it. See-through is fixed at window creation.
-                    var wantSeeThrough = IsSeeThrough(assignments.PanelBackdrop);
-                    if (wantSeeThrough != _lastPolledPanelSeeThrough)
-                    {
-                        _lastPolledPanelSeeThrough = wantSeeThrough;
-                        Log.Info($"assignments poll: panel backdrop seeThrough -> {wantSeeThrough}");
-                        if (_panelKiosk is not null)
-                        {
-                            ClosePanelKiosk();
-                            MaybeShowPanelKiosk();
-                        }
-                    }
-                    var hadKiosks = _monitorKiosks.Count > 0;
-                    _monitorKiosks.Reconcile(assignments.Assignments, _pairedToken);
-                    if (_monitorKiosks.Count > 0) DisarmIdleExitTimer();
-                    else if (hadKiosks) MaybeArmIdleExitTimer();
-                }
-                else if (_monitorKiosks.Count > 0 && ++_assignmentFetchFailures >= 3)
-                {
-                    Log.Warn($"assignments unreachable {_assignmentFetchFailures}x; closing monitor kiosks");
-                    _assignmentFetchFailures = 0;
-                    _monitorKiosks.CloseAll();
-                    MaybeArmIdleExitTimer();
-                }
-            }
-
-            // Streamed-panel render hosts: same fetch/failure semantics as
-            // the monitor kiosks above (single failed fetch keeps hosts,
-            // three in a row closes them; they respawn from assignments when
-            // the service returns with fresh boot-scoped sessionIds).
-            if (_streamHosts is not null)
-            {
-                var streams = await _api.GetStreamAssignmentsAsync();
-                if (streams is not null)
-                {
-                    _streamFetchFailures = 0;
-                    var hadHosts = _streamHosts.Count > 0;
-                    _streamHosts.Reconcile(streams, _pairedToken);
-                    if (_streamHosts.Count > 0) DisarmIdleExitTimer();
-                    else if (hadHosts) MaybeArmIdleExitTimer();
-                }
-                else if (_streamHosts.Count > 0 && ++_streamFetchFailures >= 3)
-                {
-                    Log.Warn($"stream assignments unreachable {_streamFetchFailures}x; closing stream hosts");
-                    _streamFetchFailures = 0;
-                    _streamHosts.CloseAll();
-                    MaybeArmIdleExitTimer();
-                }
-            }
-
-            // "Should overlays be visible?" = toggle on AND at least one
-            // pinned widget. When they go away we tear down widget HWNDs
-            // in-process and idle out (the dashboard window lives here too).
-            var nowShouldShow = ShouldShowOverlays(latest);
-            if (nowShouldShow != _lastPolledShouldShow)
-            {
-                Log.Info($"prefs poll: shouldShow changed {_lastPolledShouldShow} -> {nowShouldShow} (enabled={latest.Overlay.Enabled} pinned={latest.Overlay.Layout.Count})");
-                _lastPolledShouldShow = nowShouldShow;
-                if (!nowShouldShow)
-                {
-                    TearDownOverlays();
-                    _lastPolledMonitorIndex = latest.Overlay.Monitor;
-                    _lastPolledAlwaysOnTop = latest.Overlay.AlwaysOnTop;
-                    MaybeArmIdleExitTimer();
-                    return;
-                }
-                DisarmIdleExitTimer();
-                CreateOverlay(latest.Overlay.Monitor, latest.Overlay.AlwaysOnTop);
-                _lastPolledMonitorIndex = latest.Overlay.Monitor;
-                _lastPolledAlwaysOnTop = latest.Overlay.AlwaysOnTop;
                 return;
             }
-
-            // Nothing pinned / toggle off: skip downstream branches that
-            // would mutate non-existent overlay HWNDs.
-            if (!_lastPolledShouldShow) return;
-
-            // Monitor index change: tear down the existing overlay (and its
-            // WebView2 process tree) and respawn on the new monitor. Pref
-            // poll fires on the message-loop thread, so the dispose +
-            // recreate is single-threaded with WM_DESTROY handlers - no race.
-            if (latest.Overlay.Monitor != _lastPolledMonitorIndex)
-            {
-                Log.Info($"prefs poll: monitor index changed {_lastPolledMonitorIndex} -> {latest.Overlay.Monitor}, respawning");
-                _lastPolledMonitorIndex = latest.Overlay.Monitor;
-                TearDownOverlays();
-                CreateOverlay(latest.Overlay.Monitor, latest.Overlay.AlwaysOnTop);
-                _lastPolledAlwaysOnTop = latest.Overlay.AlwaysOnTop;
-                return;
-            }
-
-            // Always-on-top change: just re-apply on the existing overlay.
-            // The guard prevents clobbering any in-flight SPA-pushed override.
-            if (latest.Overlay.AlwaysOnTop == _lastPolledAlwaysOnTop) return;
-            _lastPolledAlwaysOnTop = latest.Overlay.AlwaysOnTop;
-            foreach (var overlay in Overlays)
-            {
-                overlay.SetAlwaysOnTop(latest.Overlay.AlwaysOnTop);
-            }
+            _stateUnreachableSinceTick = 0;
+            Apply(state);
         }
         catch (Exception ex)
         {
-            Log.Error($"prefs poll failed: {ex.Message}");
+            Log.Error($"poll failed: {ex.Message}");
         }
+    }
+
+    private static void Apply(OverlayState state)
+    {
+        var previous = _state;
+        _state = state;
+        // Widgets first: they and the kiosks share the topmost band, and a
+        // widget pinned to the panel monitor belongs above it.
+        try { ApplyOverlays(previous, state); }
+        catch (Exception ex) { Log.Error($"overlay reconcile: {ex.Message}"); }
+        try { ApplyPanelKiosk(state); }
+        catch (Exception ex) { Log.Error($"panel kiosk reconcile: {ex.Message}"); }
+        try { _monitorKiosks?.Reconcile(state.Assignments, _pairedToken); }
+        catch (Exception ex) { Log.Error($"monitor-kiosk reconcile: {ex.Message}"); }
+        try { _streamHosts?.Reconcile(state.Streams, _pairedToken); }
+        catch (Exception ex) { Log.Error($"stream-host reconcile: {ex.Message}"); }
+        if (IsIdle()) MaybeArmIdleExitTimer();
+        else DisarmIdleExitTimer();
+    }
+
+    private static void ApplyPanelKiosk(OverlayState state)
+    {
+        var kiosk = _panelKiosk is { } k && k.Hwnd != IntPtr.Zero ? k : null;
+        if (!state.AutoLaunch)
+        {
+            if (kiosk is not null) ClosePanelKiosk();
+            return;
+        }
+        if (kiosk is null)
+        {
+            MaybeShowPanelKiosk();
+            return;
+        }
+        kiosk.SetMonitorGuard(state.ReserveMonitor);
+        kiosk.ReassertTaskbar();
+        if (kiosk.HasConfirmedContent && !kiosk.Failed) _kioskUnconfirmedRecreates = 0;
+
+        string? reason = null;
+        if (kiosk.SeeThrough != IsSeeThrough(state.Y70Backdrop)) reason = "backdrop changed";
+        else if (kiosk.Unhealthy(_kioskUnconfirmedRecreates))
+        {
+            _kioskUnconfirmedRecreates++;
+            reason = $"unhealthy failed={kiosk.Failed} age={kiosk.AgeMs} ms attempt={_kioskUnconfirmedRecreates}";
+        }
+        else
+        {
+            var target = PanelDisplay.Find();
+            var b = kiosk.MonitorBounds;
+            if (target is not null
+                && !(target.Bounds.Left == b.Left && target.Bounds.Top == b.Top
+                     && target.Bounds.Right == b.Right && target.Bounds.Bottom == b.Bottom))
+                reason = $"monitor bounds changed -> {target.Bounds.Width}x{target.Bounds.Height}";
+        }
+        if (reason is null) return;
+        Log.Info($"panel kiosk {reason}; recreating");
+        ClosePanelKiosk();
+        MaybeShowPanelKiosk();
+    }
+
+    private static void ApplyOverlays(OverlayState? previous, OverlayState state)
+    {
+        var show = ShouldShowOverlays(state);
+        if (previous is null || show != ShouldShowOverlays(previous))
+        {
+            Log.Info($"overlays: show={show} (enabled={state.OverlayEnabled} pinned={state.Pinned})");
+            TearDownOverlays();
+            if (show) CreateOverlay(state.Monitor, state.AlwaysOnTop);
+            return;
+        }
+        if (!show) return;
+        if (state.Monitor != previous.Monitor)
+        {
+            Log.Info($"overlays: monitor {previous.Monitor} -> {state.Monitor}; respawning");
+            TearDownOverlays();
+            CreateOverlay(state.Monitor, state.AlwaysOnTop);
+            return;
+        }
+        if (state.AlwaysOnTop == previous.AlwaysOnTop) return;
+        foreach (var overlay in Overlays) overlay.SetAlwaysOnTop(state.AlwaysOnTop);
     }
 }

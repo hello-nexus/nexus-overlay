@@ -169,6 +169,30 @@ internal static unsafe class Wv2
         return fn(wv2, token);
     }
 
+    public static int Wv2_add_ProcessFailed(IntPtr wv2, IntPtr handler, out long token)
+    {
+        long t;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, long*, int>)Slot(wv2, WebView2Vtable.Wv2_add_ProcessFailed);
+        var hr = fn(wv2, handler, &t);
+        token = t;
+        return hr;
+    }
+
+    public static int Wv2_remove_ProcessFailed(IntPtr wv2, long token)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, long, int>)Slot(wv2, WebView2Vtable.Wv2_remove_ProcessFailed);
+        return fn(wv2, token);
+    }
+
+    public static int ProcessFailedArgs_get_Kind(IntPtr args, out int kind)
+    {
+        int k = -1;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int*, int>)Slot(args, WebView2Vtable.ProcessFailedArgs_get_ProcessFailedKind);
+        var hr = fn(args, &k);
+        kind = k;
+        return hr;
+    }
+
     public static int Wv2_add_NavigationStarting(IntPtr wv2, IntPtr handler, out long token)
     {
         long t;

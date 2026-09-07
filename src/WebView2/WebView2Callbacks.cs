@@ -167,6 +167,30 @@ internal static unsafe class WebView2Callbacks
         return WebView2Native.E_NOINTERFACE;
     }
 
+    // ============== ProcessFailed event handler ==============
+
+    public static IntPtr CreateProcessFailedHandler(
+        delegate* unmanaged[Stdcall]<IntPtr, IntPtr, IntPtr, int> onInvoke)
+    {
+        var vt = AllocVtable4((IntPtr)onInvoke, &ProcessFailedQI);
+        return AllocObject((IntPtr)vt);
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int ProcessFailedQI(IntPtr self, Guid* iid, IntPtr* ppv)
+    {
+        if (iid == null) return WebView2Native.E_POINTER;
+        if (*iid == WebView2Native.IID_IUnknown ||
+            *iid == WebView2Native.IID_ICoreWebView2ProcessFailedEventHandler)
+        {
+            *ppv = self;
+            AddRefInternal(self);
+            return WebView2Native.S_OK;
+        }
+        *ppv = IntPtr.Zero;
+        return WebView2Native.E_NOINTERFACE;
+    }
+
     // ============== ExecuteScript completed handler ==============
 
     // Invoke(HRESULT errorCode, LPCWSTR resultObjectAsJson)

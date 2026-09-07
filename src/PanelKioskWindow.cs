@@ -27,6 +27,11 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 3;
     private const int PermissionStateDeny = 2;
     private static readonly UIntPtr TIMER_PAINT_POLL = new(11);
+    private static readonly UIntPtr TIMER_NAV_RETRY = new(12);
+    private const int WebErrorOperationCanceled = 14;
+    // 0 BROWSER_PROCESS_EXITED, 1 RENDER_PROCESS_EXITED: only a recreate
+    // recovers. 2 UNRESPONSIVE is a busy renderer, which can come back.
+    private const int ProcessFailedKindRenderExited = 1;
     // Watchdog policy shared by both kiosk owners (Program's Y70 branch and
     // MonitorKioskManager): deadline for a navigation to confirm content
     // before the owner recreates the window (the settings-toggle remedy,
@@ -73,6 +78,20 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     /// </summary>
     public bool HasConfirmedContent { get; private set; }
 
+    /// <summary>The browser or renderer process died or hung; only a recreate recovers.</summary>
+    public bool Failed { get; private set; }
+
+    public bool SeeThrough => _seeThrough;
+
+    /// <summary>
+    /// This kiosk is showing nothing usable and only a recreate recovers it:
+    /// its renderer died, or it never confirmed a first paint. The deadline
+    /// stretches after repeated attempts so a broken WebView2 cannot churn.
+    /// </summary>
+    public bool Unhealthy(int attempts)
+        => (Failed || !HasConfirmedContent)
+           && AgeMs > (attempts >= RecreateFastAttempts ? ContentDeadlineSlowMs : ContentDeadlineMs);
+
     /// <summary>Milliseconds since construction; the content-watchdog deadline base.</summary>
     public long AgeMs => Environment.TickCount64 - _createdTick;
 
@@ -98,6 +117,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private IntPtr _execScriptHandler;
     private IntPtr _newWindowHandler;
     private IntPtr _permissionHandler;
+    private IntPtr _processFailedHandler;
     private IntPtr _controller;
     private IntPtr _controller2;
     private IntPtr _coreWebView2;
@@ -105,6 +125,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private long _navCompletedToken;
     private long _newWindowToken;
     private long _permissionToken;
+    private long _processFailedToken;
+    private int _navRetries;
     private readonly long _createdTick = Environment.TickCount64;
     private PanelMonitorGuard? _monitorGuard;
     private PanelTaskbarGuard? _taskbarGuard;
@@ -316,6 +338,12 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                     ProbePaint();
                     return IntPtr.Zero;
                 }
+                if (wParam == (IntPtr)(long)TIMER_NAV_RETRY.ToUInt64())
+                {
+                    Native.KillTimer(hwnd, TIMER_NAV_RETRY);
+                    if (!_disposed && _coreWebView2 != IntPtr.Zero) Wv2.Wv2_Navigate(_coreWebView2, _navigationUrl);
+                    return IntPtr.Zero;
+                }
                 return null;
 
             case Native.WM_DESTROY:
@@ -428,6 +456,9 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         _permissionHandler = WebView2Callbacks.CreatePermissionRequestedHandler(&OnPermissionRequestedStatic);
         Wv2.Wv2_add_PermissionRequested(_coreWebView2, _permissionHandler, out _permissionToken);
 
+        _processFailedHandler = WebView2Callbacks.CreateProcessFailedHandler(&OnProcessFailedStatic);
+        Wv2.Wv2_add_ProcessFailed(_coreWebView2, _processFailedHandler, out _processFailedToken);
+
         var hr = Wv2.Wv2_Navigate(_coreWebView2, _navigationUrl);
         Log.Info($"panel-kiosk Navigate hr=0x{hr:X8} url={LogRedact.Url(_navigationUrl)}");
 
@@ -469,7 +500,35 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             Wv2.NavCompletedArgs_get_WebErrorStatus(args, out status);
         }
         Log.Info($"panel-kiosk navigation completed ok={ok} webErr={status}");
-        if (ok) owner.StartPaintConfirmationPoll();
+        if (ok)
+        {
+            owner._navRetries = 0;
+            owner.StartPaintConfirmationPoll();
+        }
+        else if (status != WebErrorOperationCanceled && !owner._disposed && owner.Hwnd != IntPtr.Zero)
+        {
+            var delayMs = (uint)Math.Min(1000 << Math.Min(owner._navRetries++, 3), 8000);
+            Native.SetTimer(owner.Hwnd, TIMER_NAV_RETRY, delayMs, IntPtr.Zero);
+        }
+        return WebView2Native.S_OK;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnProcessFailedStatic(IntPtr self, IntPtr sender, IntPtr args)
+    {
+        var owner = FindByProcessFailedHandler(self);
+        if (owner is null) return WebView2Native.S_OK;
+        var kind = -1;
+        if (args != IntPtr.Zero && WebView2Native.Succeeded(Wv2.ProcessFailedArgs_get_Kind(args, out var read)))
+        {
+            kind = read;
+        }
+        Log.Warn($"panel-kiosk process failed kind={kind}");
+        if (kind >= 0 && kind <= ProcessFailedKindRenderExited)
+        {
+            owner.Failed = true;
+            Native.KillTimer(owner.Hwnd, TIMER_PAINT_POLL);
+        }
         return WebView2Native.S_OK;
     }
 
@@ -576,6 +635,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     { foreach (var kv in _instances) if (kv.Value._execScriptHandler == h) return kv.Value; return null; }
     private static PanelKioskWindow? FindByNewWindowHandler(IntPtr h)
     { foreach (var kv in _instances) if (kv.Value._newWindowHandler == h) return kv.Value; return null; }
+    private static PanelKioskWindow? FindByProcessFailedHandler(IntPtr h)
+    { foreach (var kv in _instances) if (kv.Value._processFailedHandler == h) return kv.Value; return null; }
     private static PanelKioskWindow? FindByPermissionHandler(IntPtr h)
     { foreach (var kv in _instances) if (kv.Value._permissionHandler == h) return kv.Value; return null; }
 
@@ -597,6 +658,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 if (_navCompletedToken != 0) { Wv2.Wv2_remove_NavigationCompleted(_coreWebView2, _navCompletedToken); _navCompletedToken = 0; }
                 if (_newWindowToken != 0) { Wv2.Wv2_remove_NewWindowRequested(_coreWebView2, _newWindowToken); _newWindowToken = 0; }
                 if (_permissionToken != 0) { Wv2.Wv2_remove_PermissionRequested(_coreWebView2, _permissionToken); _permissionToken = 0; }
+                if (_processFailedToken != 0) { Wv2.Wv2_remove_ProcessFailed(_coreWebView2, _processFailedToken); _processFailedToken = 0; }
             }
             if (_controller != IntPtr.Zero)
             {
@@ -614,6 +676,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             if (_execScriptHandler != IntPtr.Zero) { Wv2.Release(_execScriptHandler); _execScriptHandler = IntPtr.Zero; }
             if (_newWindowHandler != IntPtr.Zero) { Wv2.Release(_newWindowHandler); _newWindowHandler = IntPtr.Zero; }
             if (_permissionHandler != IntPtr.Zero) { Wv2.Release(_permissionHandler); _permissionHandler = IntPtr.Zero; }
+            if (_processFailedHandler != IntPtr.Zero) { Wv2.Release(_processFailedHandler); _processFailedHandler = IntPtr.Zero; }
         }
         catch (Exception ex) { Log.Error($"panel-kiosk dispose: {ex.Message}"); }
         if (Hwnd != IntPtr.Zero)

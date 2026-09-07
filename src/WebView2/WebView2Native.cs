@@ -82,6 +82,12 @@ internal static unsafe class WebView2Native
     public static readonly Guid IID_ICoreWebView2NavigationCompletedEventArgs =
         new("30d68b7d-20d9-4752-a9ca-ec8448fbb5c1");
 
+    public static readonly Guid IID_ICoreWebView2ProcessFailedEventHandler =
+        new("79e0aea4-990b-42d9-aa1d-0fcc2e5bc7f1");
+
+    public static readonly Guid IID_ICoreWebView2ProcessFailedEventArgs =
+        new("8155a9a4-1474-4a86-8cae-151b0fa6b8ca");
+
     public static readonly Guid IID_ICoreWebView2NavigationStartingEventHandler =
         new("9adbe429-f36d-432b-9ddc-f8881fbd76e3");
 

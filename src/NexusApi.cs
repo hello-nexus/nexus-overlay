@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -7,10 +8,10 @@ using System.Threading.Tasks;
 namespace Nexus.Overlay;
 
 /// <summary>
-/// Minimal HTTP client for the local nexus-service. Pulls the auth token
-/// via <c>/pair</c> (LAN-restricted) and reads <c>UiSettings</c> via
-/// <c>/preferences</c> for initial Z-order. Anything else flows through
-/// the SPA + WebSocket inside the WebView2.
+/// Minimal HTTP client for the local nexus-service: the auth token via
+/// <c>/pair</c> (loopback-restricted) and the one state document the host
+/// reconciles against via <c>/overlay/state</c>. Everything else flows
+/// through the SPA + WebSocket inside the WebView2.
 /// </summary>
 internal sealed class NexusApi
 {
@@ -46,44 +47,18 @@ internal sealed class NexusApi
         }
     }
 
-    public async Task<UiPrefs> GetPreferencesAsync()
+    /// <summary>Null = the request failed; the caller changes nothing on null.</summary>
+    public async Task<OverlayState?> GetStateAsync()
     {
         try
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, "/preferences");
-            if (!string.IsNullOrEmpty(Token))
-                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Token);
-            using var resp = await _http.SendAsync(req);
-            if (!resp.IsSuccessStatusCode) return new UiPrefs();
-            await using var stream = await resp.Content.ReadAsStreamAsync();
-            var doc = await JsonSerializer.DeserializeAsync(stream, ApiJson.Default.UiPrefs);
-            return doc ?? new UiPrefs();
-        }
-        catch
-        {
-            return new UiPrefs();
-        }
-    }
-
-    /// <summary>
-    /// Monitor-panel assignments (displayId -> panelDeviceId) driving the
-    /// per-monitor kiosk reconcile. Empty list on any failure - the caller
-    /// treats that as "close nothing new, spawn nothing" only when the
-    /// service is unreachable, so transient errors don't tear kiosks down.
-    /// Null = request failed; empty list = service says no assignments.
-    /// </summary>
-    public async Task<DisplayAssignmentsResponse?> GetDisplayAssignmentsAsync()
-    {
-        try
-        {
-            using var req = new HttpRequestMessage(HttpMethod.Get, "/displays/assignments");
+            using var req = new HttpRequestMessage(HttpMethod.Get, "/overlay/state");
             if (!string.IsNullOrEmpty(Token))
                 req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Token);
             using var resp = await _http.SendAsync(req);
             if (!resp.IsSuccessStatusCode) return null;
             await using var stream = await resp.Content.ReadAsStreamAsync();
-            return await JsonSerializer.DeserializeAsync(stream, ApiJson.Default.DisplayAssignmentsResponse)
-                ?? new DisplayAssignmentsResponse();
+            return await JsonSerializer.DeserializeAsync(stream, ApiJson.Default.OverlayState);
         }
         catch
         {
@@ -91,38 +66,7 @@ internal sealed class NexusApi
         }
     }
 
-    /// <summary>
-    /// Desired streamed-panel sessions driving the off-screen render-host
-    /// reconcile. Same null/empty semantics as
-    /// <see cref="GetDisplayAssignmentsAsync"/>: null = request failed,
-    /// empty = service says no sessions.
-    /// </summary>
-    public async Task<System.Collections.Generic.List<StreamAssignment>?> GetStreamAssignmentsAsync()
-    {
-        try
-        {
-            using var req = new HttpRequestMessage(HttpMethod.Get, "/panel/streams/assignments");
-            if (!string.IsNullOrEmpty(Token))
-                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Token);
-            using var resp = await _http.SendAsync(req);
-            if (!resp.IsSuccessStatusCode) return null;
-            await using var stream = await resp.Content.ReadAsStreamAsync();
-            var doc = await JsonSerializer.DeserializeAsync(stream, ApiJson.Default.StreamAssignmentsResponse);
-            return doc?.Assignments ?? new System.Collections.Generic.List<StreamAssignment>();
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// Fire-and-forget POST of a WebView2 working-set sample to
-    /// <c>/diagnostics/client-mem</c> (loopback-only). Lands in nexus-service.log
-    /// next to the renderer's own samples so a memory leak's host-side curve is
-    /// visible in the log a tester submits. Best-effort: never awaited, never
-    /// throws into the sampler.
-    /// </summary>
+    /// <summary>Fire and forget: diagnostics must never delay or fail a caller.</summary>
     public void PostClientMem(ClientMemSample sample) => _ = PostClientMemAsync(sample);
 
     private async Task PostClientMemAsync(ClientMemSample sample)
@@ -153,61 +97,28 @@ internal sealed class PairResponse
     public string Token { get; set; } = "";
 }
 
-/// <summary>
-/// Subset of the service's nested preferences the host consumes.
-/// Deserialization ignores extra fields, so only these are on the wire.
-/// </summary>
-internal sealed class UiPrefs
+/// <summary>GET /overlay/state. Field names mirror the service DTO.</summary>
+internal sealed class OverlayState
 {
-    [JsonPropertyName("overlay")]
-    public OverlayBlock Overlay { get; set; } = new();
-    [JsonPropertyName("panel")]
-    public PanelBlock Panel { get; set; } = new();
-}
-
-internal sealed class OverlayBlock
-{
-    [JsonPropertyName("enabled")]
-    public bool Enabled { get; set; }
-    [JsonPropertyName("alwaysOnTop")]
-    public bool AlwaysOnTop { get; set; }
-    /// <summary>
-    /// Monitor index (zero-based) where the single overlay should render.
-    /// -1 = "use the primary monitor" (sentinel for unset / first-run).
-    /// </summary>
-    [JsonPropertyName("monitor")]
-    public int Monitor { get; set; } = -1;
-    /// <summary>
-    /// Pinned overlay-widget entries. Only the count is consumed here;
-    /// per-entry rendering happens inside the WebView2 SPA.
-    /// </summary>
-    [JsonPropertyName("layout")]
-    public System.Collections.Generic.List<OverlayLayoutEntry> Layout { get; set; } = new();
-}
-
-internal sealed class PanelBlock
-{
-    /// <summary>
-    /// Auto-open the fullscreen panel kiosk window when a recognized HYTE
-    /// touch panel is connected.
-    /// </summary>
     [JsonPropertyName("autoLaunch")]
     public bool AutoLaunch { get; set; }
-
-    /// <summary>
-    /// Keep the panel monitor exclusive to the kiosk: relocate foreign windows
-    /// that land on it back to a normal monitor. Defaults on; services that
-    /// omit the field leave it on via this initializer.
-    /// </summary>
     [JsonPropertyName("reserveMonitor")]
     public bool ReserveMonitor { get; set; } = true;
+    [JsonPropertyName("y70Backdrop")]
+    public string Y70Backdrop { get; set; } = "";
+    [JsonPropertyName("overlayEnabled")]
+    public bool OverlayEnabled { get; set; }
+    [JsonPropertyName("alwaysOnTop")]
+    public bool AlwaysOnTop { get; set; }
+    [JsonPropertyName("monitor")]
+    public int Monitor { get; set; } = -1;
+    [JsonPropertyName("pinned")]
+    public int Pinned { get; set; }
+    [JsonPropertyName("assignments")]
+    public List<DisplayAssignment> Assignments { get; set; } = new();
+    [JsonPropertyName("streams")]
+    public List<StreamAssignment> Streams { get; set; } = new();
 }
-
-/// <summary>
-/// Stub for counting only. Per-entry fields are consumed by the SPA,
-/// not the native host.
-/// </summary>
-internal sealed class OverlayLayoutEntry { }
 
 internal sealed class DisplayAssignment
 {
@@ -215,29 +126,16 @@ internal sealed class DisplayAssignment
     public string DisplayId { get; set; } = "";
     [JsonPropertyName("panelDeviceId")]
     public string PanelDeviceId { get; set; } = "";
-    /// <summary>Per-panel "keep clear of other windows" (record setting; default on).</summary>
     [JsonPropertyName("reserveMonitor")]
     public bool ReserveMonitor { get; set; } = true;
-    /// <summary>Panel backdrop: "desktop" hosts this kiosk as a transparent
-    /// window so the live desktop shows through. Absent = opaque.</summary>
     [JsonPropertyName("backdrop")]
     public string Backdrop { get; set; } = "";
 }
 
-internal sealed class DisplayAssignmentsResponse
-{
-    [JsonPropertyName("assignments")]
-    public System.Collections.Generic.List<DisplayAssignment> Assignments { get; set; } = new();
-    /// <summary>Backdrop of the Y70's own panel record; that kiosk opens from
-    /// hardware detection, so it has no assignment entry to carry it.</summary>
-    [JsonPropertyName("panelBackdrop")]
-    public string PanelBackdrop { get; set; } = "";
-}
-
 /// <summary>
-/// One desired streamed-panel session (GET /panel/streams/assignments).
-/// SessionIds are boot-scoped and re-minted on any config change, so the
-/// reconcile diff is a pure spawn/close on sessionId.
+/// One desired streamed-panel session. SessionIds are boot-scoped and
+/// re-minted on any config change, so the reconcile diff is a pure
+/// spawn/close on sessionId.
 /// </summary>
 internal sealed class StreamAssignment
 {
@@ -259,16 +157,9 @@ internal sealed class StreamAssignment
     public string Codec { get; set; } = "h264";
 }
 
-internal sealed class StreamAssignmentsResponse
-{
-    [JsonPropertyName("assignments")]
-    public System.Collections.Generic.List<StreamAssignment> Assignments { get; set; } = new();
-}
-
 /// <summary>
 /// Host-side WebView2 working-set sample. Property names serialize camelCase
-/// (see <see cref="ApiJson"/> below) to match the service's
-/// <c>ClientMemBody</c> (Source="host"): totalWsMB, largestWsMB, largestPid,
+/// to match the service's ClientMemBody: totalWsMB, largestWsMB, largestPid,
 /// children.
 /// </summary>
 internal sealed class ClientMemSample
@@ -282,17 +173,11 @@ internal sealed class ClientMemSample
 
 [JsonSerializable(typeof(ClientMemSample))]
 [JsonSerializable(typeof(PairResponse))]
-[JsonSerializable(typeof(UiPrefs))]
-[JsonSerializable(typeof(OverlayBlock))]
-[JsonSerializable(typeof(PanelBlock))]
-[JsonSerializable(typeof(OverlayLayoutEntry))]
-[JsonSerializable(typeof(System.Collections.Generic.List<OverlayLayoutEntry>))]
+[JsonSerializable(typeof(OverlayState))]
 [JsonSerializable(typeof(DisplayAssignment))]
-[JsonSerializable(typeof(DisplayAssignmentsResponse))]
-[JsonSerializable(typeof(System.Collections.Generic.List<DisplayAssignment>))]
+[JsonSerializable(typeof(List<DisplayAssignment>))]
 [JsonSerializable(typeof(StreamAssignment))]
-[JsonSerializable(typeof(StreamAssignmentsResponse))]
-[JsonSerializable(typeof(System.Collections.Generic.List<StreamAssignment>))]
+[JsonSerializable(typeof(List<StreamAssignment>))]
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 internal partial class ApiJson : JsonSerializerContext
 {

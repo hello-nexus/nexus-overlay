@@ -7,9 +7,9 @@ namespace Nexus.Overlay;
 /// <summary>
 /// Hosts one fullscreen <see cref="PanelKioskWindow"/> per monitor-panel
 /// assignment (user-promoted monitors, distinct from the auto-detected Y70
-/// kiosk). Reconciled against GET /displays/assignments on every prefs
-/// poll/push and on WM_DISPLAYCHANGE; the plan math lives in
-/// <see cref="MonitorKioskPlan"/>. All calls run on the message-loop thread.
+/// kiosk). Reconciled against the overlay state on every poll/push and on
+/// WM_DISPLAYCHANGE; the plan math lives in <see cref="MonitorKioskPlan"/>.
+/// All calls run on the message-loop thread.
 /// </summary>
 internal sealed class MonitorKioskManager
 {
@@ -23,9 +23,6 @@ internal sealed class MonitorKioskManager
 
     private readonly string _serviceOrigin;
     private readonly Dictionary<string, KioskEntry> _kiosks = new(StringComparer.Ordinal);
-    // Consecutive recreates per displayId whose content never confirmed;
-    // picks the fast vs slow watchdog deadline. Reset on confirm or on any
-    // non-watchdog close.
     private readonly Dictionary<string, int> _unconfirmedRecreates = new(StringComparer.Ordinal);
 
     public MonitorKioskManager(string serviceOrigin)
@@ -37,35 +34,25 @@ internal sealed class MonitorKioskManager
 
     public void Reconcile(IReadOnlyList<DisplayAssignment> assignments, string pairedToken)
     {
-        // Content watchdog, same policy as the Y70 kiosk: a window whose
-        // navigation never produced a first paint composites transparent
-        // (the desktop shows through) while Hwnd-presence reads "up". Close
-        // it; the spawn plan below reopens it in the same pass. Mark the
-        // reopen pending so a transient monitor-enumeration miss cannot
-        // idle-exit the process before the next poll retries.
-        List<string>? staleContent = null;
+        List<string>? unhealthy = null;
         foreach (var (displayId, entry) in _kiosks)
         {
-            if (entry.Window.HasConfirmedContent)
+            var attempts = _unconfirmedRecreates.TryGetValue(displayId, out var n) ? n : 0;
+            if (entry.Window.HasConfirmedContent && !entry.Window.Failed)
             {
                 _unconfirmedRecreates.Remove(displayId);
                 continue;
             }
-            var attempts = _unconfirmedRecreates.TryGetValue(displayId, out var n) ? n : 0;
-            var deadline = attempts >= PanelKioskWindow.RecreateFastAttempts
-                ? PanelKioskWindow.ContentDeadlineSlowMs
-                : PanelKioskWindow.ContentDeadlineMs;
-            if (entry.Window.AgeMs > deadline)
+            if (entry.Window.Unhealthy(attempts))
             {
                 _unconfirmedRecreates[displayId] = attempts + 1;
-                Log.Warn($"monitor-kiosk content unconfirmed display={displayId} after {entry.Window.AgeMs} ms (attempt {attempts + 1}); recreating");
-                (staleContent ??= new List<string>()).Add(displayId);
+                Log.Warn($"monitor-kiosk unhealthy display={displayId} failed={entry.Window.Failed} age={entry.Window.AgeMs} ms (attempt {attempts + 1}); recreating");
+                (unhealthy ??= new List<string>()).Add(displayId);
             }
         }
-        if (staleContent is not null)
+        if (unhealthy is not null)
         {
-            Program.NotifyKioskReopenPending();
-            foreach (var displayId in staleContent) CloseKiosk(displayId, "content unconfirmed", keepWatchdogState: true);
+            foreach (var displayId in unhealthy) CloseKiosk(displayId, "unhealthy", keepWatchdogState: true);
         }
 
         var monitors = Monitors.Enumerate();
@@ -149,7 +136,7 @@ internal sealed class MonitorKioskManager
             {
                 var reserve = reserveById.TryGetValue(entry.DisplayId, out var r) ? r : true;
                 var seeThrough = seeThroughById.TryGetValue(entry.DisplayId, out var st2) && st2;
-                var url = $"{_serviceOrigin}/panel/{Uri.EscapeDataString(entry.PanelDeviceId)}?token={Uri.EscapeDataString(pairedToken)}";
+                var url = $"{_serviceOrigin}/panel/{Uri.EscapeDataString(entry.PanelDeviceId)}?token={Uri.EscapeDataString(pairedToken)}{(seeThrough ? "&backdrop=desktop" : "")}";
                 _kiosks[entry.DisplayId] = new KioskEntry
                 {
                     Window = new PanelKioskWindow(monitor, url, reserve, refitOnDisplayChange: true, seeThrough: seeThrough),

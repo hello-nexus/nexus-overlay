@@ -29,6 +29,7 @@
     <Compile Include="..\..\src\DisplayIdentity.cs" Link="src\DisplayIdentity.cs" />
     <Compile Include="..\..\src\MonitorKioskPlan.cs" Link="src\MonitorKioskPlan.cs" />
     <Compile Include="..\..\src\LogRedact.cs" Link="src\LogRedact.cs" />
+    <Compile Include="..\..\src\NexusApi.cs" Link="src\NexusApi.cs" />
     <Compile Include="..\..\src\Media\AnnexB.cs" Link="src\Media\AnnexB.cs" />
     <Compile Include="..\..\src\Media\EncoderSelect.cs" Link="src\Media\EncoderSelect.cs" />
     <Compile Include="..\..\src\Media\FrameFraming.cs" Link="src\Media\FrameFraming.cs" />

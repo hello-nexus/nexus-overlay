@@ -71,6 +71,7 @@ internal static class WebView2Vtable
     public const int Wv2_remove_PermissionRequested = 24;
     public const int Wv2_add_ProcessFailed = 25;
     public const int Wv2_remove_ProcessFailed = 26;
+    public const int ProcessFailedArgs_get_ProcessFailedKind = 3;
     public const int Wv2_AddScriptToExecuteOnDocumentCreated = 27;
     public const int Wv2_RemoveScriptToExecuteOnDocumentCreated = 28;
     public const int Wv2_ExecuteScript = 29;
