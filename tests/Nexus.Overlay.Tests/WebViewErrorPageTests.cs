@@ -100,11 +100,24 @@ public class WebViewErrorPageTests
     {
         var html = WebViewErrorPage.Html(PlainUrl, ServerUnreachable, HomeUrl);
 
-        // Page variables reset on every repaint, so the count and the deadline
-        // are written before the attempt and dropped once the loop retires.
-        Assert.Contains("window.name=t+(n+1)+\",\"+end;", html, StringComparison.Ordinal);
+        // Page variables reset on every repaint, so the count, the deadline and
+        // the moment of the write are carried across and dropped on give-up.
+        Assert.Contains("window.name=t+(n+1)+\",\"+end+\",\"+Date.now();", html, StringComparison.Ordinal);
         Assert.Contains("if(now>=end){window.name=\"\";", html, StringComparison.Ordinal);
-        Assert.Contains("pe>now-60000&&pe<=now+60000", html, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Carried_state_is_taken_only_while_it_is_fresh()
+    {
+        var html = WebViewErrorPage.Html(PlainUrl, ServerUnreachable, HomeUrl);
+
+        // An expired deadline means give up, and it is also what an outage that
+        // already recovered leaves behind, so the age of the write is what
+        // separates them. Widening this guard to the budget would retire the
+        // loop before its first attempt after any recovered outage.
+        Assert.Contains("var age=now-pw;", html, StringComparison.Ordinal);
+        Assert.Contains("if(pn>=0&&pe>0&&age>=0&&age<=15000){n=pn;end=pe;}", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("pe>now-60000", html, StringComparison.Ordinal);
     }
 
     [Theory]

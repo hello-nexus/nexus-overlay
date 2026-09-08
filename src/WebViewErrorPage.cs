@@ -23,17 +23,18 @@ public static class WebViewErrorPage
     private const int HostNameNotResolved = 13;
     private const int OperationCanceled = 14;
 
-    // Auto-retry cadence. The first wait is short so a service that is merely
-    // restarting comes back almost unnoticed, the wait then grows by the backoff
-    // factor up to the cap so a longer outage is not hammered, and the loop
-    // stops at the budget so a service that is staying down leaves a readable
-    // page instead of a reloading one. CountdownStepMs is both the tick of the
-    // visible countdown and the unit its remaining count is shown in.
+    // Auto-retry cadence. CountdownStepMs is both the tick of the visible
+    // countdown and the unit its remaining count is labelled in, so the two
+    // move together. StaleStateMs has to outlast a failed navigation and the
+    // repaint that follows it, since that is the gap a live loop writes its
+    // state across, while staying far below the time a recovered session
+    // lasts.
     private const int FirstRetryDelayMs = 1000;
     private const int MaxRetryDelayMs = 5000;
     private const int RetryBudgetMs = 60000;
     private const int RetryBackoffFactor = 2;
     private const int CountdownStepMs = 1000;
+    private const int StaleStateMs = 15000;
 
     /// <summary>A cancelled navigation is one the app itself redirected; painting over it would replace a page the user is already on.</summary>
     public static bool ShouldShow(int webErrorStatus) => webErrorStatus != OperationCanceled;
@@ -68,10 +69,9 @@ public static class WebViewErrorPage
         // min-height keeps the buttons from shifting as the status line changes.
         if (autoRetry) sb.Append("#retry{margin:1.25rem 0 0;font-size:.8rem;min-height:1.2em}");
         sb.Append("</style></head><body");
-        // The retry URL travels as an attribute, the one context ForScript is
-        // written for: the parser decodes the entities back before the script
-        // is parsed, so the ampersands of a query string survive, and the
-        // percent-encoded quotes cannot close the literal.
+        // The retry URL travels as an attribute, the context ForScript is
+        // written for, and never as script text: entities are not decoded
+        // inside a script element, so a query string would lose its ampersands.
         if (autoRetry) sb.Append(" onload=\"nexusRetry('").Append(ForScript(url)).Append("')\"");
         sb.Append("><div class=\"box\">");
         sb.Append("<h1>This page didn't load</h1>");
@@ -95,10 +95,14 @@ public static class WebViewErrorPage
     /// in a document whose origin is opaque; session storage throws there, and
     /// the target cannot be probed first because a page that is not a secure
     /// context is refused any subresource request into the loopback address
-    /// space. A deadline more than one budget away in either direction was left
-    /// by an earlier outage rather than this one, so it is discarded and the
-    /// budget starts again. The URL is never written into this script; it
-    /// arrives as the argument the body's load handler passes in.
+    /// space. The state carries the moment it was written, because giving up
+    /// means honouring a deadline that has passed and that is also what state
+    /// left behind by an outage which already recovered looks like: window.name
+    /// outlives a successful navigation. Only a write from within the last
+    /// StaleStateMs is this loop's, so a later outage starts its own budget
+    /// instead of retiring on the previous one. The URL is never written into
+    /// this script; it arrives as the argument the body's load handler passes
+    /// in.
     /// </summary>
     private static void AppendRetryScript(StringBuilder sb)
     {
@@ -106,9 +110,10 @@ public static class WebViewErrorPage
         sb.Append("var l=document.getElementById(\"retry\"),t=\"nexus-retry:\",w=String(window.name||\"\");");
         sb.Append("var now=Date.now(),n=0,end=now+").Append(RetryBudgetMs).Append(';');
         sb.Append("if(w.substring(0,t.length)===t){");
-        sb.Append("var p=w.substring(t.length).split(\",\"),pn=parseInt(p[0],10),pe=parseInt(p[1],10);");
-        sb.Append("if(pn>=0&&pe>now-").Append(RetryBudgetMs).Append("&&pe<=now+").Append(RetryBudgetMs);
-        sb.Append("){n=pn;end=pe;}}");
+        sb.Append("var p=w.substring(t.length).split(\",\"),pn=parseInt(p[0],10),");
+        sb.Append("pe=parseInt(p[1],10),pw=parseInt(p[2],10);");
+        sb.Append("var age=now-pw;");
+        sb.Append("if(pn>=0&&pe>0&&age>=0&&age<=").Append(StaleStateMs).Append("){n=pn;end=pe;}}");
         sb.Append("if(now>=end){window.name=\"\";");
         sb.Append("l.textContent=\"Nexus is still not answering. Use Try again once it is back.\";return;}");
         sb.Append("var left=Math.round(Math.min(").Append(FirstRetryDelayMs);
@@ -118,7 +123,7 @@ public static class WebViewErrorPage
         sb.Append("if(left>0){l.textContent=\"Retrying in \"+left+\"s (attempt \"+(n+1)+\")\";");
         sb.Append("left--;setTimeout(tick,").Append(CountdownStepMs).Append(");return;}");
         sb.Append("l.textContent=\"Reconnecting\u2026 (attempt \"+(n+1)+\")\";");
-        sb.Append("window.name=t+(n+1)+\",\"+end;");
+        sb.Append("window.name=t+(n+1)+\",\"+end+\",\"+Date.now();");
         sb.Append("location.replace(u);}");
         sb.Append("tick();}</script>");
     }
