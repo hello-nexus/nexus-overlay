@@ -22,6 +22,14 @@ public static class WebViewErrorPage
     private const int CannotConnect = 12;
     private const int HostNameNotResolved = 13;
     private const int OperationCanceled = 14;
+    // Permanent for a local dashboard URL: a certificate the client rejects and
+    // a redirect that could not be followed do not fix themselves by waiting.
+    private const int CertificateCommonNameIsIncorrect = 1;
+    private const int CertificateExpired = 2;
+    private const int ClientCertificateContainsErrors = 3;
+    private const int CertificateRevoked = 4;
+    private const int CertificateIsInvalid = 5;
+    private const int RedirectFailed = 15;
 
     // Auto-retry cadence. CountdownStepMs is both the tick of the visible
     // countdown and the unit its remaining count is labelled in, so the two
@@ -46,8 +54,20 @@ public static class WebViewErrorPage
     /// themselves. Every other status describes a request that will fail the
     /// same way however often it is repeated, so those pages stay static.
     /// </summary>
+    /// <summary>
+    /// Measured on a real reload against a stopped service: WebView2 reports
+    /// Unknown, not one of the named connectivity statuses, so gating on those
+    /// alone left the very failure this page exists for parked on a static
+    /// page. Retry anything the page is shown for except the statuses that
+    /// cannot themselves by waiting.
+    /// </summary>
     public static bool ShouldAutoRetry(int webErrorStatus) =>
-        webErrorStatus is ServerUnreachable or CannotConnect or HostNameNotResolved or Timeout;
+        ShouldShow(webErrorStatus) && !IsPermanent(webErrorStatus);
+
+    private static bool IsPermanent(int webErrorStatus) => webErrorStatus
+        is CertificateCommonNameIsIncorrect or CertificateExpired
+        or ClientCertificateContainsErrors or CertificateRevoked
+        or CertificateIsInvalid or RedirectFailed;
 
     public static string Html(string url, int webErrorStatus, string homeUrl)
     {

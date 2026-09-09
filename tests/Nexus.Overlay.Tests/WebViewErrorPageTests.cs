@@ -41,22 +41,30 @@ public class WebViewErrorPageTests
     [InlineData(CannotConnect)]
     [InlineData(HostNameNotResolved)]
     [InlineData(Timeout)]
-    public void Auto_retries_the_transient_connectivity_statuses(int status)
+    [InlineData(ConnectionAborted)]
+    [InlineData(ConnectionReset)]
+    [InlineData(Disconnected)]
+    [InlineData(ErrorHttpInvalidServerResponse)]
+    public void Auto_retries_the_statuses_a_restart_can_produce(int status)
     {
         Assert.True(WebViewErrorPage.ShouldAutoRetry(status));
     }
 
+    /// A reload against a stopped service was measured reporting Unknown, so
+    /// that status has to retry: gating it out is what left the real failure
+    /// parked on a static page.
+    [Fact]
+    public void Auto_retries_the_unknown_status_a_stopped_service_reports()
+    {
+        Assert.True(WebViewErrorPage.ShouldAutoRetry(Unknown));
+    }
+
     [Theory]
-    [InlineData(Unknown)]
+    [InlineData(OperationCanceled)]
     [InlineData(CertificateCommonNameIsIncorrect)]
     [InlineData(CertificateExpired)]
-    [InlineData(ErrorHttpInvalidServerResponse)]
-    [InlineData(ConnectionAborted)]
-    [InlineData(ConnectionReset)]
-    [InlineData(Disconnected)]
-    [InlineData(OperationCanceled)]
     [InlineData(RedirectFailed)]
-    public void Leaves_every_other_status_static(int status)
+    public void Leaves_the_statuses_waiting_cannot_fix_static(int status)
     {
         Assert.False(WebViewErrorPage.ShouldAutoRetry(status));
     }
