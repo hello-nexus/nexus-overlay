@@ -264,6 +264,28 @@ internal static class Program
         MaybeArmIdleExitTimer();
     }
 
+    /// <summary>Every surface created before the runtime arrived is an empty host HWND; rebuild them all. Called from the installer thread, marshals to the UI thread.</summary>
+    internal static void OnWebView2RuntimeInstalled(bool reopenDashboard)
+    {
+        _syncContext?.Post(_ =>
+        {
+            Log.Info("webview2-runtime: installed; recreating every surface");
+            if (_dashboard is not null && _dashboard.Hwnd != IntPtr.Zero)
+                Native.SendMessageW(_dashboard.Hwnd, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
+            ClosePanelKiosk();
+            TearDownOverlays();
+            _monitorKiosks?.CloseAll();
+            _streamHosts?.CloseAll();
+            _state = null;
+            if (reopenDashboard) ShowOrCreateDashboard();
+            _ = PollAsync();
+        }, null);
+    }
+
+    /// <summary>The runtime prompt held the process open; re-evaluate idle now that it is gone.</summary>
+    internal static void OnWebView2RuntimePromptClosed()
+        => _syncContext?.Post(_ => MaybeArmIdleExitTimer(), null);
+
     /// <summary>
     /// Open the panel kiosk window if a recognized HYTE touch panel is
     /// connected AND no kiosk is already up. Called at startup when
@@ -311,6 +333,8 @@ internal static class Program
 
     private static bool IsIdle()
     {
+        // The runtime prompt has no window of its own to keep the process alive.
+        if (WebView2RuntimeInstaller.Busy) return false;
         if (Overlays.Count > 0) return false;
         if (_dashboard is not null
             && _dashboard.Hwnd != IntPtr.Zero
@@ -556,7 +580,8 @@ internal static class Program
             {
                 var now = Environment.TickCount64;
                 if (_stateUnreachableSinceTick == 0) _stateUnreachableSinceTick = now;
-                else if (now - _stateUnreachableSinceTick > StateUnreachableExitMs && !IsIdle())
+                else if (now - _stateUnreachableSinceTick > StateUnreachableExitMs && !IsIdle()
+                         && !WebView2RuntimeInstaller.Busy)
                 {
                     Log.Warn($"service unreachable for {StateUnreachableExitMs} ms; exiting");
                     Native.PostQuitMessage(0);

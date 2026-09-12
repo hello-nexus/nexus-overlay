@@ -16,6 +16,12 @@ internal static unsafe class WebView2Native
         IntPtr environmentOptions,
         IntPtr environmentCreatedHandler);
 
+    // versionInfo is CoTaskMemAlloc'd by the loader; free with FreeCoTaskMem.
+    [DllImport("WebView2Loader.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetAvailableCoreWebView2BrowserVersionString(
+        char* browserExecutableFolder,
+        out IntPtr versionInfo);
+
     // ===================== IIDs =====================
     // From WebView2.idl. Kept centralized so the slot map in WebView2Vtable
     // and the GUIDs here move in lockstep when we bump SDK versions.
@@ -109,6 +115,9 @@ internal static unsafe class WebView2Native
     // ===================== HRESULTs =====================
 
     public const int S_OK = 0;
+    // HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND): what both loader entry points
+    // return when no WebView2 Runtime (and no Edge) is registered.
+    public const int E_FILE_NOT_FOUND = unchecked((int)0x80070002);
     public const int E_NOINTERFACE = unchecked((int)0x80004002);
     public const int E_POINTER = unchecked((int)0x80004003);
 

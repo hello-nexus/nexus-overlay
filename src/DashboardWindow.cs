@@ -613,6 +613,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             if (WebView2Native.Failed(hr))
             {
                 Log.Error($"dashboard env init failed hr=0x{hr:X8}");
+                WebView2RuntimeInstaller.OnEnvInitFailed("dashboard", hr, userInitiated: true);
+                // Tear the empty host down so the next open constructs (and asks) again.
+                Native.PostMessageW(Hwnd, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
             }
         }
     }

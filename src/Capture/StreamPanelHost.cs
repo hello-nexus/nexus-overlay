@@ -176,6 +176,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
             if (WebView2Native.Failed(hr))
             {
                 Log.Error($"stream-host {SessionId}: env init failed hr=0x{hr:X8}");
+                WebView2RuntimeInstaller.OnEnvInitFailed("stream-host", hr, userInitiated: false);
                 PostFault();
             }
         }

@@ -323,6 +323,16 @@ internal static unsafe class Native
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SendMessageW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int MessageBoxW(IntPtr hWnd, string lpText, string lpCaption, uint uType);
+
+    public const uint MB_OK = 0x00000000;
+    public const uint MB_YESNO = 0x00000004;
+    public const uint MB_ICONWARNING = 0x00000030;
+    public const uint MB_SETFOREGROUND = 0x00010000;
+    public const uint MB_TOPMOST = 0x00040000;
+    public const int IDYES = 6;
+
     [DllImport("shell32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern IntPtr ShellExecuteW(IntPtr hwnd, string? lpOperation, string lpFile,
         string? lpParameters, string? lpDirectory, int nShowCmd);

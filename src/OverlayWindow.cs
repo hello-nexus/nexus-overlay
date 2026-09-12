@@ -195,6 +195,7 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
             if (WebView2Native.Failed(hr))
             {
                 Log.Error($"overlay {_monitor.Index} env init failed hr=0x{hr:X8}");
+                WebView2RuntimeInstaller.OnEnvInitFailed("overlay", hr, userInitiated: false);
             }
         }
     }

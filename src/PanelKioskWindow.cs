@@ -368,7 +368,11 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             var hr = WebView2Native.CreateCoreWebView2EnvironmentWithOptions(
                 null, udf, IntPtr.Zero, _envCreatedHandler);
             Log.Info($"panel-kiosk CreateCoreWebView2Env hr=0x{hr:X8}");
-            if (WebView2Native.Failed(hr)) Log.Error($"panel-kiosk env init failed hr=0x{hr:X8}");
+            if (WebView2Native.Failed(hr))
+            {
+                Log.Error($"panel-kiosk env init failed hr=0x{hr:X8}");
+                WebView2RuntimeInstaller.OnEnvInitFailed("panel-kiosk", hr, userInitiated: false);
+            }
         }
     }
 
