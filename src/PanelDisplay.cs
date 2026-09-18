@@ -1,5 +1,4 @@
 using System;
-using System.Runtime.InteropServices;
 using System.Text;
 using Nexus.Overlay.Win32;
 
@@ -13,7 +12,8 @@ internal static class PanelDisplay
 {
     // EDID names returned by EnumDisplayDevicesW are usually just "Generic PnP
     // Monitor" - Windows doesn't surface the real friendly name through that
-    // API. HYTE panels are identified instead by the hardware DeviceID, which
+    // API. HYTE panels are identified instead by the hardware DeviceID (read
+    // through DisplayIdentity so the ACTIVE-child rule applies here too), which
     // embeds the panel controller name and is stable per model. HYTE ships the
     // Y70 with several controllers (Realtek/BOE variants), so match any. Keep
     // in sync with Y70DisplayProtocol.DdcPanelHardwareNames in nexus-service -
@@ -44,10 +44,7 @@ internal static class PanelDisplay
         {
             if (string.IsNullOrEmpty(m.DeviceName)) continue;
 
-            var dd = new DISPLAY_DEVICE { cb = Marshal.SizeOf<DISPLAY_DEVICE>() };
-            var deviceId = EnumDisplayDevicesW(m.DeviceName, 0, ref dd, 0)
-                ? (dd.DeviceID ?? string.Empty)
-                : string.Empty;
+            var deviceId = DisplayIdentity.ReadDrivenMonitorDeviceId(m.DeviceName);
             sig.Append(m.Index).Append('=').Append(deviceId.Length == 0 ? "?" : deviceId).Append(' ');
 
             if (match is null)
@@ -73,17 +70,4 @@ internal static class PanelDisplay
         return match;
     }
 
-    [DllImport("user32.dll", EntryPoint = "EnumDisplayDevicesW", CharSet = CharSet.Unicode)]
-    private static extern bool EnumDisplayDevicesW(string? lpDevice, uint iDevNum, ref DISPLAY_DEVICE lpDisplayDevice, uint dwFlags);
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct DISPLAY_DEVICE
-    {
-        public int cb;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceString;
-        public uint StateFlags;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceID;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
-    }
 }

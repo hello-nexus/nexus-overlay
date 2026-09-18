@@ -41,4 +41,37 @@ public class DisplayIdentityTests
         Assert.DoesNotContain(' ', id);
         Assert.DoesNotContain('#', id);
     }
+
+    private const uint Active = DisplayIdentity.DISPLAY_DEVICE_ACTIVE;
+    private const uint Attached = 0x2; // DISPLAY_DEVICE_ATTACHED, not sufficient on its own
+
+    [Fact]
+    public void Idle_sibling_at_child_zero_yields_the_active_child()
+    {
+        Assert.Equal(1, DisplayIdentity.PickDrivenChild(new uint[] { Attached, Active | Attached }));
+    }
+
+    [Fact]
+    public void Active_at_child_zero_keeps_child_zero()
+    {
+        Assert.Equal(0, DisplayIdentity.PickDrivenChild(new uint[] { Active | Attached, Attached }));
+    }
+
+    [Fact]
+    public void No_active_flag_anywhere_falls_back_to_child_zero()
+    {
+        Assert.Equal(0, DisplayIdentity.PickDrivenChild(new uint[] { 0, Attached }));
+    }
+
+    [Fact]
+    public void Several_active_takes_the_first()
+    {
+        Assert.Equal(1, DisplayIdentity.PickDrivenChild(new uint[] { 0, Active, Active }));
+    }
+
+    [Fact]
+    public void No_children_reports_none()
+    {
+        Assert.Equal(-1, DisplayIdentity.PickDrivenChild(new uint[0]));
+    }
 }

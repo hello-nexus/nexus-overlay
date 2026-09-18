@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 namespace Nexus.Overlay;
@@ -14,23 +15,66 @@ internal static class DisplayIdentity
 {
     private const uint EDD_GET_DEVICE_INTERFACE_NAME = 0x00000001;
 
-    /// <summary>Stable id for the first monitor child of a GDI adapter.</summary>
+    internal const uint DISPLAY_DEVICE_ACTIVE = 0x00000001;
+
+    /// <summary>Stable id for the monitor child a GDI adapter is driving.</summary>
     public static string ResolveStableId(string adapterDeviceName)
     {
         if (string.IsNullOrEmpty(adapterDeviceName)) return "";
-        var dd = new DISPLAY_DEVICE { cb = Marshal.SizeOf<DISPLAY_DEVICE>() };
-        if (!EnumDisplayDevicesW(adapterDeviceName, 0, ref dd, EDD_GET_DEVICE_INTERFACE_NAME))
+        if (!TryGetDrivenMonitor(adapterDeviceName, EDD_GET_DEVICE_INTERFACE_NAME, out var dd)
+            && !TryGetDrivenMonitor(adapterDeviceName, 0, out dd))
         {
-            dd = new DISPLAY_DEVICE { cb = Marshal.SizeOf<DISPLAY_DEVICE>() };
-            if (!EnumDisplayDevicesW(adapterDeviceName, 0, ref dd, 0))
-            {
-                // Total API failure: the service's ResolveIdentity publishes the
-                // raw adapter name as the id in this case - return the same
-                // value so an assignment minted against it still matches.
-                return adapterDeviceName;
-            }
+            // Total API failure: the service's ResolveIdentity publishes the
+            // raw adapter name as the id in this case - return the same
+            // value so an assignment minted against it still matches.
+            return adapterDeviceName;
         }
         return ExtractStableId(dd.DeviceID ?? "", adapterDeviceName);
+    }
+
+    /// <summary>
+    /// Raw PnP DeviceID of the monitor child the adapter is driving; empty
+    /// when the API fails. Same child rule as ResolveStableId.
+    /// </summary>
+    public static string ReadDrivenMonitorDeviceId(string adapterDeviceName)
+        => TryGetDrivenMonitor(adapterDeviceName, 0, out var dd) ? dd.DeviceID ?? "" : "";
+
+    /// <summary>
+    /// Which of an adapter's monitor children it is driving: the first one
+    /// flagged DISPLAY_DEVICE_ACTIVE, else child 0 (a driver that never sets
+    /// the flag keeps working), -1 for no children. Windows lists every
+    /// plugged-in devnode as a child, including ones off the desktop, in PnP
+    /// enumeration order, so child 0 is not necessarily the driven monitor.
+    /// Mirrors nexus-service's MonitorChildSelection.Pick.
+    /// </summary>
+    public static int PickDrivenChild(IReadOnlyList<uint> childStateFlags)
+    {
+        for (var i = 0; i < childStateFlags.Count; i++)
+        {
+            if ((childStateFlags[i] & DISPLAY_DEVICE_ACTIVE) != 0) return i;
+        }
+        return childStateFlags.Count == 0 ? -1 : 0;
+    }
+
+    private static bool TryGetDrivenMonitor(string adapterDeviceName, uint flags, out DISPLAY_DEVICE monitor)
+    {
+        var children = new List<DISPLAY_DEVICE>();
+        var flagsOnly = new List<uint>();
+        for (uint i = 0; ; i++)
+        {
+            var dd = new DISPLAY_DEVICE { cb = Marshal.SizeOf<DISPLAY_DEVICE>() };
+            if (!EnumDisplayDevicesW(adapterDeviceName, i, ref dd, flags)) break;
+            children.Add(dd);
+            flagsOnly.Add(dd.StateFlags);
+        }
+        var pick = PickDrivenChild(flagsOnly);
+        if (pick < 0)
+        {
+            monitor = default;
+            return false;
+        }
+        monitor = children[pick];
+        return true;
     }
 
     /// <summary>
