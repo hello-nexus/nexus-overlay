@@ -340,6 +340,27 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
 
     private void PumpLoop()
     {
+        // The poll sleeps in PumpFrames run at Windows' default 15.6 ms timer granularity
+        // otherwise, which with a two-buffer capture pool drops one 60 Hz frame in five.
+        TimeBeginPeriod(1);
+        try
+        {
+            PumpFrames();
+        }
+        finally
+        {
+            TimeEndPeriod(1);
+        }
+    }
+
+    [DllImport("winmm.dll", EntryPoint = "timeBeginPeriod")]
+    private static extern uint TimeBeginPeriod(uint ms);
+
+    [DllImport("winmm.dll", EntryPoint = "timeEndPeriod")]
+    private static extern uint TimeEndPeriod(uint ms);
+
+    private void PumpFrames()
+    {
         var capture = _capture;
         var encoder = _encoder;
         if (capture is null || encoder is null) return;
