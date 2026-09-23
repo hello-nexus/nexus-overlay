@@ -67,6 +67,13 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private static int _nextInstanceId;
     private readonly int _instanceId;
     private readonly bool _seeThrough;
+    private readonly bool _compatibilityRendering;
+
+    // Y70 compatibility rendering: some AMD drivers scramble a full-screen
+    // DirectComposition window on a rotated display once focus or input
+    // changes. Its own user-data folder, because browser arguments bind to
+    // the browser process that the shared DesktopWebView2 folder already runs.
+    private const string CompatibilityBrowserArguments = "--disable-direct-composition";
 
     public IntPtr Hwnd { get; private set; }
     public int MonitorIndex => _monitor.Index;
@@ -82,6 +89,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     public bool Failed { get; private set; }
 
     public bool SeeThrough => _seeThrough;
+
+    public bool CompatibilityRendering => _compatibilityRendering;
 
     /// <summary>
     /// This kiosk is showing nothing usable and only a recreate recovers it:
@@ -110,6 +119,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     // re-resolves the monitor by. Same value MonitorKioskManager keys on.
     private readonly string _stableDisplayId;
     private IntPtr _env;
+    private IntPtr _envOptions;
     private IntPtr _envCreatedHandler;
     private IntPtr _ctrlCreatedHandler;
     private IntPtr _navStartingHandler;
@@ -136,9 +146,10 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     /// fresh bounds directly from WM_DISPLAYCHANGE, ahead of the owner's
     /// reconcile. Off for the Y70 kiosk, whose owner drives bounds changes.</param>
     public PanelKioskWindow(MonitorInfo monitor, string navigationUrl, bool guardMonitor,
-        bool refitOnDisplayChange = false, bool seeThrough = false)
+        bool refitOnDisplayChange = false, bool seeThrough = false, bool compatibilityRendering = false)
     {
         _seeThrough = seeThrough;
+        _compatibilityRendering = compatibilityRendering;
         _instanceId = Interlocked.Increment(ref _nextInstanceId);
         _instances[_instanceId] = this;
         _monitor = monitor;
@@ -359,15 +370,16 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     {
         var userDataDir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Nexus", "DesktopWebView2");
+            "Nexus", _compatibilityRendering ? "PanelCompatWebView2" : "DesktopWebView2");
         try { Directory.CreateDirectory(userDataDir); } catch { /* best-effort */ }
 
+        if (_compatibilityRendering) _envOptions = Wv2EnvironmentOptions.Create(CompatibilityBrowserArguments);
         _envCreatedHandler = WebView2Callbacks.CreateEnvCreatedHandler(&OnEnvCreatedStatic);
         fixed (char* udf = userDataDir)
         {
             var hr = WebView2Native.CreateCoreWebView2EnvironmentWithOptions(
-                null, udf, IntPtr.Zero, _envCreatedHandler);
-            Log.Info($"panel-kiosk CreateCoreWebView2Env hr=0x{hr:X8}");
+                null, udf, _envOptions, _envCreatedHandler);
+            Log.Info($"panel-kiosk CreateCoreWebView2Env hr=0x{hr:X8} compat={_compatibilityRendering}");
             if (WebView2Native.Failed(hr))
             {
                 Log.Error($"panel-kiosk env init failed hr=0x{hr:X8}");
@@ -673,6 +685,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             if (_coreWebView2 != IntPtr.Zero) { Wv2.Release(_coreWebView2); _coreWebView2 = IntPtr.Zero; }
             if (_controller2 != IntPtr.Zero) { Wv2.Release(_controller2); _controller2 = IntPtr.Zero; }
             if (_env != IntPtr.Zero) { Wv2.Release(_env); _env = IntPtr.Zero; }
+            if (_envOptions != IntPtr.Zero) { Wv2.Release(_envOptions); _envOptions = IntPtr.Zero; }
             if (_envCreatedHandler != IntPtr.Zero) { Wv2.Release(_envCreatedHandler); _envCreatedHandler = IntPtr.Zero; }
             if (_ctrlCreatedHandler != IntPtr.Zero) { Wv2.Release(_ctrlCreatedHandler); _ctrlCreatedHandler = IntPtr.Zero; }
             if (_navStartingHandler != IntPtr.Zero) { Wv2.Release(_navStartingHandler); _navStartingHandler = IntPtr.Zero; }

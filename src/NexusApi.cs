@@ -106,6 +106,8 @@ internal sealed class OverlayState
     public bool ReserveMonitor { get; set; } = true;
     [JsonPropertyName("y70Backdrop")]
     public string Y70Backdrop { get; set; } = "";
+    [JsonPropertyName("y70CompatibilityRendering")]
+    public bool Y70CompatibilityRendering { get; set; }
     [JsonPropertyName("overlayEnabled")]
     public bool OverlayEnabled { get; set; }
     [JsonPropertyName("alwaysOnTop")]

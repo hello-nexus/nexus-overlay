@@ -8,11 +8,12 @@ namespace Nexus.Overlay.WebView2;
 
 /// <summary>
 /// Hand-rolled ICoreWebView2EnvironmentOptions (same allocation pattern as
-/// WebView2Callbacks: NativeMemory object block = [vtable][refcount],
+/// WebView2Callbacks: NativeMemory object block = [vtable][refcount][args],
 /// per-instance vtable, [UnmanagedCallersOnly] stubs). Sole purpose: pass
-/// --disable-features=CalculateNativeWinOcclusion to the browser process -
-/// Chromium occlusion-throttles rendering of the off-screen stream host
-/// window without it, which starves WGC.
+/// additional browser arguments. The stream host passes
+/// --disable-features=CalculateNativeWinOcclusion (Chromium occlusion-throttles
+/// rendering of the off-screen stream host window without it, which starves
+/// WGC); the Y70 kiosk's compatibility rendering passes its own.
 ///
 /// Vtable order from WebView2.h (Microsoft.Web.WebView2 1.0.2792.45,
 /// ICoreWebView2EnvironmentOptionsVtbl): slots 3-10 are
@@ -43,7 +44,9 @@ internal static unsafe class Wv2EnvironmentOptions
 
     private const int Slot_Vtable = 0;
     private const int Slot_Refcount = 1;
-    private const int ObjectSlotCount = 2;
+    // HGlobal UTF-16 copy of this instance's browser arguments, freed on the last Release.
+    private const int Slot_Arguments = 2;
+    private const int ObjectSlotCount = 3;
     private const int VtableSlotCount = 11;
 
     // Runtimes newer than the SDK QI for ICoreWebView2EnvironmentOptions2..8;
@@ -54,7 +57,10 @@ internal static unsafe class Wv2EnvironmentOptions
 
     /// <summary>Owned COM pointer (refcount 1); the caller releases it after
     /// handing it to CreateCoreWebView2EnvironmentWithOptions.</summary>
-    public static IntPtr Create()
+    public static IntPtr Create() => Create(EffectiveBrowserArguments);
+
+    /// <inheritdoc cref="Create()"/>
+    public static IntPtr Create(string browserArguments)
     {
         var vtable = (IntPtr*)NativeMemory.Alloc(VtableSlotCount * (nuint)sizeof(IntPtr));
         vtable[0] = (IntPtr)(delegate* unmanaged[Stdcall]<IntPtr, Guid*, IntPtr*, int>)&QueryInterfaceStub;
@@ -72,6 +78,7 @@ internal static unsafe class Wv2EnvironmentOptions
         var obj = (IntPtr*)NativeMemory.AllocZeroed((nuint)ObjectSlotCount * (nuint)sizeof(IntPtr));
         obj[Slot_Vtable] = (IntPtr)vtable;
         obj[Slot_Refcount] = 1;
+        obj[Slot_Arguments] = Marshal.StringToHGlobalUni(browserArguments);
         return (IntPtr)obj;
     }
 
@@ -92,6 +99,7 @@ internal static unsafe class Wv2EnvironmentOptions
         if (count == 0)
         {
             var vtable = ((IntPtr*)self)[Slot_Vtable];
+            Marshal.FreeHGlobal(((IntPtr*)self)[Slot_Arguments]);
             NativeMemory.Free((void*)vtable);
             NativeMemory.Free((void*)self);
         }
@@ -127,7 +135,7 @@ internal static unsafe class Wv2EnvironmentOptions
     private static int GetAdditionalBrowserArgumentsStub(IntPtr self, IntPtr* value)
     {
         if (value == null) return WebView2Native.E_POINTER;
-        *value = Marshal.StringToCoTaskMemUni(EffectiveBrowserArguments);
+        *value = Marshal.StringToCoTaskMemUni(Marshal.PtrToStringUni(((IntPtr*)self)[Slot_Arguments]));
         return WebView2Native.S_OK;
     }
 

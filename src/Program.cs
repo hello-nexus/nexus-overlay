@@ -305,8 +305,9 @@ internal static class Program
         DisarmIdleExitTimer();
         var seeThrough = IsSeeThrough(_state?.Y70Backdrop);
         var reserve = _state?.ReserveMonitor ?? true;
+        var compat = _state?.Y70CompatibilityRendering ?? false;
         var url = $"{ServiceOrigin}/panel?token={Uri.EscapeDataString(_pairedToken)}{(seeThrough ? "&backdrop=desktop" : "")}";
-        _panelKiosk = new PanelKioskWindow(target, url, reserve, seeThrough: seeThrough);
+        _panelKiosk = new PanelKioskWindow(target, url, reserve, seeThrough: seeThrough, compatibilityRendering: compat);
         var created = _panelKiosk;
         // Drop the reference on ANY teardown, including one the OS drives
         // directly (bypassing ClosePanelKiosk), so a dead kiosk never
@@ -315,7 +316,7 @@ internal static class Program
         {
             if (ReferenceEquals(_panelKiosk, created)) _panelKiosk = null;
         };
-        Log.Info($"panel kiosk opened on monitor={target.Index} guard={reserve} seeThrough={seeThrough}");
+        Log.Info($"panel kiosk opened on monitor={target.Index} guard={reserve} seeThrough={seeThrough} compat={compat}");
     }
 
     private static bool IsSeeThrough(string? backdrop) =>
@@ -634,6 +635,7 @@ internal static class Program
 
         string? reason = null;
         if (kiosk.SeeThrough != IsSeeThrough(state.Y70Backdrop)) reason = "backdrop changed";
+        else if (kiosk.CompatibilityRendering != state.Y70CompatibilityRendering) reason = "compatibility rendering changed";
         else if (kiosk.Unhealthy(_kioskUnconfirmedRecreates))
         {
             _kioskUnconfirmedRecreates++;
