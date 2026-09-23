@@ -25,6 +25,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     // title bar (handled below in WM_NCCALCSIZE / WM_NCHITTEST) extends the
     // client area to the top of the window so there is no visible caption.
     private const string WindowTitle = "";
+    // Window sizes are logical px at BaseDpi; the process is Per-Monitor V2,
+    // so every Win32 size is physical and must go through ScaleForDpi.
+    private const int BaseDpi = 96;
     private const int DefaultClientWidth = 1280;
     private const int DefaultClientHeight = 800;
     // Match nexus-web's .layout CSS min-width so the OS refuses to drag the
@@ -433,9 +436,13 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                     // Custom NC handler means client == window, so the
                     // OS-tracked minimum is just the client minimum -
                     // no AdjustWindowRectEx for caption / borders here.
+                    // The window's DPI, not the monitor's: it sets the
+                    // WebView2's CSS px scale.
                     var mmi = (Native.MINMAXINFO*)lParam;
-                    mmi->ptMinTrackSize.x = MinClientWidth;
-                    mmi->ptMinTrackSize.y = MinClientHeight;
+                    var (_, work) = MonitorMetrics(Native.MonitorFromWindow(hwnd, Native.MONITOR_DEFAULTTONEAREST));
+                    var (minW, minH) = MinSize(Native.GetDpiForWindow(hwnd), work);
+                    mmi->ptMinTrackSize.x = minW;
+                    mmi->ptMinTrackSize.y = minH;
                 }
                 return IntPtr.Zero;
 
@@ -1018,22 +1025,41 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         var saved = LoadSavedBounds();
         if (saved is not null) return saved.Value;
 
-        // Default: center a DefaultClientWidth x DefaultClientHeight client
-        // area on the primary monitor. AdjustWindowRectEx inflates to the
-        // outer-frame size so the visible client matches what we asked for.
-        var rc = new Native.RECT
-        {
-            Left = 0, Top = 0,
-            Right = DefaultClientWidth, Bottom = DefaultClientHeight,
-        };
-        Native.AdjustWindowRectEx(ref rc, Native.WS_OVERLAPPEDWINDOW, false, 0u);
-        var w = rc.Width;
-        var h = rc.Height;
-        var screenW = Native.GetSystemMetrics(Native.SM_CXSCREEN);
-        var screenH = Native.GetSystemMetrics(Native.SM_CYSCREEN);
-        var x = (screenW - w) / 2;
-        var y = (screenH - h) / 2;
-        return (x, y, w, h);
+        // Default: centered in the primary monitor's work area, capped to it.
+        // A zero rect sits at (0,0), the primary monitor's origin.
+        var origin = new Native.RECT();
+        var (dpi, work) = MonitorMetrics(Native.MonitorFromRect(ref origin, Native.MONITOR_DEFAULTTOPRIMARY));
+        var w = Math.Min(ScaleForDpi(DefaultClientWidth, dpi), work.Width);
+        var h = Math.Min(ScaleForDpi(DefaultClientHeight, dpi), work.Height);
+        return (work.Left + (work.Width - w) / 2, work.Top + (work.Height - h) / 2, w, h);
+    }
+
+    // Rounds up: a custom scale that rounds down leaves the client a
+    // fraction of a CSS px under the web layout's min-width.
+    private static int ScaleForDpi(int logical, uint dpi)
+    {
+        var d = dpi == 0 ? BaseDpi : (int)dpi;
+        return (logical * d + BaseDpi - 1) / BaseDpi;
+    }
+
+    // Capped to the work area so a small work area at high scaling can
+    // still fit and maximize the window.
+    private static (int w, int h) MinSize(uint dpi, Native.RECT work) => (
+        Math.Min(ScaleForDpi(MinClientWidth, dpi), work.Width),
+        Math.Min(ScaleForDpi(MinClientHeight, dpi), work.Height));
+
+    private static (uint dpi, Native.RECT work) MonitorMetrics(IntPtr monitor)
+    {
+        var dpi = Native.GetDpiForMonitor(monitor, Native.MDT_EFFECTIVE_DPI, out var dpiX, out _) == 0 ? dpiX : (uint)BaseDpi;
+        var info = new Native.MonitorInfoNative { cbSize = Marshal.SizeOf<Native.MonitorInfoNative>() };
+        var work = Native.GetMonitorInfoW(monitor, ref info)
+            ? info.rcWork
+            : new Native.RECT
+            {
+                Right = Native.GetSystemMetrics(Native.SM_CXSCREEN),
+                Bottom = Native.GetSystemMetrics(Native.SM_CYSCREEN),
+            };
+        return (dpi, work);
     }
 
     private static (int x, int y, int w, int h)? LoadSavedBounds()
@@ -1045,12 +1071,12 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             using var stream = File.OpenRead(path);
             var doc = JsonSerializer.Deserialize(stream, DashboardBoundsJson.Default.SavedBounds);
             if (doc is null) return null;
-            // The stored bounds are outer-frame size. Refuse anything that
-            // would land us under the documented client-area minimum,
-            // including a corrupted/zeroed file.
-            var minOuter = new Native.RECT { Left = 0, Top = 0, Right = MinClientWidth, Bottom = MinClientHeight };
-            Native.AdjustWindowRectEx(ref minOuter, Native.WS_OVERLAPPEDWINDOW, false, 0u);
-            if (doc.W < minOuter.Width || doc.H < minOuter.Height) return null;
+            // Refuse anything under the minimum at the target monitor's
+            // scale, including a corrupted/zeroed file.
+            var rc = new Native.RECT { Left = doc.X, Top = doc.Y, Right = doc.X + doc.W, Bottom = doc.Y + doc.H };
+            var (dpi, work) = MonitorMetrics(Native.MonitorFromRect(ref rc, Native.MONITOR_DEFAULTTONEAREST));
+            var (minW, minH) = MinSize(dpi, work);
+            if (doc.W < minW || doc.H < minH) return null;
             return (doc.X, doc.Y, doc.W, doc.H);
         }
         catch { return null; }
