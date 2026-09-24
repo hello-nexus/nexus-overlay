@@ -153,7 +153,9 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         _instanceId = Interlocked.Increment(ref _nextInstanceId);
         _instances[_instanceId] = this;
         _monitor = monitor;
-        _navigationUrl = navigationUrl;
+        // WebView2 ticks at the host's display clock, not this panel's; the page divides it down.
+        var refreshHz = Native.GetDisplayRefreshHz(monitor.DeviceName);
+        _navigationUrl = refreshHz > 0 ? $"{navigationUrl}&displayHz={refreshHz}" : navigationUrl;
         _refitOnDisplayChange = refitOnDisplayChange;
         _stableDisplayId = DisplayIdentity.ResolveStableId(monitor.DeviceName);
 

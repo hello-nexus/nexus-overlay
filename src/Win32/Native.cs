@@ -481,6 +481,23 @@ internal static unsafe class Native
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool GetMonitorInfoW(IntPtr hMonitor, ref MonitorInfoNative lpmi);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool EnumDisplaySettingsW(string lpszDeviceName, int iModeNum, byte* lpDevMode);
+
+    /// <summary>Current refresh rate of a GDI display (\\.\DISPLAYn), or 0 when unknown.</summary>
+    public static int GetDisplayRefreshHz(string deviceName)
+    {
+        // DEVMODEW layout (wingdi.h): the struct size, and the offsets of dmSize and dmDisplayFrequency.
+        const int DevModeSize = 220, SizeOffset = 68, FrequencyOffset = 184, EnumCurrentSettings = -1;
+        var devMode = stackalloc byte[DevModeSize];
+        new Span<byte>(devMode, DevModeSize).Clear();
+        *(ushort*)(devMode + SizeOffset) = DevModeSize;
+        if (string.IsNullOrEmpty(deviceName) || !EnumDisplaySettingsW(deviceName, EnumCurrentSettings, devMode)) return 0;
+        // 0 and 1 mean the hardware default rate, which the API does not resolve.
+        var hz = *(int*)(devMode + FrequencyOffset);
+        return hz > 1 ? hz : 0;
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool EnumWindows(
         delegate* unmanaged[Stdcall]<IntPtr, IntPtr, int> lpEnumFunc,
