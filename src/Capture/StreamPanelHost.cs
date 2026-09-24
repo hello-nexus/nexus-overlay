@@ -91,7 +91,8 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         SessionId = assignment.SessionId;
         _serviceOrigin = serviceOrigin;
         _pairedToken = pairedToken;
-        _navigationUrl = $"{serviceOrigin}/panel/{Uri.EscapeDataString(assignment.PanelDeviceId)}?token={Uri.EscapeDataString(pairedToken)}";
+        // streamFps lets the page cap its shader draws near what the capture keeps.
+        _navigationUrl = $"{serviceOrigin}/panel/{Uri.EscapeDataString(assignment.PanelDeviceId)}?token={Uri.EscapeDataString(pairedToken)}&streamFps={Math.Clamp(assignment.Fps, 1, 240)}";
         // NV12 and the encoder require even dimensions; window, frame pool,
         // and both MFT types must all use this exact value or the output is
         // stride garbage.
@@ -453,7 +454,9 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
                 submitStartTicks = nowTicks;
                 submitted = 0;
             }
-            else if (submitted >= allowed)
+            // One frame of slack: a page drawing at the stream rate lands on the display clock's
+            // grid, a little early or late, and must not lose a frame to that jitter.
+            else if (submitted > allowed)
             {
                 // Over the fps budget: skip this frame. The texture is
                 // caller-owned and would otherwise leak.
