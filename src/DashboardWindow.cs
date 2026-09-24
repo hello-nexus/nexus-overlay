@@ -412,6 +412,11 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 if (sizeKind != _lastSizeKind)
                 {
                     _lastSizeKind = sizeKind;
+                    // WebView2 can't see a host minimize; hidden, the page stops rendering.
+                    if (_controller != IntPtr.Zero)
+                    {
+                        Wv2.Ctrl_put_IsVisible(_controller, sizeKind != Native.SIZE_MINIMIZED);
+                    }
                     if (sizeKind == Native.SIZE_MAXIMIZED || sizeKind == Native.SIZE_RESTORED)
                     {
                         ApplyGlassFrame();
@@ -681,7 +686,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
         Native.GetClientRect(Hwnd, out var rc);
         Wv2.Ctrl_put_Bounds(_controller, rc);
-        Wv2.Ctrl_put_IsVisible(_controller, true);
+        Wv2.Ctrl_put_IsVisible(_controller, !Native.IsIconic(Hwnd));
 
         if (WebView2Native.Failed(Wv2.Ctrl_get_CoreWebView2(_controller, out _coreWebView2)) || _coreWebView2 == IntPtr.Zero)
         {
