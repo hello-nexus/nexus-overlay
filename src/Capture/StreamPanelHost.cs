@@ -320,11 +320,18 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         // else is hardware-encoded. Same Submit contract either way.
         var raw = string.Equals(_assignment.Codec, "rawBgra", StringComparison.OrdinalIgnoreCase);
         Log.Info($"stream-host {SessionId}: codec='{_assignment.Codec}' sink={(raw ? "raw" : "h264")}");
-        _encoder = raw
-            ? new RawFrameSink(_d3d, _pixelWidth, _pixelHeight,
-                (frame, key) => _ingest?.Send(frame, key), SessionId)
-            : new MfEncoder(_d3d, _pixelWidth, _pixelHeight, fps, bitrateKbps,
+        if (raw)
+        {
+            RawFrameSink? sink = null;
+            sink = new RawFrameSink(_d3d, _pixelWidth, _pixelHeight,
+                (frame, key) => _ingest?.Send(frame, key, sink!.Return), SessionId);
+            _encoder = sink;
+        }
+        else
+        {
+            _encoder = new MfEncoder(_d3d, _pixelWidth, _pixelHeight, fps, bitrateKbps,
                 (accessUnit, idr) => _ingest?.Send(accessUnit, idr), SessionId);
+        }
 
         _pumpStop = false;
         _pumpThread = new Thread(PumpLoop)

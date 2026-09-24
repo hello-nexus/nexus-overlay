@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using Nexus.Overlay.Capture;
 using Nexus.Overlay.WebView2;
@@ -16,8 +17,8 @@ namespace Nexus.Overlay.Media;
 /// a few tens of KB.
 ///
 /// Submit runs on the capture pump thread. The consumer (IngestClient) queues what it is
-/// handed without copying, so each frame gets its own array: reusing one buffer would let
-/// every queued frame alias the bytes the next Submit is still overwriting.
+/// handed without copying, so a frame's array is only reused after the consumer passes it
+/// back through <see cref="Return"/> once its bytes are sent.
 /// </summary>
 internal sealed unsafe class RawFrameSink : IFrameSink
 {
@@ -26,6 +27,10 @@ internal sealed unsafe class RawFrameSink : IFrameSink
     private readonly string _logTag;
     private readonly Action<byte[], bool> _onFrame;
     private readonly IntPtr _context;
+
+    // Frames are megabytes each; enough spares to cover the few a send can have in flight.
+    private const int MaxSpareFrames = 4;
+    private readonly ConcurrentQueue<byte[]> _spare = new();
 
     private IntPtr _staging;
     private bool _disposed;
@@ -77,13 +82,38 @@ internal sealed unsafe class RawFrameSink : IFrameSink
         return tex;
     }
 
+    /// <summary>Hands back a frame whose bytes have been sent, for a later Submit to fill.</summary>
+    public void Return(byte[] frame)
+    {
+        if (frame.Length == _width * 4 * _height && _spare.Count < MaxSpareFrames)
+        {
+            _spare.Enqueue(frame);
+        }
+    }
+
     /// <summary>
-    /// Copies one captured texture out and emits it. The texture stays caller-owned, as
-    /// with the encoder's Submit.
+    /// Copies one captured texture out and emits it. Releases the caller's texture
+    /// reference, as the encoder's Submit does.
     /// </summary>
     public void Submit(IntPtr texture)
     {
-        if (_disposed || texture == IntPtr.Zero || _staging == IntPtr.Zero)
+        if (texture == IntPtr.Zero)
+        {
+            return;
+        }
+        try
+        {
+            SubmitCore(texture);
+        }
+        finally
+        {
+            Wv2.Release(texture);
+        }
+    }
+
+    private void SubmitCore(IntPtr texture)
+    {
+        if (_disposed || _staging == IntPtr.Zero)
         {
             return;
         }
@@ -101,9 +131,11 @@ internal sealed unsafe class RawFrameSink : IFrameSink
             Log.Error($"{_logTag}: staging Map failed: 0x{hr:X8}");
             return;
         }
-        // Sized here rather than reused across calls: the consumer queues the reference.
         int rowBytes = _width * 4;
-        var frame = new byte[rowBytes * _height];
+        if (!_spare.TryDequeue(out var frame))
+        {
+            frame = new byte[rowBytes * _height];
+        }
         try
         {
             // RowPitch is the driver's stride and is >= width*4; copy row by row so the

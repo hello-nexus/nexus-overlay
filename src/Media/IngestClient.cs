@@ -22,7 +22,7 @@ internal sealed class IngestClient : IDisposable
     private const int ChannelCapacity = 600;
     private static readonly TimeSpan KeepaliveInterval = TimeSpan.FromSeconds(5);
 
-    private readonly Channel<(byte[] Payload, byte Flags)> _channel;
+    private readonly Channel<(byte[] Payload, byte Flags, Action<byte[]>? Sent)> _channel;
     private readonly HttpClient _http;
     private readonly CancellationTokenSource _cts = new();
     private readonly string _sessionId;
@@ -38,7 +38,7 @@ internal sealed class IngestClient : IDisposable
         _sessionId = sessionId;
         // Wait mode makes TryWrite return false when full instead of silently
         // dropping, which is the fault signal Send relies on.
-        _channel = Channel.CreateBounded<(byte[], byte)>(new BoundedChannelOptions(ChannelCapacity)
+        _channel = Channel.CreateBounded<(byte[], byte, Action<byte[]>?)>(new BoundedChannelOptions(ChannelCapacity)
         {
             SingleReader = true,
             FullMode = BoundedChannelFullMode.Wait,
@@ -57,10 +57,11 @@ internal sealed class IngestClient : IDisposable
         _ = KeepaliveAsync();
     }
 
-    public void Send(byte[] annexBAccessUnit, bool idr)
+    /// <summary>Queues one payload; <paramref name="sent"/> gets the array back once its bytes are written.</summary>
+    public void Send(byte[] annexBAccessUnit, bool idr, Action<byte[]>? sent = null)
     {
         Volatile.Write(ref _lastSendTicks, Environment.TickCount64);
-        if (!_channel.Writer.TryWrite((annexBAccessUnit, idr ? FrameFraming.FlagIdr : (byte)0)))
+        if (!_channel.Writer.TryWrite((annexBAccessUnit, idr ? FrameFraming.FlagIdr : (byte)0, sent)))
         {
             // Channel full: the send loop is stuck (service hung mid-stream).
             Log.Warn($"ingest {_sessionId}: send queue full, faulting");
@@ -107,7 +108,7 @@ internal sealed class IngestClient : IDisposable
                 if (Environment.TickCount64 - Volatile.Read(ref _lastSendTicks)
                     >= (long)KeepaliveInterval.TotalMilliseconds)
                 {
-                    _channel.Writer.TryWrite((Array.Empty<byte>(), FrameFraming.FlagControl));
+                    _channel.Writer.TryWrite((Array.Empty<byte>(), FrameFraming.FlagControl, null));
                 }
             }
         }
@@ -143,6 +144,7 @@ internal sealed class IngestClient : IDisposable
                     await stream.WriteAsync(header, _owner._cts.Token);
                     if (frame.Payload.Length > 0)
                         await stream.WriteAsync(frame.Payload, _owner._cts.Token);
+                    frame.Sent?.Invoke(frame.Payload);
                 }
                 // One flush per drained batch keeps latency at one frame while
                 // letting catch-up batches coalesce.

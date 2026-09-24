@@ -10,6 +10,6 @@ namespace Nexus.Overlay.Media;
 /// </summary>
 internal interface IFrameSink : IDisposable
 {
-    /// <summary>Consumes one captured texture. The texture stays caller-owned.</summary>
+    /// <summary>Consumes one captured texture and releases the caller's reference to it.</summary>
     void Submit(IntPtr texture2D);
 }
