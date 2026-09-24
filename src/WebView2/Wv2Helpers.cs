@@ -93,6 +93,20 @@ internal static unsafe class Wv2
         return fn(ctrl2, argb);
     }
 
+    // ===================== ICoreWebView2_19 =====================
+
+    public static readonly Guid IID_ICoreWebView2_19 =
+        new("6921f954-79b0-437f-a997-c85811897c68");
+
+    public const int MemoryUsageTargetLevelNormal = 0;
+    public const int MemoryUsageTargetLevelLow = 1;
+
+    public static int Wv2_19_put_MemoryUsageTargetLevel(IntPtr wv19, int level)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(wv19, WebView2Vtable.Wv2_19_put_MemoryUsageTargetLevel);
+        return fn(wv19, level);
+    }
+
     // ===================== ICoreWebView2Controller3 =====================
 
     public static readonly Guid IID_ICoreWebView2Controller3 =

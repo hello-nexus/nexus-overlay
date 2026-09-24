@@ -77,6 +77,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     private IntPtr _controller;
     private IntPtr _controller2;
     private IntPtr _coreWebView2;
+    private IntPtr _coreWebView2_19;
     private long _navStartingToken;
     private long _navCompletedToken;
     // Set while the shell's own failure document is up, so its load does not
@@ -412,11 +413,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 if (sizeKind != _lastSizeKind)
                 {
                     _lastSizeKind = sizeKind;
-                    // WebView2 can't see a host minimize; hidden, the page stops rendering.
-                    if (_controller != IntPtr.Zero)
-                    {
-                        Wv2.Ctrl_put_IsVisible(_controller, sizeKind != Native.SIZE_MINIMIZED);
-                    }
+                    SetHostVisible(sizeKind != Native.SIZE_MINIMIZED);
                     if (sizeKind == Native.SIZE_MAXIMIZED || sizeKind == Native.SIZE_RESTORED)
                     {
                         ApplyGlassFrame();
@@ -657,6 +654,22 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         Log.Info($"dashboard CreateCoreWebView2Controller hr=0x{hr:X8}");
     }
 
+    // WebView2 can't see a host minimize; hidden, the page stops rendering and
+    // a low memory target lets the runtime trim the renderer until restore.
+    private void SetHostVisible(bool visible)
+    {
+        if (_controller == IntPtr.Zero) return;
+        if (visible && _coreWebView2_19 != IntPtr.Zero)
+        {
+            Wv2.Wv2_19_put_MemoryUsageTargetLevel(_coreWebView2_19, Wv2.MemoryUsageTargetLevelNormal);
+        }
+        Wv2.Ctrl_put_IsVisible(_controller, visible);
+        if (!visible && _coreWebView2_19 != IntPtr.Zero)
+        {
+            Wv2.Wv2_19_put_MemoryUsageTargetLevel(_coreWebView2_19, Wv2.MemoryUsageTargetLevelLow);
+        }
+    }
+
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     private static int OnControllerCreatedStatic(IntPtr self, int errorCode, IntPtr controller)
     {
@@ -693,6 +706,8 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             Log.Error("dashboard get_CoreWebView2 failed");
             return;
         }
+        _coreWebView2_19 = Wv2.QueryInterface(_coreWebView2, Wv2.IID_ICoreWebView2_19);
+        if (Native.IsIconic(Hwnd)) SetHostVisible(false);
 
         if (WebView2Native.Succeeded(Wv2.Wv2_get_Settings(_coreWebView2, out var settings)) && settings != IntPtr.Zero)
         {
@@ -1190,6 +1205,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             }
             if (_coreWebView2 != IntPtr.Zero) { Wv2.Release(_coreWebView2); _coreWebView2 = IntPtr.Zero; }
             if (_controller2 != IntPtr.Zero) { Wv2.Release(_controller2); _controller2 = IntPtr.Zero; }
+            if (_coreWebView2_19 != IntPtr.Zero) { Wv2.Release(_coreWebView2_19); _coreWebView2_19 = IntPtr.Zero; }
             if (_env != IntPtr.Zero) { Wv2.Release(_env); _env = IntPtr.Zero; }
             // Release our local refs on the callback objects. The host
             // also AddRef'd them when we passed them into the add_* / env

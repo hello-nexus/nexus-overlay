@@ -84,6 +84,8 @@ internal static class WebView2Vtable
     // 36..43 skipped (CallDevToolsProtocolMethod, BrowserProcessId, history, etc.)
     public const int Wv2_add_NewWindowRequested = 44;
     public const int Wv2_remove_NewWindowRequested = 45;
+    // ICoreWebView2_19 (extends ICoreWebView2_18). QI for IID_ICoreWebView2_19.
+    public const int Wv2_19_put_MemoryUsageTargetLevel = 120;
 
     // ICoreWebView2Settings (own methods 3..). Subset we use:
     public const int Settings_get_IsScriptEnabled = 3;
