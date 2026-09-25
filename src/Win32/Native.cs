@@ -283,6 +283,9 @@ internal static unsafe class Native
     [DllImport("user32.dll", SetLastError = true)]
     public static extern int GetSystemMetrics(int nIndex);
 
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetricsForDpi(int nIndex, uint dpi);
+
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr LoadCursorW(IntPtr hInstance, IntPtr lpCursorName);
 

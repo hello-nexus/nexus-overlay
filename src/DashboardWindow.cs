@@ -126,8 +126,11 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             0u,
             x, y, w, h,
             this,
-            IntPtr.Zero, // no class background brush: an opaque client brush
-                         // would paint over the Mica system backdrop
+            // Black class brush: DWM renders black in the extended frame as
+            // transparent, so Mica shows behind the transparent WebView2. With
+            // no brush, the restored window's non-client frame (HandleNcCalcSize)
+            // leaves the client surface opaque white and DWM drops the rounding.
+            Native.GetStockObject(Native.BLACK_BRUSH),
             hIcon);
 
         // Also attach the icon to the window via WM_SETICON. This guarantees
@@ -435,9 +438,6 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             case Native.WM_GETMINMAXINFO:
                 if (lParam != IntPtr.Zero)
                 {
-                    // Custom NC handler means client == window, so the
-                    // OS-tracked minimum is just the client minimum -
-                    // no AdjustWindowRectEx for caption / borders here.
                     // The window's DPI, not the monitor's: it sets the
                     // WebView2's CSS px scale.
                     var mmi = (Native.MINMAXINFO*)lParam;
@@ -495,21 +495,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         if (wParam == IntPtr.Zero) return null;
 
         // wParam == TRUE: NCCALCSIZE_PARAMS, rgrc[0] is the proposed
-        // client rect. The default WM_NCCALCSIZE insets rgrc[0].top by the
-        // caption height (~30px) - skipping THAT here is what visually
-        // removes the title bar. We still inset side / bottom / a tiny
-        // top sliver so WS_THICKFRAME has the non-client area it needs to
-        // dispatch WM_NCHITTEST for the resize cursor - without that
-        // sliver the top-left / top-right corners are unreachable
-        // because the WebView2 child HWND captures the click first.
+        // client rect.
         unsafe
         {
-            // Default: client area equals the full window rect - WebView2
-            // sits flush against every edge with zero padding. Mouse
-            // events at the edges land on the WebView2 child window, and
-            // the React app forwards them to this WM_NCHITTEST via the
-            // app-region: drag strips along all four borders (enabled
-            // by ICoreWebView2Settings9.IsNonClientRegionSupportEnabled).
             var p = (Native.NCCALCSIZE_PARAMS*)lParam;
 
             // Maximized windows are an exception: WS_THICKFRAME causes
@@ -538,6 +526,16 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 if (HasAutoHideAppBar(monitor, Native.ABE_LEFT)) p->rgrc0.Left += 1;
                 if (HasAutoHideAppBar(monitor, Native.ABE_RIGHT)) p->rgrc0.Right -= 1;
             }
+            else
+            {
+                // Restored: keep the default left / right / bottom frame, which
+                // DWM renders as the invisible resize border outside the visible
+                // edge, and drop only the caption inset so the page runs to the
+                // top edge. The web draws the top resize strip.
+                int top = p->rgrc0.Top;
+                Native.DefWindowProcW(hwnd, Native.WM_NCCALCSIZE, wParam, lParam);
+                p->rgrc0.Top = top;
+            }
         }
         return IntPtr.Zero; // WVR_VALIDRECTS
     }
@@ -551,6 +549,18 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         if (Native.DwmDefWindowProc(hwnd, msg, wParam, lParam, out var dwmResult) != 0)
         {
             return dwmResult;
+        }
+
+        // The restored window's left / right / bottom frame is real non-client
+        // area (see HandleNcCalcSize): the OS resolves its edges and corner
+        // zones the same way it does for native windows.
+        if (!Native.IsZoomed(hwnd))
+        {
+            int osHit = Native.DefWindowProcW(hwnd, msg, wParam, lParam).ToInt32();
+            if (osHit >= Native.HTLEFT && osHit <= Native.HTBOTTOMRIGHT)
+            {
+                return new IntPtr(osHit);
+            }
         }
 
         // Step 2: translate cursor position (screen coords in lParam) to
@@ -1049,9 +1059,10 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         // A zero rect sits at (0,0), the primary monitor's origin.
         var origin = new Native.RECT();
         var (dpi, work) = MonitorMetrics(Native.MonitorFromRect(ref origin, Native.MONITOR_DEFAULTTOPRIMARY));
+        var (fx, fy) = FrameInsets(dpi);
         var w = Math.Min(ScaleForDpi(DefaultClientWidth, dpi), work.Width);
         var h = Math.Min(ScaleForDpi(DefaultClientHeight, dpi), work.Height);
-        return (work.Left + (work.Width - w) / 2, work.Top + (work.Height - h) / 2, w, h);
+        return (work.Left + (work.Width - w) / 2 - fx, work.Top + (work.Height - h) / 2, w + 2 * fx, h + fy);
     }
 
     // Rounds up: a custom scale that rounds down leaves the client a
@@ -1062,11 +1073,26 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         return (logical * d + BaseDpi - 1) / BaseDpi;
     }
 
-    // Capped to the work area so a small work area at high scaling can
-    // still fit and maximize the window.
-    private static (int w, int h) MinSize(uint dpi, Native.RECT work) => (
-        Math.Min(ScaleForDpi(MinClientWidth, dpi), work.Width),
-        Math.Min(ScaleForDpi(MinClientHeight, dpi), work.Height));
+    // Window (not client) minimum. The visible part is capped to the work
+    // area so a small work area at high scaling can still fit and maximize.
+    private static (int w, int h) MinSize(uint dpi, Native.RECT work)
+    {
+        var (fx, fy) = FrameInsets(dpi);
+        return (
+            Math.Min(ScaleForDpi(MinClientWidth, dpi), work.Width) + 2 * fx,
+            Math.Min(ScaleForDpi(MinClientHeight, dpi), work.Height) + fy);
+    }
+
+    // Thickness of the restored window's invisible resize frame on each side
+    // edge and on the bottom edge (HandleNcCalcSize keeps no top frame).
+    private static (int x, int y) FrameInsets(uint dpi)
+    {
+        var d = dpi == 0 ? BaseDpi : dpi;
+        int padding = Native.GetSystemMetricsForDpi(Native.SM_CXPADDEDBORDER, d);
+        return (
+            Native.GetSystemMetricsForDpi(Native.SM_CXFRAME, d) + padding,
+            Native.GetSystemMetricsForDpi(Native.SM_CYFRAME, d) + padding);
+    }
 
     private static (uint dpi, Native.RECT work) MonitorMetrics(IntPtr monitor)
     {
