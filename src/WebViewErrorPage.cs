@@ -85,7 +85,7 @@ public static class WebViewErrorPage
         sb.Append("code{display:block;margin-top:.75rem;font-size:.75rem;color:#6f6f6f;word-break:break-all}");
         sb.Append("button{font:inherit;font-size:.85rem;padding:.55rem 1.2rem;margin:0 .25rem;border-radius:999px;");
         sb.Append("border:1px solid #3a3a3a;background:#1e1e1e;color:#f2f2f2;cursor:pointer}");
-        sb.Append("button.primary{background:#a855f7;border-color:#a855f7}");
+        sb.Append("button.primary{background:#2563eb;border-color:#2563eb}");
         // min-height keeps the buttons from shifting as the status line changes.
         if (autoRetry) sb.Append("#retry{margin:1.25rem 0 0;font-size:.8rem;min-height:1.2em}");
         sb.Append("</style></head><body");
