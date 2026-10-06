@@ -277,6 +277,7 @@ internal static class Program
             _monitorKiosks?.CloseAll();
             _streamHosts?.CloseAll();
             _state = null;
+            SyncKeepCursorOff();
             if (reopenDashboard) ShowOrCreateDashboard();
             _ = PollAsync();
         }, null);
@@ -321,12 +322,16 @@ internal static class Program
         SyncKeepCursorOff();
     }
 
-    // The keep-the-mouse-off setting is a Y70 setting: it walls off only the
-    // Y70 kiosk's monitor, never a monitor kiosk.
-    private static void SyncKeepCursorOff() =>
-        TouchCursorGuard.KeepOffBounds = _state?.Y70KeepCursorOff == true && _panelKiosk is { } k && k.Hwnd != IntPtr.Zero
-            ? k.MonitorBounds
-            : null;
+    // Keep-the-mouse-off walls: the Y70 kiosk's monitor (global Y70 setting)
+    // plus every monitor kiosk whose panel has its own setting on.
+    private static void SyncKeepCursorOff()
+    {
+        var bounds = new List<Native.RECT>();
+        if (_state?.Y70KeepCursorOff == true && _panelKiosk is { } k && k.Hwnd != IntPtr.Zero)
+            bounds.Add(k.MonitorBounds);
+        _monitorKiosks?.AddKeepOffBounds(bounds);
+        TouchCursorGuard.KeepOffBounds = bounds.ToArray();
+    }
 
     private static bool IsSeeThrough(string? backdrop) =>
         string.Equals(backdrop, "desktop", StringComparison.Ordinal);
@@ -618,9 +623,9 @@ internal static class Program
         catch (Exception ex) { Log.Error($"overlay reconcile: {ex.Message}"); }
         try { ApplyPanelKiosk(state); }
         catch (Exception ex) { Log.Error($"panel kiosk reconcile: {ex.Message}"); }
-        SyncKeepCursorOff();
         try { _monitorKiosks?.Reconcile(state.Assignments, _pairedToken); }
         catch (Exception ex) { Log.Error($"monitor-kiosk reconcile: {ex.Message}"); }
+        SyncKeepCursorOff();
         try { _streamHosts?.Reconcile(state.Streams, _pairedToken); }
         catch (Exception ex) { Log.Error($"stream-host reconcile: {ex.Message}"); }
         if (IsIdle()) MaybeArmIdleExitTimer();

@@ -134,6 +134,8 @@ internal sealed class DisplayAssignment
     public bool ReserveMonitor { get; set; } = true;
     [JsonPropertyName("backdrop")]
     public string Backdrop { get; set; } = "";
+    [JsonPropertyName("keepCursorOff")]
+    public bool KeepCursorOff { get; set; }
 }
 
 /// <summary>

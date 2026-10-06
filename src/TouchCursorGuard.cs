@@ -29,8 +29,8 @@ namespace Nexus.Overlay;
 /// move <see cref="_lastMousePt"/>. When a display change leaves no other
 /// monitor to return to (the others went to sleep), the guard remembers where
 /// the mouse was and returns the cursor there once a monitor comes back.
-/// <see cref="KeepOffBounds"/> (the Y70 "keep the mouse off" setting) also
-/// stops the mouse itself from entering that panel.
+/// <see cref="KeepOffBounds"/> (each panel's "keep the mouse off" setting)
+/// also stops the mouse itself from entering those panels.
 ///
 /// The hooks are global, so they live only while a kiosk is open (Acquire /
 /// Release ref-count). Every entry point and both callbacks run on the overlay
@@ -46,19 +46,19 @@ internal static unsafe class TouchCursorGuard
     // a display change moves the kiosk bounds the point would be tested against.
     private static bool _mouseOnKiosk;
     private static Native.POINT? _strandedFrom;
-    private static Native.RECT? _keepOffBounds;
+    private static Native.RECT[] _keepOffBounds = Array.Empty<Native.RECT>();
 
-    /// <summary>Monitor rect the mouse is kept off, or null when the setting is off.</summary>
-    public static Native.RECT? KeepOffBounds
+    /// <summary>Monitor rects the mouse is kept off; empty when no panel has the setting on.</summary>
+    public static Native.RECT[] KeepOffBounds
     {
         get => _keepOffBounds;
         set
         {
-            if (Same(_keepOffBounds, value)) return;
+            if (SameAll(_keepOffBounds, value)) return;
             _keepOffBounds = value;
-            Log.Info(value is { } b
-                ? $"touch-cursor-guard keeping the mouse off {b.Left},{b.Top},{b.Width}x{b.Height}"
-                : "touch-cursor-guard keep-off cleared");
+            Log.Info(value.Length == 0
+                ? "touch-cursor-guard keep-off cleared"
+                : $"touch-cursor-guard keeping the mouse off {string.Join("; ", Array.ConvertAll(value, b => $"{b.Left},{b.Top},{b.Width}x{b.Height}"))}");
         }
     }
 
@@ -95,8 +95,15 @@ internal static unsafe class TouchCursorGuard
         Log.Info("touch-cursor-guard removed");
     }
 
-    private static bool Same(Native.RECT? a, Native.RECT? b) =>
-        a is { } x ? b is { } y && x.Left == y.Left && x.Top == y.Top && x.Right == y.Right && x.Bottom == y.Bottom : b is null;
+    private static bool Same(Native.RECT a, Native.RECT b) =>
+        a.Left == b.Left && a.Top == b.Top && a.Right == b.Right && a.Bottom == b.Bottom;
+
+    private static bool SameAll(Native.RECT[] a, Native.RECT[] b)
+    {
+        if (a.Length != b.Length) return false;
+        for (var i = 0; i < a.Length; i++) if (!Same(a[i], b[i])) return false;
+        return true;
+    }
 
     private static bool InKiosk(Native.POINT p) => PanelKioskWindow.PointInAnyKiosk(p.x, p.y);
 
@@ -107,12 +114,15 @@ internal static unsafe class TouchCursorGuard
     /// </summary>
     private static bool OnKeepOffPanel(Native.POINT p)
     {
-        if (_keepOffBounds is not { } b) return false;
-        if (p.x < b.Left || p.x >= b.Right || p.y < b.Top || p.y >= b.Bottom) return false;
-        var monitor = Native.MonitorFromPoint(p, Native.MONITOR_DEFAULTTONULL);
-        if (monitor == IntPtr.Zero) return false;
-        var info = new Native.MonitorInfoNative { cbSize = Marshal.SizeOf<Native.MonitorInfoNative>() };
-        return Native.GetMonitorInfoW(monitor, ref info) && Same(info.rcMonitor, b);
+        foreach (var b in _keepOffBounds)
+        {
+            if (p.x < b.Left || p.x >= b.Right || p.y < b.Top || p.y >= b.Bottom) continue;
+            var monitor = Native.MonitorFromPoint(p, Native.MONITOR_DEFAULTTONULL);
+            if (monitor == IntPtr.Zero) return false;
+            var info = new Native.MonitorInfoNative { cbSize = Marshal.SizeOf<Native.MonitorInfoNative>() };
+            if (Native.GetMonitorInfoW(monitor, ref info) && Same(info.rcMonitor, b)) return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -144,7 +154,7 @@ internal static unsafe class TouchCursorGuard
             {
                 var pt = ((Native.MSLLHOOKSTRUCT*)lParam)->pt;
                 var ptOnKiosk = InKiosk(pt);
-                if ((ptOnKiosk || _keepOffBounds is not null) && Native.GetCursorPos(out var c))
+                if ((ptOnKiosk || _keepOffBounds.Length > 0) && Native.GetCursorPos(out var c))
                 {
                     if (wParam == Native.WM_MOUSEMOVE && OnKeepOffPanel(pt) && !OnKeepOffPanel(c))
                         return 1; // the panel is a wall; the cursor stays where it is

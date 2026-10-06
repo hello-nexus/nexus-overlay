@@ -19,6 +19,7 @@ internal sealed class MonitorKioskManager
         public required string PanelDeviceId { get; init; }
         public required bool Reserve { get; set; }
         public required bool SeeThrough { get; init; }
+        public bool KeepCursorOff { get; set; }
     }
 
     private readonly string _serviceOrigin;
@@ -67,12 +68,14 @@ internal sealed class MonitorKioskManager
         var assignmentMap = new Dictionary<string, string>(StringComparer.Ordinal);
         var reserveById = new Dictionary<string, bool>(StringComparer.Ordinal);
         var seeThroughById = new Dictionary<string, bool>(StringComparer.Ordinal);
+        var keepCursorOffById = new Dictionary<string, bool>(StringComparer.Ordinal);
         foreach (var assignment in assignments)
         {
             if (string.IsNullOrEmpty(assignment.DisplayId) || string.IsNullOrEmpty(assignment.PanelDeviceId)) continue;
             assignmentMap[assignment.DisplayId] = assignment.PanelDeviceId;
             reserveById[assignment.DisplayId] = assignment.ReserveMonitor;
             seeThroughById[assignment.DisplayId] = assignment.Backdrop == "desktop";
+            keepCursorOffById[assignment.DisplayId] = assignment.KeepCursorOff;
         }
 
         // Arrangement/resolution changes don't alter the attached-id set, so
@@ -159,6 +162,17 @@ internal sealed class MonitorKioskManager
             entry.Reserve = reserve;
             try { entry.Window.SetMonitorGuard(reserve); } catch { /* best-effort */ }
             Log.Info($"monitor-kiosk guard display={displayId} -> {reserve}");
+        }
+        foreach (var (displayId, entry) in _kiosks)
+            entry.KeepCursorOff = keepCursorOffById.TryGetValue(displayId, out var keepOff) && keepOff;
+    }
+
+    /// <summary>Adds the monitor rect of every kiosk whose panel keeps the mouse off.</summary>
+    public void AddKeepOffBounds(List<Native.RECT> bounds)
+    {
+        foreach (var entry in _kiosks.Values)
+        {
+            if (entry.KeepCursorOff && entry.Window.Hwnd != IntPtr.Zero) bounds.Add(entry.Window.MonitorBounds);
         }
     }
 
