@@ -315,9 +315,18 @@ internal static class Program
         created.Destroyed = () =>
         {
             if (ReferenceEquals(_panelKiosk, created)) _panelKiosk = null;
+            SyncKeepCursorOff();
         };
         Log.Info($"panel kiosk opened on monitor={target.Index} guard={reserve} seeThrough={seeThrough} compat={compat}");
+        SyncKeepCursorOff();
     }
+
+    // The keep-the-mouse-off setting is a Y70 setting: it walls off only the
+    // Y70 kiosk's monitor, never a monitor kiosk.
+    private static void SyncKeepCursorOff() =>
+        TouchCursorGuard.KeepOffBounds = _state?.Y70KeepCursorOff == true && _panelKiosk is { } k && k.Hwnd != IntPtr.Zero
+            ? k.MonitorBounds
+            : null;
 
     private static bool IsSeeThrough(string? backdrop) =>
         string.Equals(backdrop, "desktop", StringComparison.Ordinal);
@@ -328,6 +337,7 @@ internal static class Program
         try { _panelKiosk.Dispose(); }
         catch (Exception ex) { Log.Error($"panel kiosk dispose: {ex.Message}"); }
         _panelKiosk = null;
+        SyncKeepCursorOff();
         MaybeArmIdleExitTimer();
         Log.Info("panel kiosk closed");
     }
@@ -608,6 +618,7 @@ internal static class Program
         catch (Exception ex) { Log.Error($"overlay reconcile: {ex.Message}"); }
         try { ApplyPanelKiosk(state); }
         catch (Exception ex) { Log.Error($"panel kiosk reconcile: {ex.Message}"); }
+        SyncKeepCursorOff();
         try { _monitorKiosks?.Reconcile(state.Assignments, _pairedToken); }
         catch (Exception ex) { Log.Error($"monitor-kiosk reconcile: {ex.Message}"); }
         try { _streamHosts?.Reconcile(state.Streams, _pairedToken); }
@@ -652,8 +663,20 @@ internal static class Program
         }
         if (reason is null) return;
         Log.Info($"panel kiosk {reason}; recreating");
-        ClosePanelKiosk();
-        MaybeShowPanelKiosk();
+        // Hold the cursor guard across the swap so it keeps where the mouse
+        // really was: a monitor that sleeps changes the panel's bounds, and
+        // a fresh guard would take a cursor Windows just moved onto the panel
+        // for the mouse's own position.
+        TouchCursorGuard.Acquire();
+        try
+        {
+            ClosePanelKiosk();
+            MaybeShowPanelKiosk();
+        }
+        finally
+        {
+            TouchCursorGuard.Release();
+        }
     }
 
     private static void ApplyOverlays(OverlayState? previous, OverlayState state)

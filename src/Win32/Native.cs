@@ -637,6 +637,12 @@ internal static unsafe class Native
     [DllImport("user32.dll")]
     public static extern bool SetCursorPos(int X, int Y);
 
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
+
+    public const uint MONITOR_DEFAULTTONULL = 0;
+    public const int WM_MOUSEMOVE = 0x0200;
+
     // Cursor-position accessibility event. Touch warps the shared cursor onto a
     // panel monitor via SetCursorPos, which a low-level mouse hook can't see but
     // which fires this event. OBJID_CURSOR marks the cursor object on the event.

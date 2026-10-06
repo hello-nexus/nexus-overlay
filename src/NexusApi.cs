@@ -108,6 +108,8 @@ internal sealed class OverlayState
     public string Y70Backdrop { get; set; } = "";
     [JsonPropertyName("y70CompatibilityRendering")]
     public bool Y70CompatibilityRendering { get; set; }
+    [JsonPropertyName("y70KeepCursorOff")]
+    public bool Y70KeepCursorOff { get; set; }
     [JsonPropertyName("overlayEnabled")]
     public bool OverlayEnabled { get; set; }
     [JsonPropertyName("alwaysOnTop")]

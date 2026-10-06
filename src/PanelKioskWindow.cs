@@ -64,6 +64,10 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private const uint DefaultBgTransparent = 0x00000000u;
 
     private static readonly ConcurrentDictionary<int, PanelKioskWindow> _instances = new();
+    // Monitor rects of the live kiosks, rebuilt when one is created, refit or
+    // disposed. PointInAnyKiosk runs on every system mouse event, so it reads
+    // this array instead of enumerating _instances.
+    private static Native.RECT[] _kioskRects = Array.Empty<Native.RECT>();
     private static int _nextInstanceId;
     private readonly int _instanceId;
     private readonly bool _seeThrough;
@@ -161,6 +165,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
 
         // Suppress the cursor-warp-on-touch for this monitor while the kiosk
         // is open; balanced in Dispose (also via the ctor's catch path).
+        SnapshotKioskRects();
         TouchCursorGuard.Acquire();
 
         try
@@ -222,12 +227,21 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     /// </summary>
     public static bool PointInAnyKiosk(int x, int y)
     {
-        foreach (var kv in _instances)
+        foreach (var b in _kioskRects)
         {
-            var b = kv.Value._monitor.Bounds;
             if (x >= b.Left && x < b.Right && y >= b.Top && y < b.Bottom) return true;
         }
         return false;
+    }
+
+    private static void SnapshotKioskRects()
+    {
+        var rects = new List<Native.RECT>();
+        foreach (var kv in _instances)
+        {
+            if (kv.Value._monitor is { } m) rects.Add(m.Bounds);
+        }
+        _kioskRects = rects.ToArray();
     }
 
     /// <summary>
@@ -268,6 +282,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     {
         if (_disposed || Hwnd == IntPtr.Zero) return;
         _monitor = monitor;
+        SnapshotKioskRects();
         var b = monitor.Bounds;
         Native.SetWindowPos(Hwnd, IntPtr.Zero, b.Left, b.Top, b.Width, b.Height,
             Native.SWP_NOACTIVATE | Native.SWP_NOZORDER);
@@ -663,6 +678,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         if (_disposed) return;
         _disposed = true;
         _instances.TryRemove(_instanceId, out _);
+        SnapshotKioskRects();
         TouchCursorGuard.Release();
         _taskbarGuard?.Dispose();
         _taskbarGuard = null;
