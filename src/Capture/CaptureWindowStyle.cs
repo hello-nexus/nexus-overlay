@@ -8,7 +8,8 @@ namespace Nexus.Overlay.Capture;
 /// <summary>
 /// Windows 10 refuses CreateForWindow (E_INVALIDARG) on tool windows and owned
 /// windows but accepts the same off-screen window without WS_EX_TOOLWINDOW
-/// (measured on 19045); Windows 11 accepts the tool window.
+/// (measured on 19045); Windows 11 accepts the tool window. Re-adding the style
+/// to a captured window stops its frames within seconds on 19045.
 /// </summary>
 internal static unsafe class CaptureWindowStyle
 {
@@ -20,19 +21,13 @@ internal static unsafe class CaptureWindowStyle
     private const int TaskbarList_DeleteTab = 5;
     private const uint CLSCTX_INPROC_SERVER = 1;
 
-    /// <summary>With reshow the window is hidden around the change so the shell re-reads it (and adds a taskbar button); without it the shell never sees the change. DwmFlush lets DWM see the style before an item is created.</summary>
-    public static void ClearToolWindow(IntPtr hwnd, bool reshow)
+    /// <summary>Hidden around the change so the shell re-reads the style (clearing it without the hide/show still gets E_INVALIDARG on 19045); this adds a taskbar button. DwmFlush lets DWM see the style before an item is created.</summary>
+    public static void ClearToolWindow(IntPtr hwnd)
     {
-        if (reshow) Native.ShowWindow(hwnd, Native.SW_HIDE);
+        Native.ShowWindow(hwnd, Native.SW_HIDE);
         SetExStyle(hwnd, Native.GetWindowLongW(hwnd, Native.GWL_EXSTYLE) & ~Native.WS_EX_TOOLWINDOW);
-        if (reshow) Native.ShowWindow(hwnd, Native.SW_SHOWNOACTIVATE);
+        Native.ShowWindow(hwnd, Native.SW_SHOWNOACTIVATE);
         Native.DwmFlush();
-    }
-
-    /// <summary>No hide/show: the capture is running. Alt+Tab reads the style live; the taskbar button needs <see cref="DeleteTaskbarTab"/>.</summary>
-    public static void AddToolWindow(IntPtr hwnd)
-    {
-        SetExStyle(hwnd, Native.GetWindowLongW(hwnd, Native.GWL_EXSTYLE) | Native.WS_EX_TOOLWINDOW);
     }
 
     public static void DeleteTaskbarTab(IntPtr hwnd)

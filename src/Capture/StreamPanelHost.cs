@@ -83,12 +83,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private bool _restartedThisEpisode;
     private bool _engineStarted;
     private bool _disposed;
-    private Win10Window _win10Window;
     private bool _taskbarTabPending;
-
-    // Windows 10 only (see CaptureWindowStyle): capture starts on the plain
-    // window, then the tool-window style comes back while frames keep flowing.
-    private enum Win10Window { None, PlainPending, ToolPending, ToolConfirmed, Plain }
 
     public StreamPanelHost(StreamAssignment assignment, string serviceOrigin, string pairedToken)
     {
@@ -362,12 +357,11 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         catch (CaptureItemException ex) when (ex.HResult == E_INVALIDARG)
         {
             Log.Warn($"stream-host {SessionId}: CreateForWindow refused the tool window; capturing it as a plain window");
-            CaptureWindowStyle.ClearToolWindow(Hwnd, reshow: true);
+            CaptureWindowStyle.ClearToolWindow(Hwnd);
             var capture = new WgcCapture(Hwnd, d3d, _pixelWidth, _pixelHeight);
             // The shell adds the taskbar button asynchronously after the show;
             // the next watchdog tick deletes it.
             _taskbarTabPending = true;
-            _win10Window = Win10Window.PlainPending;
             return capture;
         }
     }
@@ -525,35 +519,12 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         {
             _zeroFrameTicks = 0;
             _restartedThisEpisode = false;
-            if (_win10Window == Win10Window.PlainPending)
-            {
-                CaptureWindowStyle.AddToolWindow(Hwnd);
-                _win10Window = Win10Window.ToolPending;
-            }
-            else if (_win10Window == Win10Window.ToolPending)
-            {
-                _win10Window = Win10Window.ToolConfirmed;
-                Log.Info($"stream-host {SessionId}: capture keeps running with the tool-window style restored");
-            }
             return;
         }
         _zeroFrameTicks++;
         if (_zeroFrameTicks < 2 || _restartedThisEpisode) return;
         _zeroFrameTicks = 0;
         _restartedThisEpisode = true;
-        if (_win10Window is Win10Window.ToolPending or Win10Window.ToolConfirmed)
-        {
-            // The restart re-creates the item, which Windows 10 refuses on a
-            // tool window. A routine stall clears without a reshow (no taskbar
-            // button); frames that stopped right after the style came back
-            // keep the window plain for good, via the reshow procedure
-            // measured to be accepted.
-            Log.Warn($"stream-host {SessionId}: no frames with the tool-window style ({_win10Window}); clearing it for the restart");
-            var permanent = _win10Window == Win10Window.ToolPending;
-            CaptureWindowStyle.ClearToolWindow(Hwnd, reshow: permanent);
-            _taskbarTabPending = permanent;
-            _win10Window = permanent ? Win10Window.Plain : Win10Window.PlainPending;
-        }
         Log.Warn($"stream-host {SessionId}: no frames for two ticks, recreating WGC session");
         Interlocked.Exchange(ref _restartRequested, 1);
     }
