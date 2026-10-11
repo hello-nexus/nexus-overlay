@@ -27,6 +27,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private const string WindowClassName = "Nexus.Overlay.StreamHost";
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 7;
     private const uint WM_HOST_FAULTED = Native.WM_USER + 8;
+    private const int E_INVALIDARG = unchecked((int)0x80070057);
     // Off any plausible desktop; WGC captures regardless of visibility as
     // long as the window is shown and unminimized.
     private const int OffscreenOrigin = -4000;
@@ -82,6 +83,12 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private bool _restartedThisEpisode;
     private bool _engineStarted;
     private bool _disposed;
+    private Win10Window _win10Window;
+    private bool _taskbarTabPending;
+
+    // Windows 10 only (see CaptureWindowStyle): capture starts on the plain
+    // window, then the tool-window style comes back while frames keep flowing.
+    private enum Win10Window { None, PlainPending, ToolPending, ToolConfirmed, Plain }
 
     public StreamPanelHost(StreamAssignment assignment, string serviceOrigin, string pairedToken)
     {
@@ -313,7 +320,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         var fps = Math.Clamp(_assignment.Fps, 1, 240);
         var bitrateKbps = Math.Clamp(_assignment.BitrateKbps, 250, 50_000);
         _d3d = D3DDevice.Create();
-        _capture = new WgcCapture(Hwnd, _d3d, _pixelWidth, _pixelHeight);
+        _capture = CreateCapture(_d3d);
         var ingest = new IngestClient(_serviceOrigin, SessionId, _pairedToken);
         ingest.Faulted = PostFault;
         _ingest = ingest;
@@ -344,6 +351,25 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
 
         Native.SetTimer(Hwnd, (nuint)TIMER_CAPTURE_WATCHDOG, WatchdogIntervalMs, IntPtr.Zero);
         Log.Info($"stream-host {SessionId}: engine started");
+    }
+
+    private WgcCapture CreateCapture(D3DDevice d3d)
+    {
+        try
+        {
+            return new WgcCapture(Hwnd, d3d, _pixelWidth, _pixelHeight);
+        }
+        catch (CaptureItemException ex) when (ex.HResult == E_INVALIDARG)
+        {
+            Log.Warn($"stream-host {SessionId}: CreateForWindow refused the tool window; capturing it as a plain window");
+            CaptureWindowStyle.ClearToolWindow(Hwnd, reshow: true);
+            var capture = new WgcCapture(Hwnd, d3d, _pixelWidth, _pixelHeight);
+            // The shell adds the taskbar button asynchronously after the show;
+            // the next watchdog tick deletes it.
+            _taskbarTabPending = true;
+            _win10Window = Win10Window.PlainPending;
+            return capture;
+        }
     }
 
     private void PumpLoop()
@@ -444,7 +470,8 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
             }
             _lastFrameArrivalTicks = nowTicks;
             _lastFrameTimeTicks = frameTimeTicks;
-            Interlocked.Increment(ref _framesPumped);
+            if (Interlocked.Increment(ref _framesPumped) == 1)
+                Log.Info($"stream-host {SessionId}: first frame captured");
             if (submitStartTicks == 0) submitStartTicks = nowTicks;
             var allowed = 1 + (nowTicks - submitStartTicks) * targetFps / Stopwatch.Frequency;
             if (allowed - submitted > 3)
@@ -486,6 +513,11 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private void OnWatchdogTick()
     {
         if (_disposed || _capture is null) return;
+        if (_taskbarTabPending)
+        {
+            _taskbarTabPending = false;
+            CaptureWindowStyle.DeleteTaskbarTab(Hwnd);
+        }
         var pumped = Interlocked.Read(ref _framesPumped);
         var delta = pumped - _framesAtLastTick;
         _framesAtLastTick = pumped;
@@ -493,12 +525,35 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         {
             _zeroFrameTicks = 0;
             _restartedThisEpisode = false;
+            if (_win10Window == Win10Window.PlainPending)
+            {
+                CaptureWindowStyle.AddToolWindow(Hwnd);
+                _win10Window = Win10Window.ToolPending;
+            }
+            else if (_win10Window == Win10Window.ToolPending)
+            {
+                _win10Window = Win10Window.ToolConfirmed;
+                Log.Info($"stream-host {SessionId}: capture keeps running with the tool-window style restored");
+            }
             return;
         }
         _zeroFrameTicks++;
         if (_zeroFrameTicks < 2 || _restartedThisEpisode) return;
         _zeroFrameTicks = 0;
         _restartedThisEpisode = true;
+        if (_win10Window is Win10Window.ToolPending or Win10Window.ToolConfirmed)
+        {
+            // The restart re-creates the item, which Windows 10 refuses on a
+            // tool window. A routine stall clears without a reshow (no taskbar
+            // button); frames that stopped right after the style came back
+            // keep the window plain for good, via the reshow procedure
+            // measured to be accepted.
+            Log.Warn($"stream-host {SessionId}: no frames with the tool-window style ({_win10Window}); clearing it for the restart");
+            var permanent = _win10Window == Win10Window.ToolPending;
+            CaptureWindowStyle.ClearToolWindow(Hwnd, reshow: permanent);
+            _taskbarTabPending = permanent;
+            _win10Window = permanent ? Win10Window.Plain : Win10Window.PlainPending;
+        }
         Log.Warn($"stream-host {SessionId}: no frames for two ticks, recreating WGC session");
         Interlocked.Exchange(ref _restartRequested, 1);
     }

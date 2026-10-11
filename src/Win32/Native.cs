@@ -439,6 +439,12 @@ internal static unsafe class Native
     public const uint RRF_RT_REG_DWORD = 0x00000010;
 
     [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetWindowLongPtrW(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmFlush();
+
+    [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]

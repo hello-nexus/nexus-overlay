@@ -135,7 +135,7 @@ internal sealed unsafe class WgcCapture : IDisposable
                 hr = createForWindow(interop, _hwnd, iid, &item);
             }
             if (hr < 0 || item == IntPtr.Zero)
-                throw new InvalidOperationException($"CreateForWindow failed 0x{hr:X8}");
+                throw new CaptureItemException(hr);
             _item = item;
         }
         finally { Wv2.Release(interop); }
@@ -228,4 +228,10 @@ internal sealed unsafe class WgcCapture : IDisposable
         }
         Wv2.Release(winRtObject);
     }
+}
+
+/// <summary>CreateForWindow refused the HWND; HResult carries its HRESULT.</summary>
+internal sealed class CaptureItemException : InvalidOperationException
+{
+    public CaptureItemException(int hr) : base($"CreateForWindow failed 0x{hr:X8}") => HResult = hr;
 }
