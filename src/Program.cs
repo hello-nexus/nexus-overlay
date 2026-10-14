@@ -443,13 +443,18 @@ internal static class Program
 
     // Marshaler-window owner: handles WM_TIMER for the state poll and
     // serves as the sync-context drain destination via the registered
-    // drain message (the message loop intercepts before reaching us).
+    // drain message; nested modal loops (drag, MessageBox) dispatch it here.
     // Also receives the cross-process ShowDashboard message that the
     // service-side tray posts to wake / focus the dashboard window.
     private sealed class MarshalerOwner : IWin32WindowOwner
     {
         public IntPtr? HandleMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
         {
+            if (_syncContext is { } sync && msg == sync.DrainMessage)
+            {
+                sync.Drain();
+                return IntPtr.Zero;
+            }
             if (msg == Native.WM_TIMER && wParam == (IntPtr)(long)TIMER_PREFS_POLL.ToUInt64())
             {
                 _ = PollAsync();
@@ -550,34 +555,58 @@ internal static class Program
     }
 
     // The timer, the PrefsChanged push and WM_DISPLAYCHANGE all fire this;
-    // one poll runs at a time and re-runs once if a trigger landed mid-flight,
-    // so a stale response never lands over a newer one.
+    // one poll runs at a time and re-runs once if a trigger landed mid-flight;
+    // a poll stalled past the watchdog is retired and its late response is dropped.
     private static bool _pollInFlight;
     private static bool _pollRequeued;
+    private static int _pollGeneration;
+    private static long _pollStartTick;
+    private const long PollStallMs = 30_000;
+    private const long PollSlowLogMs = 2_000;
 
     private static async System.Threading.Tasks.Task PollAsync()
     {
         if (_pollInFlight)
         {
-            _pollRequeued = true;
-            return;
+            var inFlightMs = Environment.TickCount64 - _pollStartTick;
+            if (inFlightMs <= PollStallMs)
+            {
+                _pollRequeued = true;
+                if (inFlightMs > PollSlowLogMs)
+                {
+                    Log.Info($"poll requeued; previous poll in flight {inFlightMs} ms");
+                }
+                return;
+            }
+            Log.Warn($"poll stalled for {inFlightMs} ms; resetting");
         }
+        var generation = ++_pollGeneration;
         _pollInFlight = true;
         try
         {
             do
             {
                 _pollRequeued = false;
-                await PollOnceAsync();
-            } while (_pollRequeued);
+                var startTick = Environment.TickCount64;
+                _pollStartTick = startTick;
+                await PollOnceAsync(generation);
+                var elapsedMs = Environment.TickCount64 - startTick;
+                if (elapsedMs >= PollSlowLogMs)
+                {
+                    Log.Info($"poll slow: {elapsedMs} ms");
+                }
+            } while (_pollRequeued && generation == _pollGeneration);
         }
         finally
         {
-            _pollInFlight = false;
+            if (generation == _pollGeneration)
+            {
+                _pollInFlight = false;
+            }
         }
     }
 
-    private static async System.Threading.Tasks.Task PollOnceAsync()
+    private static async System.Threading.Tasks.Task PollOnceAsync(int generation)
     {
         if (_api is null) return;
         try
@@ -592,6 +621,7 @@ internal static class Program
                     state = await _api.GetStateAsync();
                 }
             }
+            if (generation != _pollGeneration) return;
             if (state is null)
             {
                 var now = Environment.TickCount64;

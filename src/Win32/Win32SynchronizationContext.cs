@@ -34,7 +34,7 @@ internal sealed class Win32SynchronizationContext : SynchronizationContext
 
     /// <summary>
     /// Pull all queued continuations and invoke them on the calling
-    /// thread. Called from the message loop when the drain message arrives.
+    /// thread. Called from the message loop and the marshaler window when the drain message arrives.
     /// </summary>
     public void Drain()
     {
