@@ -319,9 +319,11 @@ internal static class Program
         {
             if (ReferenceEquals(_panelKiosk, created)) _panelKiosk = null;
             SyncKeepCursorOff();
+            SyncPanelWidgetBand();
         };
         Log.Info($"panel kiosk opened on monitor={target.Index} guard={reserve} seeThrough={seeThrough} compat={compat} topmost={topmost}");
         SyncKeepCursorOff();
+        SyncPanelWidgetBand();
     }
 
     // Keep-the-mouse-off walls: the Y70 kiosk's monitor (global Y70 setting)
@@ -345,6 +347,7 @@ internal static class Program
         catch (Exception ex) { Log.Error($"panel kiosk dispose: {ex.Message}"); }
         _panelKiosk = null;
         SyncKeepCursorOff();
+        SyncPanelWidgetBand();
         MaybeArmIdleExitTimer();
         Log.Info("panel kiosk closed");
     }
@@ -649,8 +652,9 @@ internal static class Program
     {
         var previous = _state;
         _state = state;
-        // Widgets first: they and the kiosks share the topmost band, and a
-        // widget pinned to the panel monitor belongs above it.
+        // Widgets first: they and a topmost kiosk share the topmost band, and a
+        // widget pinned to the panel monitor belongs above it. A non-topmost
+        // kiosk is ordered under its widgets by SyncPanelWidgetBand instead.
         try { ApplyOverlays(previous, state); }
         catch (Exception ex) { Log.Error($"overlay reconcile: {ex.Message}"); }
         try { ApplyPanelKiosk(state); }
@@ -724,15 +728,14 @@ internal static class Program
     private static void SyncPanelWidgetBand()
     {
         var kiosk = _panelKiosk is { } k && k.Hwnd != IntPtr.Zero && !k.Topmost ? k : null;
+        var kioskMonitor = kiosk is null ? IntPtr.Zero : Native.MonitorFromWindow(kiosk.Hwnd, Native.MONITOR_DEFAULTTONEAREST);
         foreach (var overlay in Overlays)
         {
-            var below = kiosk is not null && SameRect(overlay.MonitorBounds, kiosk.MonitorBounds) ? kiosk.Hwnd : IntPtr.Zero;
-            overlay.SetPanelBelow(below);
+            var onPanel = kiosk is not null && overlay.Hwnd != IntPtr.Zero
+                && Native.MonitorFromWindow(overlay.Hwnd, Native.MONITOR_DEFAULTTONEAREST) == kioskMonitor;
+            overlay.SetPanelBelow(onPanel ? kiosk!.Hwnd : IntPtr.Zero);
         }
     }
-
-    private static bool SameRect(Native.RECT a, Native.RECT b) =>
-        a.Left == b.Left && a.Top == b.Top && a.Right == b.Right && a.Bottom == b.Bottom;
 
     private static void ApplyOverlays(OverlayState? previous, OverlayState state)
     {

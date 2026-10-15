@@ -84,8 +84,6 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         StartWebView2Init();
     }
 
-    public Native.RECT MonitorBounds => _monitor.Bounds;
-
     public void SetPanelBelow(IntPtr kioskHwnd)
     {
         if (_panelBelow == kioskHwnd) return;

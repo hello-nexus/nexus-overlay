@@ -7,9 +7,9 @@ using Nexus.Overlay.Win32;
 namespace Nexus.Overlay;
 
 /// <summary>
-/// Hides the taskbar that lives on a see-through kiosk's monitor, and puts it
-/// back. A kiosk window is topmost and the taskbar is too, so an opaque kiosk
-/// merely covers it - but a transparent one shows it through the panel.
+/// Hides the taskbar that lives on a see-through or non-topmost kiosk's monitor,
+/// and puts it back. An opaque topmost kiosk covers the topmost taskbar; a
+/// transparent one shows it through the panel, and a non-topmost one sits below it.
 ///
 /// The shell's own full-screen handling is no use here: it lowers the taskbar
 /// for a window that is ACTIVE, and the kiosk is WS_EX_NOACTIVATE precisely so

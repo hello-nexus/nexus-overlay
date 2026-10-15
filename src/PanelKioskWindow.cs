@@ -267,19 +267,22 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         var changed = topmost != _topmost;
         _topmost = topmost;
         if (!changed && topmost) return;
+        if (changed && !_seeThrough)
+        {
+            // Restore before going topmost: re-showing the taskbar raises it,
+            // and nothing re-asserts a topmost kiosk afterwards.
+            if (topmost)
+            {
+                _taskbarGuard?.Dispose();
+                _taskbarGuard = null;
+            }
+            else
+            {
+                _taskbarGuard ??= PanelTaskbarGuard.Start(Hwnd);
+            }
+        }
         ApplyZOrder();
-        if (!changed) return;
-        Log.Info($"panel-kiosk topmost={topmost} hwnd=0x{Hwnd:X}");
-        if (_seeThrough) return;
-        if (topmost)
-        {
-            _taskbarGuard?.Dispose();
-            _taskbarGuard = null;
-        }
-        else
-        {
-            _taskbarGuard ??= PanelTaskbarGuard.Start(Hwnd);
-        }
+        if (changed) Log.Info($"panel-kiosk topmost={topmost} hwnd=0x{Hwnd:X}");
     }
 
     private void ApplyZOrder()
