@@ -95,6 +95,34 @@ internal static unsafe class Win32Window
         }
     }
 
+    /// <summary>
+    /// Creates a child window of <paramref name="parent"/> and registers the
+    /// owner against its HWND, same pending-owner handshake as Create.
+    /// </summary>
+    public static IntPtr CreateChild(string className, uint style, uint exStyle,
+        int x, int y, int width, int height, IntPtr parent, IWin32WindowOwner owner)
+    {
+        EnsureClassRegistered(className);
+        _pendingOwner = owner;
+        try
+        {
+            var hwnd = Native.CreateWindowExW(exStyle, className, string.Empty, style | Native.WS_CHILD,
+                x, y, width, height, parent, IntPtr.Zero,
+                Native.GetModuleHandleW(null), IntPtr.Zero);
+            if (hwnd == IntPtr.Zero)
+            {
+                var err = Marshal.GetLastWin32Error();
+                throw new InvalidOperationException($"CreateWindowExW (child) failed err={err}");
+            }
+            Owners.TryAdd(hwnd, owner);
+            return hwnd;
+        }
+        finally
+        {
+            _pendingOwner = null;
+        }
+    }
+
     public static void Unregister(IntPtr hwnd) => Owners.TryRemove(hwnd, out _);
 
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]

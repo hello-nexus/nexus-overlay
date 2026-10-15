@@ -112,6 +112,12 @@ internal static unsafe class WebView2Native
     public static readonly Guid IID_ICoreWebView2PermissionRequestedEventArgs =
         new("973ae2ef-ff18-4894-8fb2-3c758f046810");
 
+    public static readonly Guid IID_ICoreWebView2_4 =
+        new("20d02d59-6df2-42dc-bd06-f98a694b1302");
+
+    public static readonly Guid IID_ICoreWebView2DownloadStartingEventHandler =
+        new("efedc989-c396-41ca-83f7-07f845a55724");
+
     // ===================== HRESULTs =====================
 
     public const int S_OK = 0;

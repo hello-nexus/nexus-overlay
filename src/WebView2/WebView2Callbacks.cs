@@ -71,6 +71,11 @@ internal static unsafe class WebView2Callbacks
         return v;
     }
 
+    /// <summary>Per-handler value a stub reads back from <c>self</c>; lets one static stub find its owner without scanning.</summary>
+    public static void SetUserData(IntPtr handler, long value) => ((long*)handler)[Slot_UserData] = value;
+
+    public static long GetUserData(IntPtr handler) => ((long*)handler)[Slot_UserData];
+
     // ============== Env-created handler ==============
 
     public static IntPtr CreateEnvCreatedHandler(
@@ -279,6 +284,30 @@ internal static unsafe class WebView2Callbacks
         if (iid == null) return WebView2Native.E_POINTER;
         if (*iid == WebView2Native.IID_IUnknown ||
             *iid == WebView2Native.IID_ICoreWebView2PermissionRequestedEventHandler)
+        {
+            *ppv = self;
+            AddRefInternal(self);
+            return WebView2Native.S_OK;
+        }
+        *ppv = IntPtr.Zero;
+        return WebView2Native.E_NOINTERFACE;
+    }
+
+    // ============== DownloadStarting event handler ==============
+
+    public static IntPtr CreateDownloadStartingHandler(
+        delegate* unmanaged[Stdcall]<IntPtr, IntPtr, IntPtr, int> onInvoke)
+    {
+        var vt = AllocVtable4((IntPtr)onInvoke, &DownloadStartingQI);
+        return AllocObject((IntPtr)vt);
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int DownloadStartingQI(IntPtr self, Guid* iid, IntPtr* ppv)
+    {
+        if (iid == null) return WebView2Native.E_POINTER;
+        if (*iid == WebView2Native.IID_IUnknown ||
+            *iid == WebView2Native.IID_ICoreWebView2DownloadStartingEventHandler)
         {
             *ppv = self;
             AddRefInternal(self);

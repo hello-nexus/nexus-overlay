@@ -81,9 +81,14 @@ internal static class WebView2Vtable
     public const int Wv2_PostWebMessageAsString = 33;
     public const int Wv2_add_WebMessageReceived = 34;
     public const int Wv2_remove_WebMessageReceived = 35;
-    // 36..43 skipped (CallDevToolsProtocolMethod, BrowserProcessId, history, etc.)
+    public const int Wv2_get_CanGoBack = 38;
+    public const int Wv2_GoBack = 40;
+    // 36..43 otherwise skipped (CallDevToolsProtocolMethod, BrowserProcessId, forward, Stop)
     public const int Wv2_add_NewWindowRequested = 44;
     public const int Wv2_remove_NewWindowRequested = 45;
+    // ICoreWebView2_4 (QI for IID_ICoreWebView2_4); slots 61..74 belong to _2/_3.
+    public const int Wv2_4_add_DownloadStarting = 75;
+    public const int Wv2_4_remove_DownloadStarting = 76;
     // ICoreWebView2_19 (extends ICoreWebView2_18). QI for IID_ICoreWebView2_19.
     public const int Wv2_19_put_MemoryUsageTargetLevel = 120;
 
@@ -172,6 +177,10 @@ internal static class WebView2Vtable
     public const int NewWindowArgs_get_IsUserInitiated = 8;
     public const int NewWindowArgs_GetDeferral = 9;
     public const int NewWindowArgs_get_WindowFeatures = 10;
+
+    // ICoreWebView2DownloadStartingEventArgs (own methods 3..).
+    public const int DownloadArgs_put_Cancel = 5;
+    public const int DownloadArgs_put_Handled = 9;
 
     // ICoreWebView2PermissionRequestedEventArgs (own methods 3..).
     public const int PermissionArgs_get_Uri = 3;

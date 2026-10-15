@@ -150,6 +150,25 @@ internal static unsafe class Wv2
         fixed (char* s = script) return fn(wv2, s, completedHandler);
     }
 
+    public static int Wv2_Reload(IntPtr wv2)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int>)Slot(wv2, WebView2Vtable.Wv2_Reload);
+        return fn(wv2);
+    }
+
+    public static int Wv2_GoBack(IntPtr wv2)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int>)Slot(wv2, WebView2Vtable.Wv2_GoBack);
+        return fn(wv2);
+    }
+
+    public static bool Wv2_get_CanGoBack(IntPtr wv2)
+    {
+        int v = 0;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int*, int>)Slot(wv2, WebView2Vtable.Wv2_get_CanGoBack);
+        return WebView2Native.Succeeded(fn(wv2, &v)) && v != 0;
+    }
+
     public static int Wv2_get_Settings(IntPtr wv2, out IntPtr settings)
     {
         IntPtr s;
@@ -270,7 +289,39 @@ internal static unsafe class Wv2
         fixed (char* s = script) return fn(wv2, s, IntPtr.Zero);
     }
 
+    // ===================== ICoreWebView2_4 =====================
+
+    public static int Wv2_4_add_DownloadStarting(IntPtr wv4, IntPtr handler, out long token)
+    {
+        long t;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, long*, int>)Slot(wv4, WebView2Vtable.Wv2_4_add_DownloadStarting);
+        var hr = fn(wv4, handler, &t);
+        token = t;
+        return hr;
+    }
+
+    public static int Wv2_4_remove_DownloadStarting(IntPtr wv4, long token)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, long, int>)Slot(wv4, WebView2Vtable.Wv2_4_remove_DownloadStarting);
+        return fn(wv4, token);
+    }
+
+    public static int DownloadArgs_put_Cancel(IntPtr args, bool cancel) =>
+        SettingsPutBool(args, WebView2Vtable.DownloadArgs_put_Cancel, cancel);
+
+    public static int DownloadArgs_put_Handled(IntPtr args, bool handled) =>
+        SettingsPutBool(args, WebView2Vtable.DownloadArgs_put_Handled, handled);
+
     // ===================== ICoreWebView2Settings =====================
+
+    public static int Settings_put_IsWebMessageEnabled(IntPtr s, bool v) =>
+        SettingsPutBool(s, WebView2Vtable.Settings_put_IsWebMessageEnabled, v);
+
+    public static int Settings_put_AreDefaultScriptDialogsEnabled(IntPtr s, bool v) =>
+        SettingsPutBool(s, WebView2Vtable.Settings_put_AreDefaultScriptDialogsEnabled, v);
+
+    public static int Settings_put_AreHostObjectsAllowed(IntPtr s, bool v) =>
+        SettingsPutBool(s, WebView2Vtable.Settings_put_AreHostObjectsAllowed, v);
 
     public static int Settings_put_AreDefaultContextMenusEnabled(IntPtr s, bool v) =>
         SettingsPutBool(s, WebView2Vtable.Settings_put_AreDefaultContextMenusEnabled, v);
@@ -312,6 +363,25 @@ internal static unsafe class Wv2
         var hr = fn(args, &p);
         cotaskMemStr = p;
         return hr;
+    }
+
+    public static int WebMsgArgs_get_Source(IntPtr args, out string? source)
+    {
+        IntPtr p;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(args, WebView2Vtable.WebMsgArgs_get_Source);
+        var hr = fn(args, &p);
+        if (WebView2Native.Failed(hr) || p == IntPtr.Zero) { source = null; return hr; }
+        source = Marshal.PtrToStringUni(p);
+        Marshal.FreeCoTaskMem(p);
+        return hr;
+    }
+
+    public static string? WebMsgArgs_GetJson(IntPtr args)
+    {
+        if (WebView2Native.Failed(WebMsgArgs_get_WebMessageAsJson(args, out var p)) || p == IntPtr.Zero) return null;
+        var json = Marshal.PtrToStringUni(p);
+        Marshal.FreeCoTaskMem(p);
+        return json;
     }
 
     public static int WebMsgArgs_TryGetWebMessageAsString(IntPtr args, out string? text)

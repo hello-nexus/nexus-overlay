@@ -20,6 +20,7 @@ internal static unsafe class Native
 
     // Window styles.
     public const uint WS_POPUP = 0x80000000u;
+    public const uint WS_CHILD = 0x40000000u;
     public const uint WS_VISIBLE = 0x10000000u;
     public const uint WS_CAPTION = 0x00C00000u;
     public const uint WS_SYSMENU = 0x00080000u;
@@ -64,6 +65,9 @@ internal static unsafe class Native
     public const uint WM_DESTROY = 0x0002;
     public const uint WM_MOVE = 0x0003;
     public const uint WM_SIZE = 0x0005;
+    public const uint WM_ERASEBKGND = 0x0014;
+    public const uint WM_SHOWWINDOW = 0x0018;
+    public const uint WM_MOUSEACTIVATE = 0x0021;
     public const uint WM_ACTIVATE = 0x0006;
     public const uint WM_CLOSE = 0x0010;
     public const uint WM_GETMINMAXINFO = 0x0024;
@@ -233,6 +237,9 @@ internal static unsafe class Native
 
     [DllImport("user32.dll")]
     public static extern bool IsWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool EnableWindow(IntPtr hWnd, bool bEnable);
 
     [DllImport("user32.dll")]
     public static extern bool IsWindowVisible(IntPtr hWnd);
