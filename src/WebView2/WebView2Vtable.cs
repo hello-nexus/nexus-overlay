@@ -26,6 +26,7 @@ internal static class WebView2Vtable
     public const int Ctrl_put_IsVisible = 4;
     public const int Ctrl_get_Bounds = 5;
     public const int Ctrl_put_Bounds = 6;
+    public const int Ctrl_put_ZoomFactor = 8;
     public const int Ctrl_MoveFocus = 12;
     // 7..20 otherwise skipped (zoom, focus events, accelerators)
     public const int Ctrl_get_ParentWindow = 21;

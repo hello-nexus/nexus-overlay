@@ -80,6 +80,12 @@ internal static unsafe class Wv2
         return fn(ctrl);
     }
 
+    public static int Ctrl_put_ZoomFactor(IntPtr ctrl, double zoom)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, double, int>)Slot(ctrl, WebView2Vtable.Ctrl_put_ZoomFactor);
+        return fn(ctrl, zoom);
+    }
+
     public static int Ctrl_MoveFocusProgrammatic(IntPtr ctrl)
     {
         var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(ctrl, WebView2Vtable.Ctrl_MoveFocus);

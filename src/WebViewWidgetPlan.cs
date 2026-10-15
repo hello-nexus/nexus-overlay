@@ -10,7 +10,7 @@ namespace Nexus.Overlay;
 internal readonly record struct WidgetRect(double X, double Y, double W, double H);
 
 /// <summary>One entry of the panel page's desired widget set.</summary>
-internal sealed record WidgetViewSpec(string Id, string Url, WidgetRect Rect, bool Interactive, bool Visible, double Radius = 0);
+internal sealed record WidgetViewSpec(string Id, string Url, WidgetRect Rect, bool Interactive, bool Visible, double Radius = 0, double Zoom = 1);
 
 /// <summary>A pixel rect inside the kiosk client area.</summary>
 internal readonly record struct WidgetPixelRect(int Left, int Top, int Width, int Height)
@@ -117,7 +117,7 @@ internal static class WebViewWidgetProtocol
             }
 
             views.Add(new WidgetViewSpec(id, url!, new WidgetRect(x, y, w, h),
-                Interactive: ReadBool(el, "interactive"), Visible: ReadBool(el, "visible"), Radius: ReadRadius(el)));
+                Interactive: ReadBool(el, "interactive"), Visible: ReadBool(el, "visible"), Radius: ReadRadius(el), Zoom: ReadZoom(el)));
         }
 
         return new WidgetMessage
@@ -150,6 +150,12 @@ internal static class WebViewWidgetProtocol
     }
 
     private const double MaxRadius = 1000;
+
+    public const double MinZoom = 0.25;
+    public const double MaxZoom = 3;
+
+    private static double ReadZoom(JsonElement obj)
+        => TryNumber(obj, "zoom", out var z) && z > 0 ? Math.Clamp(z, MinZoom, MaxZoom) : 1;
 
     private static double ReadRadius(JsonElement obj)
         => TryNumber(obj, "radius", out var r) ? Math.Clamp(r, 0, MaxRadius) : 0;
@@ -322,7 +328,7 @@ internal sealed class WidgetRegistry
                     entry.ConfiguredUrl = spec.Url;
                     actions.Add(new WidgetAction(WidgetActionKind.Navigate, spec.Id, spec));
                 }
-                if (entry.Spec.Rect != spec.Rect || entry.Spec.Radius != spec.Radius || entry.Spec.Interactive != spec.Interactive || entry.Spec.Visible != spec.Visible)
+                if (entry.Spec.Rect != spec.Rect || entry.Spec.Radius != spec.Radius || entry.Spec.Zoom != spec.Zoom || entry.Spec.Interactive != spec.Interactive || entry.Spec.Visible != spec.Visible)
                 {
                     actions.Add(new WidgetAction(WidgetActionKind.Layout, spec.Id, spec));
                 }

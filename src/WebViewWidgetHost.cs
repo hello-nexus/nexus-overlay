@@ -64,6 +64,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         public WidgetPixelRect AppliedRect;
         public bool AppliedShown;
         public bool AppliedInteractive;
+        public double AppliedZoom;
         public int AppliedRadiusX;
         public int AppliedRadiusY;
         public string LastSettled = "loaded";
@@ -541,6 +542,12 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         var px = WebViewWidgetProtocol.MapRect(view.Spec.Rect, _viewportW, _viewportH, client.Width, client.Height);
         var show = view.Spec.Visible && !px.IsEmpty;
 
+        if (view.AppliedZoom != view.Spec.Zoom)
+        {
+            Wv2.Ctrl_put_ZoomFactor(view.Controller, view.Spec.Zoom);
+            view.AppliedZoom = view.Spec.Zoom;
+        }
+
         if (!show)
         {
             if (view.AppliedShown)
@@ -646,7 +653,12 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                 Wv2.NavCompletedArgs_get_IsSuccess(args, out ok);
                 Wv2.NavCompletedArgs_get_WebErrorStatus(args, out status);
             }
-            if (ok) view.Host.PostState(view, "loaded");
+            if (ok)
+            {
+                // Navigation can reset the page zoom; re-assert the configured one.
+                Wv2.Ctrl_put_ZoomFactor(view.Controller, view.Spec.Zoom);
+                view.Host.PostState(view, "loaded");
+            }
             else if (status == WebErrorOperationCanceled) return WebView2Native.S_OK;
             else if (view.DownloadCancelledAt != 0 && Environment.TickCount64 - view.DownloadCancelledAt < DownloadCancelWindowMs)
             {

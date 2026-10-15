@@ -305,4 +305,29 @@ public class WebViewWidgetPlanTests
         var radiusView = View("a").TrimEnd('}') + ",\"radius\":8}";
         Assert.Equal(WidgetActionKind.Layout, Assert.Single(reg.Apply(Sync(2, radiusView), 10)).Kind);
     }
+
+    [Theory]
+    [InlineData("\"zoom\":1.5", 1.5)]
+    [InlineData("\"zoom\":0.01", 0.25)]
+    [InlineData("\"zoom\":50", 3)]
+    [InlineData("\"zoom\":0", 1)]
+    [InlineData("\"zoom\":-2", 1)]
+    [InlineData("\"zoom\":\"big\"", 1)]
+    [InlineData("\"other\":1", 1)]
+    public void Parse_Sync_ZoomIsDefensive(string field, double expected)
+    {
+        var view = View("a").TrimEnd('}') + "," + field + "}";
+        Assert.Equal(expected, Assert.Single(Sync(1, view).Views).Zoom);
+    }
+
+    [Fact]
+    public void Registry_ZoomChangeIsLayoutOnly()
+    {
+        var reg = new WidgetRegistry();
+        reg.Apply(Sync(1, View("a")), 0);
+        var zoomView = View("a").TrimEnd('}') + ",\"zoom\":2}";
+        var a = Assert.Single(reg.Apply(Sync(2, zoomView), 10));
+        Assert.Equal(WidgetActionKind.Layout, a.Kind);
+        Assert.Equal(2, a.Spec!.Zoom);
+    }
 }
