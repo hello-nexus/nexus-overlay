@@ -72,6 +72,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private readonly int _instanceId;
     private readonly bool _seeThrough;
     private readonly bool _compatibilityRendering;
+    private bool _topmost;
 
     // Y70 compatibility rendering: some AMD drivers scramble a full-screen
     // DirectComposition window on a rotated display once focus or input
@@ -95,6 +96,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     public bool SeeThrough => _seeThrough;
 
     public bool CompatibilityRendering => _compatibilityRendering;
+
+    public bool Topmost => _topmost;
 
     /// <summary>
     /// This kiosk is showing nothing usable and only a recreate recovers it:
@@ -150,9 +153,11 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     /// fresh bounds directly from WM_DISPLAYCHANGE, ahead of the owner's
     /// reconcile. Off for the Y70 kiosk, whose owner drives bounds changes.</param>
     public PanelKioskWindow(MonitorInfo monitor, string navigationUrl, bool guardMonitor,
-        bool refitOnDisplayChange = false, bool seeThrough = false, bool compatibilityRendering = false)
+        bool refitOnDisplayChange = false, bool seeThrough = false, bool compatibilityRendering = false,
+        bool topmost = true)
     {
         _seeThrough = seeThrough;
+        _topmost = topmost;
         _compatibilityRendering = compatibilityRendering;
         _instanceId = Interlocked.Increment(ref _nextInstanceId);
         _instances[_instanceId] = this;
@@ -184,7 +189,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 seeThrough ? SeeThroughClassName : WindowClassName,
                 WindowTitle,
                 Native.WS_POPUP,
-                (uint)(Native.WS_EX_TOOLWINDOW | Native.WS_EX_TOPMOST | Native.WS_EX_NOACTIVATE),
+                (uint)(Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE | (topmost ? Native.WS_EX_TOPMOST : 0)),
                 b.Left, b.Top, b.Width, b.Height,
                 this,
                 hbrBackground: seeThrough ? IntPtr.Zero : Native.GetStockObject(Native.BLACK_BRUSH));
@@ -194,10 +199,10 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             // Show the window before WebView2 attaches; the controller paints
             // over it once init finishes.
             Native.ShowWindow(Hwnd, Native.SW_SHOWNOACTIVATE);
-            // Only see-through hides it: an opaque kiosk already covers the
-            // taskbar, and hiding another process's window is worth doing only
-            // when it would otherwise be visible through the panel.
-            if (seeThrough) _taskbarGuard = PanelTaskbarGuard.Start(Hwnd);
+            // An opaque topmost kiosk covers the taskbar already; a see-through
+            // or non-topmost one would show it.
+            if (seeThrough || !topmost) _taskbarGuard = PanelTaskbarGuard.Start(Hwnd);
+            if (!topmost) ApplyZOrder();
             StartWebView2Init();
 
             // When reserveMonitor is on, guard the panel monitor: relocate any
@@ -250,6 +255,44 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     /// kiosk, which covers the taskbar anyway.
     /// </summary>
     public void ReassertTaskbar() => _taskbarGuard?.Reassert();
+
+    /// <summary>
+    /// Move the live kiosk into or out of the topmost band. Off re-sinks it to
+    /// the bottom on every call, since windows the user moves onto the panel
+    /// stack above it and the owner's poll keeps it there.
+    /// </summary>
+    public void SetTopmost(bool topmost)
+    {
+        if (_disposed || Hwnd == IntPtr.Zero) return;
+        var changed = topmost != _topmost;
+        _topmost = topmost;
+        if (!changed && topmost) return;
+        ApplyZOrder();
+        if (!changed) return;
+        Log.Info($"panel-kiosk topmost={topmost} hwnd=0x{Hwnd:X}");
+        if (_seeThrough) return;
+        if (topmost)
+        {
+            _taskbarGuard?.Dispose();
+            _taskbarGuard = null;
+        }
+        else
+        {
+            _taskbarGuard ??= PanelTaskbarGuard.Start(Hwnd);
+        }
+    }
+
+    private void ApplyZOrder()
+    {
+        const uint flags = Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE;
+        if (_topmost)
+        {
+            Native.SetWindowPos(Hwnd, Native.HWND_TOPMOST, 0, 0, 0, 0, flags);
+            return;
+        }
+        Native.SetWindowPos(Hwnd, Native.HWND_NOTOPMOST, 0, 0, 0, 0, flags);
+        Native.SetWindowPos(Hwnd, Native.HWND_BOTTOM, 0, 0, 0, 0, flags);
+    }
 
     /// <summary>
     /// Turn the foreign-window guard on or off on the live kiosk. Idempotent:
@@ -495,10 +538,9 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         var hr = Wv2.Wv2_Navigate(_coreWebView2, _navigationUrl);
         Log.Info($"panel-kiosk Navigate hr=0x{hr:X8} url={LogRedact.Url(_navigationUrl)}");
 
-        // Re-assert topmost AFTER WebView2 attach. Some controller-init
-        // paths reorder windows; this guarantees we land on top.
-        Native.SetWindowPos(Hwnd, Native.HWND_TOPMOST, 0, 0, 0, 0,
-            Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+        // Re-assert the z-order AFTER WebView2 attach: some controller-init
+        // paths reorder windows.
+        ApplyZOrder();
     }
 
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]

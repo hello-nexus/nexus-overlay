@@ -104,6 +104,8 @@ internal sealed class OverlayState
     public bool AutoLaunch { get; set; }
     [JsonPropertyName("reserveMonitor")]
     public bool ReserveMonitor { get; set; } = true;
+    [JsonPropertyName("panelAlwaysOnTop")]
+    public bool PanelAlwaysOnTop { get; set; } = true;
     [JsonPropertyName("y70Backdrop")]
     public string Y70Backdrop { get; set; } = "";
     [JsonPropertyName("y70CompatibilityRendering")]

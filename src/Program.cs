@@ -78,6 +78,7 @@ internal static class Program
         {
             try { overlay.MoveToMonitor(value); } catch (Exception ex) { Log.Error($"MoveToMonitor: {ex.Message}"); }
         }
+        SyncPanelWidgetBand();
     }
 
     [STAThread]
@@ -307,8 +308,9 @@ internal static class Program
         var seeThrough = IsSeeThrough(_state?.Y70Backdrop);
         var reserve = _state?.ReserveMonitor ?? true;
         var compat = _state?.Y70CompatibilityRendering ?? false;
+        var topmost = _state?.PanelAlwaysOnTop ?? true;
         var url = $"{ServiceOrigin}/panel?token={Uri.EscapeDataString(_pairedToken)}{(seeThrough ? "&backdrop=desktop" : "")}";
-        _panelKiosk = new PanelKioskWindow(target, url, reserve, seeThrough: seeThrough, compatibilityRendering: compat);
+        _panelKiosk = new PanelKioskWindow(target, url, reserve, seeThrough: seeThrough, compatibilityRendering: compat, topmost: topmost);
         var created = _panelKiosk;
         // Drop the reference on ANY teardown, including one the OS drives
         // directly (bypassing ClosePanelKiosk), so a dead kiosk never
@@ -318,7 +320,7 @@ internal static class Program
             if (ReferenceEquals(_panelKiosk, created)) _panelKiosk = null;
             SyncKeepCursorOff();
         };
-        Log.Info($"panel kiosk opened on monitor={target.Index} guard={reserve} seeThrough={seeThrough} compat={compat}");
+        Log.Info($"panel kiosk opened on monitor={target.Index} guard={reserve} seeThrough={seeThrough} compat={compat} topmost={topmost}");
         SyncKeepCursorOff();
     }
 
@@ -653,6 +655,8 @@ internal static class Program
         catch (Exception ex) { Log.Error($"overlay reconcile: {ex.Message}"); }
         try { ApplyPanelKiosk(state); }
         catch (Exception ex) { Log.Error($"panel kiosk reconcile: {ex.Message}"); }
+        try { SyncPanelWidgetBand(); }
+        catch (Exception ex) { Log.Error($"panel widget z-order: {ex.Message}"); }
         try { _monitorKiosks?.Reconcile(state.Assignments, _pairedToken); }
         catch (Exception ex) { Log.Error($"monitor-kiosk reconcile: {ex.Message}"); }
         SyncKeepCursorOff();
@@ -676,6 +680,7 @@ internal static class Program
             return;
         }
         kiosk.SetMonitorGuard(state.ReserveMonitor);
+        kiosk.SetTopmost(state.PanelAlwaysOnTop);
         kiosk.ReassertTaskbar();
         if (kiosk.HasConfirmedContent && !kiosk.Failed) _kioskUnconfirmedRecreates = 0;
 
@@ -713,6 +718,21 @@ internal static class Program
             TouchCursorGuard.Release();
         }
     }
+
+    // Widgets on a non-topmost kiosk's monitor leave the topmost band too, so
+    // windows moved onto the panel cover them, but stay above the kiosk.
+    private static void SyncPanelWidgetBand()
+    {
+        var kiosk = _panelKiosk is { } k && k.Hwnd != IntPtr.Zero && !k.Topmost ? k : null;
+        foreach (var overlay in Overlays)
+        {
+            var below = kiosk is not null && SameRect(overlay.MonitorBounds, kiosk.MonitorBounds) ? kiosk.Hwnd : IntPtr.Zero;
+            overlay.SetPanelBelow(below);
+        }
+    }
+
+    private static bool SameRect(Native.RECT a, Native.RECT b) =>
+        a.Left == b.Left && a.Top == b.Top && a.Right == b.Right && a.Bottom == b.Bottom;
 
     private static void ApplyOverlays(OverlayState? previous, OverlayState state)
     {

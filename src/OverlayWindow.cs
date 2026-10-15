@@ -39,6 +39,8 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
     private readonly string _navigationUrl;
     private bool _alwaysOnTop;
     private bool _zOrderApplied;
+    // Non-topmost panel kiosk sharing this monitor; widgets stay out of the topmost band and above it.
+    private IntPtr _panelBelow;
 
     private IntPtr _env;
     private IntPtr _envCreatedHandler;
@@ -80,6 +82,15 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         // Kick off WebView2 init. The env-created callback fires
         // asynchronously on the sync-context-installed UI thread.
         StartWebView2Init();
+    }
+
+    public Native.RECT MonitorBounds => _monitor.Bounds;
+
+    public void SetPanelBelow(IntPtr kioskHwnd)
+    {
+        if (_panelBelow == kioskHwnd) return;
+        _panelBelow = kioskHwnd;
+        if (_zOrderApplied) ApplyZOrder();
     }
 
     public void SetAlwaysOnTop(bool value)
@@ -469,18 +480,32 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         // every topmost<->bottom toggle (menu open/close, drag start/end).
         const uint zFlags = Native.SWP_NOMOVE | Native.SWP_NOSIZE
             | Native.SWP_NOACTIVATE | Native.SWP_NOREDRAW;
-        if (_alwaysOnTop)
+        if (_alwaysOnTop && _panelBelow == IntPtr.Zero)
         {
             Native.SetWindowPos(Hwnd, Native.HWND_TOPMOST, 0, 0, 0, 0, zFlags);
             Log.Info($"overlay {_monitor.Index} zorder=topmost");
+        }
+        else if (_alwaysOnTop)
+        {
+            Native.SetWindowPos(Hwnd, Native.HWND_NOTOPMOST, 0, 0, 0, 0, zFlags);
+            SinkPanelBelow();
+            Log.Info($"overlay {_monitor.Index} zorder=above-panel");
         }
         else
         {
             Native.SetWindowPos(Hwnd, Native.HWND_NOTOPMOST, 0, 0, 0, 0, zFlags);
             Native.SetWindowPos(Hwnd, Native.HWND_BOTTOM, 0, 0, 0, 0, zFlags);
+            SinkPanelBelow();
             Log.Info($"overlay {_monitor.Index} zorder=bottom");
         }
         _zOrderApplied = true;
+    }
+
+    private void SinkPanelBelow()
+    {
+        if (_panelBelow == IntPtr.Zero) return;
+        Native.SetWindowPos(_panelBelow, Native.HWND_BOTTOM, 0, 0, 0, 0,
+            Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
     }
 
     public void Dispose()

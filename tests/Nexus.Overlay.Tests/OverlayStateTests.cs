@@ -36,8 +36,17 @@ public class OverlayStateTests
         Assert.Equal("", state.Y70Backdrop);
         Assert.False(state.Y70CompatibilityRendering);
         Assert.False(state.Y70KeepCursorOff);
+        Assert.True(state.PanelAlwaysOnTop);
         Assert.Equal(-1, state.Monitor);
         Assert.Empty(state.Assignments);
         Assert.Empty(state.Streams);
+    }
+
+    [Fact]
+    public void Panel_always_on_top_parses_independently_of_the_monitor_guard()
+    {
+        var state = JsonSerializer.Deserialize("{\"reserveMonitor\":true,\"panelAlwaysOnTop\":false}", ApiJson.Default.OverlayState)!;
+        Assert.True(state.ReserveMonitor);
+        Assert.False(state.PanelAlwaysOnTop);
     }
 }
