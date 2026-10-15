@@ -74,6 +74,12 @@ internal static unsafe class Wv2
         return hr;
     }
 
+    public static int Ctrl_MoveFocusProgrammatic(IntPtr ctrl)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(ctrl, WebView2Vtable.Ctrl_MoveFocus);
+        return fn(ctrl, 0);
+    }
+
     public static int Ctrl_Close(IntPtr ctrl)
     {
         var fn = (delegate* unmanaged[Stdcall]<IntPtr, int>)Slot(ctrl, WebView2Vtable.Ctrl_Close);

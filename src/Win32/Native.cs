@@ -239,6 +239,9 @@ internal static unsafe class Native
     public static extern bool IsWindow(IntPtr hWnd);
 
     [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
     public static extern bool EnableWindow(IntPtr hWnd, bool bEnable);
 
     [DllImport("user32.dll")]

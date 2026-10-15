@@ -80,6 +80,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private bool _timerRunning;
     private double _viewportW;
     private double _viewportH;
+    private bool _activatable;
     private bool _disposed;
 
     /// <param name="post">Delivers a JSON message to the panel page.</param>
@@ -186,6 +187,33 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         UpdateTimer();
         ReleaseEnvIfIdle();
         if (any) Log.Info($"webview-widget destroyed all views reason={reason}");
+    }
+
+    // The kiosk is WS_EX_NOACTIVATE; while a view is interactive and shown that flag is dropped so a touch on it activates the kiosk and keystrokes reach the page.
+    private void UpdateActivation()
+    {
+        var want = !_disposed;
+        if (want)
+        {
+            want = false;
+            foreach (var v in _byId.Values)
+            {
+                if (v.Ready && !v.Destroyed && v.AppliedShown && v.AppliedInteractive) { want = true; break; }
+            }
+        }
+        if (want == _activatable) return;
+        _activatable = want;
+        if (!Native.IsWindow(_kioskHwnd)) return;
+        var ex = Native.GetWindowLongW(_kioskHwnd, Native.GWL_EXSTYLE);
+        ex = want ? ex & ~Native.WS_EX_NOACTIVATE : ex | Native.WS_EX_NOACTIVATE;
+        Native.SetWindowLongPtrW(_kioskHwnd, Native.GWL_EXSTYLE, (IntPtr)ex);
+        Native.SetWindowPos(_kioskHwnd, IntPtr.Zero, 0, 0, 0, 0,
+            Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
+        if (!want || Native.GetForegroundWindow() != _kioskHwnd) return;
+        foreach (var v in _byId.Values)
+        {
+            if (v.Ready && v.AppliedShown && v.AppliedInteractive) { Wv2.Ctrl_MoveFocusProgrammatic(v.Controller); break; }
+        }
     }
 
     public void OnKioskResized() => ApplyLayoutAll();
@@ -465,6 +493,12 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
 
     private void ApplyLayout(NativeView view)
     {
+        ApplyLayoutCore(view);
+        UpdateActivation();
+    }
+
+    private void ApplyLayoutCore(NativeView view)
+    {
         if (!view.Ready || view.Destroyed || _disposed) return;
         Native.GetClientRect(_kioskHwnd, out var client);
         var px = WebViewWidgetProtocol.MapRect(view.Spec.Rect, _viewportW, _viewportH, client.Width, client.Height);
@@ -680,6 +714,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             Win32Window.Unregister(view.Container);
             view.Container = IntPtr.Zero;
         }
+        UpdateActivation();
     }
 
     private static void ReleaseHandler(IntPtr handler)
