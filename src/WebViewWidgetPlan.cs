@@ -10,7 +10,7 @@ namespace Nexus.Overlay;
 internal readonly record struct WidgetRect(double X, double Y, double W, double H);
 
 /// <summary>One entry of the panel page's desired widget set.</summary>
-internal sealed record WidgetViewSpec(string Id, string Url, WidgetRect Rect, bool Interactive, bool Visible);
+internal sealed record WidgetViewSpec(string Id, string Url, WidgetRect Rect, bool Interactive, bool Visible, double Radius = 0);
 
 /// <summary>A pixel rect inside the kiosk client area.</summary>
 internal readonly record struct WidgetPixelRect(int Left, int Top, int Width, int Height)
@@ -117,7 +117,7 @@ internal static class WebViewWidgetProtocol
             }
 
             views.Add(new WidgetViewSpec(id, url!, new WidgetRect(x, y, w, h),
-                Interactive: ReadBool(el, "interactive"), Visible: ReadBool(el, "visible")));
+                Interactive: ReadBool(el, "interactive"), Visible: ReadBool(el, "visible"), Radius: ReadRadius(el)));
         }
 
         return new WidgetMessage
@@ -148,6 +148,11 @@ internal static class WebViewWidgetProtocol
         if (!obj.TryGetProperty(name, out var el) || el.ValueKind != JsonValueKind.Number) return false;
         return el.TryGetDouble(out value) && double.IsFinite(value);
     }
+
+    private const double MaxRadius = 1000;
+
+    private static double ReadRadius(JsonElement obj)
+        => TryNumber(obj, "radius", out var r) ? Math.Clamp(r, 0, MaxRadius) : 0;
 
     private static bool ReadBool(JsonElement obj, string name)
         => obj.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.True;
@@ -196,6 +201,13 @@ internal static class WebViewWidgetProtocol
         var right = Math.Clamp((int)Math.Round((rect.X + rect.W) * sx), 0, boundsW);
         var bottom = Math.Clamp((int)Math.Round((rect.Y + rect.H) * sy), 0, boundsH);
         return new WidgetPixelRect(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top));
+    }
+
+    /// <summary>Corner radius in pixels per axis, scaled like <see cref="MapRect"/>.</summary>
+    public static (int X, int Y) MapRadius(double radius, double viewportW, double viewportH, int boundsW, int boundsH)
+    {
+        if (!(radius > 0) || !(viewportW > 0) || !(viewportH > 0) || boundsW <= 0 || boundsH <= 0) return (0, 0);
+        return ((int)Math.Round(radius * boundsW / viewportW), (int)Math.Round(radius * boundsH / viewportH));
     }
 
     public static string BuildCaps(bool interactive)
@@ -310,7 +322,7 @@ internal sealed class WidgetRegistry
                     entry.ConfiguredUrl = spec.Url;
                     actions.Add(new WidgetAction(WidgetActionKind.Navigate, spec.Id, spec));
                 }
-                if (entry.Spec.Rect != spec.Rect || entry.Spec.Interactive != spec.Interactive || entry.Spec.Visible != spec.Visible)
+                if (entry.Spec.Rect != spec.Rect || entry.Spec.Radius != spec.Radius || entry.Spec.Interactive != spec.Interactive || entry.Spec.Visible != spec.Visible)
                 {
                     actions.Add(new WidgetAction(WidgetActionKind.Layout, spec.Id, spec));
                 }

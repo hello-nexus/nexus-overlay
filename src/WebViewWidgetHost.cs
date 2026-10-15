@@ -25,6 +25,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private const uint WS_DISABLED = 0x08000000u;
     private const int PermissionStateDeny = 2;
     private const int WebErrorOperationCanceled = 14;
+    private const long DownloadCancelWindowMs = 2_000;
     private const int ProcessFailedBrowserExited = 0;
     private const int ProcessFailedRenderExited = 1;
     // COREWEBVIEW2_COLOR as a raw uint has alpha in the low byte.
@@ -63,6 +64,10 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         public WidgetPixelRect AppliedRect;
         public bool AppliedShown;
         public bool AppliedInteractive;
+        public int AppliedRadiusX;
+        public int AppliedRadiusY;
+        public string LastSettled = "loaded";
+        public long DownloadCancelledAt;
     }
 
     private readonly long _key = Interlocked.Increment(ref _nextKey);
@@ -81,6 +86,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private double _viewportW;
     private double _viewportH;
     private bool _activatable;
+    private IntPtr _prevForeground;
     private bool _disposed;
 
     /// <param name="post">Delivers a JSON message to the panel page.</param>
@@ -172,6 +178,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
 
     private void PostState(NativeView view, string state, string? code = null)
     {
+        if (state != "loading") view.LastSettled = state;
         var canGoBack = view.Ready && !view.Destroyed && Wv2.Wv2_get_CanGoBack(view.Core);
         Post(WebViewWidgetProtocol.BuildState(view.Id, state, code, canGoBack));
     }
@@ -201,19 +208,42 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                 if (v.Ready && !v.Destroyed && v.AppliedShown && v.AppliedInteractive) { want = true; break; }
             }
         }
-        if (want == _activatable) return;
+        if (want == _activatable)
+        {
+            RememberForeground();
+            return;
+        }
         _activatable = want;
+        if (want) RememberForeground();
         if (!Native.IsWindow(_kioskHwnd)) return;
         var ex = Native.GetWindowLongW(_kioskHwnd, Native.GWL_EXSTYLE);
         ex = want ? ex & ~Native.WS_EX_NOACTIVATE : ex | Native.WS_EX_NOACTIVATE;
         Native.SetWindowLongPtrW(_kioskHwnd, Native.GWL_EXSTYLE, (IntPtr)ex);
         Native.SetWindowPos(_kioskHwnd, IntPtr.Zero, 0, 0, 0, 0,
             Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
-        if (!want || Native.GetForegroundWindow() != _kioskHwnd) return;
+        if (!want)
+        {
+            var prev = _prevForeground;
+            _prevForeground = IntPtr.Zero;
+            if (Native.GetForegroundWindow() == _kioskHwnd && prev != IntPtr.Zero && prev != _kioskHwnd && Native.IsWindow(prev))
+            {
+                Native.SetForegroundWindow(prev);
+            }
+            return;
+        }
+        if (Native.GetForegroundWindow() != _kioskHwnd) return;
         foreach (var v in _byId.Values)
         {
             if (v.Ready && v.AppliedShown && v.AppliedInteractive) { Wv2.Ctrl_MoveFocusProgrammatic(v.Controller); break; }
         }
+    }
+
+    // Last foreground window other than the kiosk, so focus can go back once no view is interactive.
+    private void RememberForeground()
+    {
+        if (!_activatable) return;
+        var fg = Native.GetForegroundWindow();
+        if (fg != IntPtr.Zero && fg != _kioskHwnd) _prevForeground = fg;
     }
 
     public void OnKioskResized() => ApplyLayoutAll();
@@ -222,6 +252,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     {
         if (timerId != (IntPtr)(long)TimerWatchdog.ToUInt64()) return;
         if (_registry.WatchdogExpired(Environment.TickCount64)) DestroyAll("watchdog");
+        else RememberForeground();
     }
 
     /// <summary>Destroys views queued by event handlers, which must not tear down inside their own callback.</summary>
@@ -440,6 +471,12 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         Wv2.Settings_put_AreDefaultScriptDialogsEnabled(settings, false);
         Wv2.Settings_put_IsWebMessageEnabled(settings, false);
         Wv2.Settings_put_AreHostObjectsAllowed(settings, false);
+        var settings3 = Wv2.QueryInterface(settings, WebView2Native.IID_ICoreWebView2Settings3);
+        if (settings3 != IntPtr.Zero)
+        {
+            Wv2.Settings3_put_AreBrowserAcceleratorKeysEnabled(settings3, false);
+            Wv2.Release(settings3);
+        }
         var settings4 = Wv2.QueryInterface(settings, WebView2Native.IID_ICoreWebView2Settings4);
         if (settings4 != IntPtr.Zero)
         {
@@ -521,7 +558,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             view.AppliedInteractive = view.Spec.Interactive;
         }
 
-        if (!view.AppliedShown || view.AppliedRect != px)
+        var rectChanged = !view.AppliedShown || view.AppliedRect != px;
+        if (rectChanged)
         {
             var flags = Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW | (view.AppliedShown ? Native.SWP_NOZORDER : 0u);
             Native.SetWindowPos(view.Container, Native.HWND_TOP, px.Left, px.Top, px.Width, px.Height, flags);
@@ -530,6 +568,15 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                 Wv2.Ctrl_put_Bounds(view.Controller, new Native.RECT { Left = 0, Top = 0, Right = px.Width, Bottom = px.Height });
             }
             view.AppliedRect = px;
+            Wv2.Ctrl_NotifyParentWindowPositionChanged(view.Controller);
+        }
+
+        var (rx, ry) = WebViewWidgetProtocol.MapRadius(view.Spec.Radius, _viewportW, _viewportH, client.Width, client.Height);
+        if (rectChanged || rx != view.AppliedRadiusX || ry != view.AppliedRadiusY)
+        {
+            ApplyRegion(view, px, rx, ry);
+            view.AppliedRadiusX = rx;
+            view.AppliedRadiusY = ry;
         }
 
         if (!view.AppliedShown)
@@ -537,6 +584,19 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             Wv2.Ctrl_put_IsVisible(view.Controller, true);
             view.AppliedShown = true;
         }
+    }
+
+    private static void ApplyRegion(NativeView view, WidgetPixelRect px, int rx, int ry)
+    {
+        if (rx <= 0 && ry <= 0)
+        {
+            if (view.AppliedRadiusX > 0 || view.AppliedRadiusY > 0) Native.SetWindowRgn(view.Container, IntPtr.Zero, true);
+            return;
+        }
+        // Right and bottom are exclusive in GDI regions, hence the +1.
+        var rgn = Native.CreateRoundRectRgn(0, 0, px.Width + 1, px.Height + 1, rx * 2, ry * 2);
+        if (rgn == IntPtr.Zero) return;
+        if (Native.SetWindowRgn(view.Container, rgn, true) == 0) Native.DeleteObject(rgn);
     }
 
     // A disabled child window is skipped by hit-testing, so non-interactive input reaches the panel webview beneath.
@@ -587,7 +647,14 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                 Wv2.NavCompletedArgs_get_WebErrorStatus(args, out status);
             }
             if (ok) view.Host.PostState(view, "loaded");
-            else if (status != WebErrorOperationCanceled) view.Host.PostState(view, "error", status.ToString());
+            else if (status == WebErrorOperationCanceled) return WebView2Native.S_OK;
+            else if (view.DownloadCancelledAt != 0 && Environment.TickCount64 - view.DownloadCancelledAt < DownloadCancelWindowMs)
+            {
+                // The page is unchanged after a blocked download; restore the state the loading event replaced.
+                view.DownloadCancelledAt = 0;
+                view.Host.PostState(view, view.LastSettled);
+            }
+            else view.Host.PostState(view, "error", status.ToString());
         }
         catch (Exception ex) { Log.Error($"webview-widget NavCompleted: {ex.Message}"); }
         return WebView2Native.S_OK;
@@ -624,6 +691,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         try
         {
             if (args == IntPtr.Zero) return WebView2Native.S_OK;
+            if (Views.TryGetValue(WebView2Callbacks.GetUserData(self), out var view)) view.DownloadCancelledAt = Environment.TickCount64;
             Wv2.DownloadArgs_put_Cancel(args, true);
             Wv2.DownloadArgs_put_Handled(args, true);
         }

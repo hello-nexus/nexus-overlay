@@ -67,7 +67,6 @@ internal static unsafe class Native
     public const uint WM_SIZE = 0x0005;
     public const uint WM_ERASEBKGND = 0x0014;
     public const uint WM_SHOWWINDOW = 0x0018;
-    public const uint WM_MOUSEACTIVATE = 0x0021;
     public const uint WM_ACTIVATE = 0x0006;
     public const uint WM_CLOSE = 0x0010;
     public const uint WM_GETMINMAXINFO = 0x0024;

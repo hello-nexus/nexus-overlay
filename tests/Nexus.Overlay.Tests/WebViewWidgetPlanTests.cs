@@ -276,4 +276,33 @@ public class WebViewWidgetPlanTests
         reg.Apply(Sync(2), 2500);
         Assert.Equal(WidgetActionKind.Create, Assert.Single(reg.Apply(Sync(3, View("a")), 2600)).Kind);
     }
+
+    [Theory]
+    [InlineData("\"radius\":12", 12)]
+    [InlineData("\"radius\":-5", 0)]
+    [InlineData("\"radius\":\"x\"", 0)]
+    [InlineData("\"radius\":99999", 1000)]
+    [InlineData("\"other\":1", 0)]
+    public void Parse_Sync_RadiusIsDefensive(string field, double expected)
+    {
+        var view = View("a").TrimEnd('}') + "," + field + "}";
+        Assert.Equal(expected, Assert.Single(Sync(1, view).Views).Radius);
+    }
+
+    [Fact]
+    public void MapRadius_ScalesPerAxis()
+    {
+        Assert.Equal((20, 30), WebViewWidgetProtocol.MapRadius(10, 1000, 500, 2000, 1500));
+        Assert.Equal((0, 0), WebViewWidgetProtocol.MapRadius(0, 1000, 500, 2000, 1500));
+        Assert.Equal((0, 0), WebViewWidgetProtocol.MapRadius(10, 0, 500, 2000, 1500));
+    }
+
+    [Fact]
+    public void Registry_RadiusChangeIsLayoutOnly()
+    {
+        var reg = new WidgetRegistry();
+        reg.Apply(Sync(1, View("a")), 0);
+        var radiusView = View("a").TrimEnd('}') + ",\"radius\":8}";
+        Assert.Equal(WidgetActionKind.Layout, Assert.Single(reg.Apply(Sync(2, radiusView), 10)).Kind);
+    }
 }

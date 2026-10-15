@@ -50,6 +50,9 @@ internal static unsafe class WebView2Native
     public static readonly Guid IID_ICoreWebView2Settings =
         new("e562e4f0-d7fa-43ac-8d71-c05150499f00");
 
+    public static readonly Guid IID_ICoreWebView2Settings3 =
+        new("fdb5ab74-af33-4854-84f0-0a631deb5eba");
+
     public static readonly Guid IID_ICoreWebView2Settings4 =
         new("cb56846c-4168-4d53-b04f-03b6d6796ff2");
 

@@ -87,7 +87,7 @@ internal static class WebView2Vtable
     // 36..43 otherwise skipped (CallDevToolsProtocolMethod, BrowserProcessId, forward, Stop)
     public const int Wv2_add_NewWindowRequested = 44;
     public const int Wv2_remove_NewWindowRequested = 45;
-    // ICoreWebView2_4 (QI for IID_ICoreWebView2_4); slots 61..74 belong to _2/_3.
+    // ICoreWebView2_4 (QI for IID_ICoreWebView2_4); _2 is 61..67, _3 is 68..72, _4 starts with FrameCreated at 73..74.
     public const int Wv2_4_add_DownloadStarting = 75;
     public const int Wv2_4_remove_DownloadStarting = 76;
     // ICoreWebView2_19 (extends ICoreWebView2_18). QI for IID_ICoreWebView2_19.
@@ -115,7 +115,7 @@ internal static class WebView2Vtable
 
     // ICoreWebView2Settings3 (extends Settings2). AreBrowserAcceleratorKeysEnabled
     // is on ICoreWebView2Settings3 specifically; QI separately for that IID.
-    // Not wired up.
+    public const int Settings3_put_AreBrowserAcceleratorKeysEnabled = 24;
 
     // ICoreWebView2Settings4 (extends Settings3). Adds IsPasswordAutosaveEnabled
     // and IsGeneralAutofillEnabled. QI separately for IID_ICoreWebView2Settings4.

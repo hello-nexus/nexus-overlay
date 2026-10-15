@@ -74,6 +74,12 @@ internal static unsafe class Wv2
         return hr;
     }
 
+    public static int Ctrl_NotifyParentWindowPositionChanged(IntPtr ctrl)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int>)Slot(ctrl, WebView2Vtable.Ctrl_NotifyParentWindowPositionChanged);
+        return fn(ctrl);
+    }
+
     public static int Ctrl_MoveFocusProgrammatic(IntPtr ctrl)
     {
         var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(ctrl, WebView2Vtable.Ctrl_MoveFocus);
@@ -346,6 +352,11 @@ internal static unsafe class Wv2
         var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(settings, slot);
         return fn(settings, v ? 1 : 0);
     }
+
+    // ===================== ICoreWebView2Settings3 =====================
+
+    public static int Settings3_put_AreBrowserAcceleratorKeysEnabled(IntPtr settings3, bool v) =>
+        SettingsPutBool(settings3, WebView2Vtable.Settings3_put_AreBrowserAcceleratorKeysEnabled, v);
 
     // ===================== ICoreWebView2Settings4 =====================
 
