@@ -25,7 +25,6 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private const uint WS_DISABLED = 0x08000000u;
     private const int PermissionStateDeny = 2;
     private const int WebErrorOperationCanceled = 14;
-    private const long DownloadCancelWindowMs = 2_000;
     private const int ProcessFailedBrowserExited = 0;
     private const int ProcessFailedRenderExited = 1;
     // COREWEBVIEW2_COLOR as a raw uint has alpha in the low byte.
@@ -67,8 +66,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         public double AppliedZoom;
         public int AppliedRadiusX;
         public int AppliedRadiusY;
-        public string LastSettled = "loaded";
-        public long DownloadCancelledAt;
+        public readonly WidgetNavState Nav = new();
     }
 
     private readonly long _key = Interlocked.Increment(ref _nextKey);
@@ -179,7 +177,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
 
     private void PostState(NativeView view, string state, string? code = null)
     {
-        if (state != "loading") view.LastSettled = state;
+        view.Nav.OnState(state, code);
         var canGoBack = view.Ready && !view.Destroyed && Wv2.Wv2_get_CanGoBack(view.Core);
         Post(WebViewWidgetProtocol.BuildState(view.Id, state, code, canGoBack));
     }
@@ -226,7 +224,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         {
             var prev = _prevForeground;
             _prevForeground = IntPtr.Zero;
-            if (Native.GetForegroundWindow() == _kioskHwnd && prev != IntPtr.Zero && prev != _kioskHwnd && Native.IsWindow(prev))
+            if (Native.GetForegroundWindow() == _kioskHwnd && prev != IntPtr.Zero && prev != _kioskHwnd
+                && Native.IsWindow(prev) && Native.IsWindowVisible(prev) && !Native.IsIconic(prev))
             {
                 Native.SetForegroundWindow(prev);
             }
@@ -248,6 +247,14 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     }
 
     public void OnKioskResized() => ApplyLayoutAll();
+
+    public void OnKioskMoved()
+    {
+        foreach (var view in _byId.Values)
+        {
+            if (view.Ready && !view.Destroyed && view.AppliedShown) Wv2.Ctrl_NotifyParentWindowPositionChanged(view.Controller);
+        }
+    }
 
     public void OnTimer(IntPtr timerId)
     {
@@ -634,6 +641,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                 Log.Info($"webview-widget blocked navigation {LogRedact.Url(uri)}");
                 return WebView2Native.S_OK;
             }
+            view.Nav.OnNavigationStarting();
             view.Host.PostState(view, "loading");
         }
         catch (Exception ex) { Log.Error($"webview-widget NavStarting: {ex.Message}"); }
@@ -660,11 +668,10 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                 view.Host.PostState(view, "loaded");
             }
             else if (status == WebErrorOperationCanceled) return WebView2Native.S_OK;
-            else if (view.DownloadCancelledAt != 0 && Environment.TickCount64 - view.DownloadCancelledAt < DownloadCancelWindowMs)
+            else if (view.Nav.TryConsumeDownloadFailure())
             {
                 // The page is unchanged after a blocked download; restore the state the loading event replaced.
-                view.DownloadCancelledAt = 0;
-                view.Host.PostState(view, view.LastSettled);
+                if (view.Nav.SettledState is { } prev) view.Host.PostState(view, prev, view.Nav.SettledCode);
             }
             else view.Host.PostState(view, "error", status.ToString());
         }
@@ -703,7 +710,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         try
         {
             if (args == IntPtr.Zero) return WebView2Native.S_OK;
-            if (Views.TryGetValue(WebView2Callbacks.GetUserData(self), out var view)) view.DownloadCancelledAt = Environment.TickCount64;
+            if (Views.TryGetValue(WebView2Callbacks.GetUserData(self), out var view)) view.Nav.OnDownloadCancelled();
             Wv2.DownloadArgs_put_Cancel(args, true);
             Wv2.DownloadArgs_put_Handled(args, true);
         }

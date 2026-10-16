@@ -330,4 +330,36 @@ public class WebViewWidgetPlanTests
         Assert.Equal(WidgetActionKind.Layout, a.Kind);
         Assert.Equal(2, a.Spec!.Zoom);
     }
+
+    [Fact]
+    public void NavState_DownloadFailureSwallowedOnce()
+    {
+        var n = new WidgetNavState();
+        n.OnNavigationStarting();
+        n.OnDownloadCancelled();
+        Assert.True(n.TryConsumeDownloadFailure());
+        Assert.False(n.TryConsumeDownloadFailure());
+    }
+
+    [Fact]
+    public void NavState_NextNavigationStartClearsFlag()
+    {
+        var n = new WidgetNavState();
+        n.OnDownloadCancelled();
+        n.OnNavigationStarting();
+        Assert.False(n.TryConsumeDownloadFailure());
+    }
+
+    [Fact]
+    public void NavState_KeepsSettledStateAndCode_IgnoresLoading()
+    {
+        var n = new WidgetNavState();
+        Assert.Null(n.SettledState);
+        n.OnState("loading", null);
+        Assert.Null(n.SettledState);
+        n.OnState("error", "12");
+        n.OnState("loading", null);
+        Assert.Equal("error", n.SettledState);
+        Assert.Equal("12", n.SettledCode);
+    }
 }

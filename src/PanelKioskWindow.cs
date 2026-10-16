@@ -400,6 +400,10 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 _widgets?.OnKioskResized();
                 return IntPtr.Zero;
 
+            case Native.WM_MOVE:
+                _widgets?.OnKioskMoved();
+                return null;
+
             case Native.WM_SHOWWINDOW:
                 if (wParam == IntPtr.Zero) _widgets?.DestroyAll("kiosk hidden");
                 return null;

@@ -372,3 +372,31 @@ internal sealed class WidgetRegistry
     /// <summary>True when views are live and no sync arrived within <see cref="WatchdogMs"/>.</summary>
     public bool WatchdogExpired(long nowMs) => _live.Count > 0 && nowMs - _lastSyncMs >= WatchdogMs;
 }
+
+/// <summary>Per-view navigation bookkeeping: remembers the settled state and swallows the failure that follows a blocked download.</summary>
+internal sealed class WidgetNavState
+{
+    private bool _downloadCancelled;
+
+    public string? SettledState { get; private set; }
+    public string? SettledCode { get; private set; }
+
+    public void OnNavigationStarting() => _downloadCancelled = false;
+
+    public void OnDownloadCancelled() => _downloadCancelled = true;
+
+    /// <summary>True once per cancelled download: the next failed completion must not be reported.</summary>
+    public bool TryConsumeDownloadFailure()
+    {
+        var was = _downloadCancelled;
+        _downloadCancelled = false;
+        return was;
+    }
+
+    public void OnState(string state, string? code)
+    {
+        if (state == "loading") return;
+        SettledState = state;
+        SettledCode = code;
+    }
+}
