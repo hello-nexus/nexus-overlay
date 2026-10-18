@@ -184,6 +184,12 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             // The tap-warps-the-cursor symptom is a separate touch->mouse
             // promotion, suppressed by TouchCursorGuard.
             //
+            // See-through kiosks skip the GDI redirection surface: hiding or
+            // destroying a native child (the Web View widget) otherwise leaves
+            // its old rect painted opaque black in that surface, which no
+            // repaint or resize clears. WebView2 composes through DirectComposition,
+            // or layered child windows in compatibility mode, so it needs no surface.
+            //
             // Black class background: the region a Refit exposes erases to
             // black instead of to the desktop until the WebView2 covers it.
             // The class carries no CS_HREDRAW/CS_VREDRAW, so a resize erases
@@ -192,7 +198,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 seeThrough ? SeeThroughClassName : WindowClassName,
                 WindowTitle,
                 Native.WS_POPUP,
-                (uint)(Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE | (topmost ? Native.WS_EX_TOPMOST : 0)),
+                (uint)(Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE | (topmost ? Native.WS_EX_TOPMOST : 0)
+                    | (seeThrough ? Native.WS_EX_NOREDIRECTIONBITMAP : 0)),
                 b.Left, b.Top, b.Width, b.Height,
                 this,
                 hbrBackground: seeThrough ? IntPtr.Zero : Native.GetStockObject(Native.BLACK_BRUSH));

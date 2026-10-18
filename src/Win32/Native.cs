@@ -16,6 +16,7 @@ internal static unsafe class Native
     public const int GWL_EXSTYLE = -20;
     public const int WS_EX_TOOLWINDOW = 0x00000080;
     public const int WS_EX_NOACTIVATE = 0x08000000;
+    public const int WS_EX_NOREDIRECTIONBITMAP = 0x00200000;
     public const int WS_EX_TOPMOST = 0x00000008;
 
     // Window styles.
