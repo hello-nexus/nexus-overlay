@@ -187,8 +187,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             // See-through kiosks skip the GDI redirection surface: hiding or
             // destroying a native child (the Web View widget) otherwise leaves
             // its old rect painted opaque black in that surface, which no
-            // repaint or resize clears. WebView2 composes through DirectComposition,
-            // or layered child windows in compatibility mode, so it needs no surface.
+            // repaint or resize clears. WebView2 composes its own visuals, so it
+            // needs no surface.
             //
             // Black class background: the region a Refit exposes erases to
             // black instead of to the desktop until the WebView2 covers it.
