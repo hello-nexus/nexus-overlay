@@ -10,19 +10,17 @@ internal static class CursorGuardGeometry
     public static bool MustLeave(bool onKiosk, bool onKeepOff, bool mouseOnPanel) =>
         onKeepOff || (onKiosk && !mouseOnPanel);
 
-    /// <summary><paramref name="p"/> when it lies on a monitor, otherwise the closest point on the nearest monitor.</summary>
-    public static (int X, int Y) ClampToNearest(
-        (int X, int Y) p, IReadOnlyList<(int Left, int Top, int Right, int Bottom)> monitors)
+    /// <summary>
+    /// <paramref name="p"/> when it lies on a monitor, otherwise its closest
+    /// point on the monitor holding <paramref name="cursor"/>, where Windows
+    /// keeps the cursor when a move runs off the desktop.
+    /// </summary>
+    public static (int X, int Y) ClampToCursorMonitor((int X, int Y) p, (int X, int Y) cursor,
+        IReadOnlyList<(int Left, int Top, int Right, int Bottom)> monitors)
     {
-        var best = p;
-        var bestDist = long.MaxValue;
-        foreach (var m in monitors)
-        {
-            if (!TryClampInto(p, m, out var q)) continue;
-            var d = DistSq(p, q);
-            if (d < bestDist) { best = q; bestDist = d; }
-        }
-        return best;
+        if (IndexContaining(p, monitors) >= 0) return p;
+        var monitor = IndexNearest(cursor, monitors);
+        return monitor >= 0 && TryClampInto(p, monitors[monitor], out var q) ? q : p;
     }
 
     /// <summary>

@@ -5,8 +5,8 @@ namespace Nexus.Overlay.Tests;
 
 public class CursorGuardGeometryTests
 {
-    // A 682x2560 Y70 kiosk left of a 2560x1440 primary, bottom edge at y=456,
-    // so only the primary's left edge above y=456 is shared with it.
+    // A portrait Y70 kiosk left of the primary whose bottom edge sits partway
+    // down the primary's left edge, so the two share only the upper part of it.
     private static readonly (int Left, int Top, int Right, int Bottom) Primary = (0, 0, 2560, 1440);
     private static readonly (int Left, int Top, int Right, int Bottom) Y70 = (-682, -2104, 0, 456);
     private static readonly (int Left, int Top, int Right, int Bottom)[] Monitors = { Primary, Y70 };
@@ -15,28 +15,50 @@ public class CursorGuardGeometryTests
         p.X >= Y70.Left && p.X < Y70.Right && p.Y >= Y70.Top && p.Y < Y70.Bottom;
 
     [Fact]
-    public void ClampToNearest_PointOnMonitor_Unchanged()
+    public void ClampToCursorMonitor_PointOnMonitor_Unchanged()
     {
-        Assert.Equal((1200, 700), CursorGuardGeometry.ClampToNearest((1200, 700), Monitors));
-        Assert.Equal((-300, -1000), CursorGuardGeometry.ClampToNearest((-300, -1000), Monitors));
+        Assert.Equal((1200, 700), CursorGuardGeometry.ClampToCursorMonitor((1200, 700), (1190, 700), Monitors));
+        Assert.Equal((-300, -1000), CursorGuardGeometry.ClampToCursorMonitor((-300, -1000), (1, 400), Monitors));
     }
 
     [Fact]
-    public void ClampToNearest_OffsetPushBelowPanel_StopsAtPrimaryLeftEdge()
+    public void ClampToCursorMonitor_OffsetPushBelowPanel_StopsAtPrimaryLeftEdge()
     {
-        Assert.Equal((0, 800), CursorGuardGeometry.ClampToNearest((-3, 800), Monitors));
+        Assert.Equal((0, 800), CursorGuardGeometry.ClampToCursorMonitor((-3, 800), (0, 800), Monitors));
     }
 
     [Fact]
-    public void ClampToNearest_OuterEdgePushOffPanel_StopsAtPanelLeftEdge()
+    public void ClampToCursorMonitor_PushJustBelowPanelCorner_StaysOnPrimary()
     {
-        Assert.Equal((-682, -1000), CursorGuardGeometry.ClampToNearest((-690, -1000), Monitors));
+        // The panel's corner is nearer to this point than the primary edge is.
+        var p = CursorGuardGeometry.ClampToCursorMonitor((-20, 465), (0, 470), Monitors);
+        Assert.Equal((0, 465), p);
+        Assert.False(OnY70(p));
     }
 
     [Fact]
-    public void ClampToNearest_PushOffPanelBottom_StaysOnPanel()
+    public void ClampToCursorMonitor_DiagonalSlideBelowPanelCorner_NeverLandsOnPanel()
     {
-        Assert.Equal((-300, 455), CursorGuardGeometry.ClampToNearest((-300, 458), Monitors));
+        var cursor = (X: 0, Y: Y70.Bottom);
+        for (var step = 0; step < 20; step++)
+        {
+            var next = CursorGuardGeometry.ClampToCursorMonitor((cursor.X - 4, cursor.Y + 1), cursor, Monitors);
+            Assert.False(OnY70(next));
+            Assert.Equal((0, cursor.Y + 1), next);
+            cursor = next;
+        }
+    }
+
+    [Fact]
+    public void ClampToCursorMonitor_OuterEdgePushOffPanel_StopsAtPanelLeftEdge()
+    {
+        Assert.Equal((-682, -1000), CursorGuardGeometry.ClampToCursorMonitor((-690, -1000), (-682, -1000), Monitors));
+    }
+
+    [Fact]
+    public void ClampToCursorMonitor_PushOffPanelBottom_StaysOnPanel()
+    {
+        Assert.Equal((-300, 455), CursorGuardGeometry.ClampToCursorMonitor((-300, 458), (-300, 455), Monitors));
     }
 
     [Fact]
@@ -49,8 +71,8 @@ public class CursorGuardGeometryTests
     [Fact]
     public void ReturnTarget_EasedJumpOntoKeptOffPanel_ReturnsToClampedEdgePoint()
     {
-        // The hook reported (-3,800); the guard recorded it clamped to the primary.
-        var origin = CursorGuardGeometry.ClampToNearest((-3, 800), Monitors);
+        // The hook point past the primary's left edge, recorded clamped onto the primary.
+        var origin = CursorGuardGeometry.ClampToCursorMonitor((-3, 800), (0, 800), Monitors);
         var target = CursorGuardGeometry.ReturnTarget(origin, (-1, 455), Monitors, OnY70);
         Assert.Equal((0, 800), target);
     }
@@ -108,7 +130,7 @@ public class CursorGuardGeometryTests
     [Fact]
     public void OuterEdgePush_KeepOffOff_MouseStaysOnPanel()
     {
-        var recorded = CursorGuardGeometry.ClampToNearest((-690, -1000), Monitors);
+        var recorded = CursorGuardGeometry.ClampToCursorMonitor((-690, -1000), (-682, -1000), Monitors);
         Assert.True(OnY70(recorded));
         Assert.False(CursorGuardGeometry.MustLeave(onKiosk: true, onKeepOff: false, mouseOnPanel: OnY70(recorded)));
     }

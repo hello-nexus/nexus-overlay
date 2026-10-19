@@ -396,6 +396,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 // until it lands the window still spans its pre-rotation rect,
                 // leaving the uncovered part of the panel showing the desktop.
                 if (_refitOnDisplayChange) RefitToOwnDisplay();
+                TouchCursorGuard.OnDisplayChange();
                 return null;
 
             case Native.WM_SIZE:
