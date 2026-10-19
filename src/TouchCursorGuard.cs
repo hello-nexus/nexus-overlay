@@ -47,6 +47,10 @@ internal static unsafe class TouchCursorGuard
     private static bool _mouseOnKiosk;
     private static Native.POINT? _strandedFrom;
     private static Native.RECT[] _keepOffBounds = Array.Empty<Native.RECT>();
+    // A push held against an edge can move the cursor once per mouse event.
+    private const long MoveLogIntervalMs = 2000;
+    private static long _nextMoveLogAt;
+    private static int _unloggedMoves;
 
     /// <summary>Monitor rects the mouse is kept off; empty when no panel has the setting on.</summary>
     public static Native.RECT[] KeepOffBounds
@@ -107,6 +111,28 @@ internal static unsafe class TouchCursorGuard
 
     private static bool InKiosk(Native.POINT p) => PanelKioskWindow.PointInAnyKiosk(p.x, p.y);
 
+    private static bool InKiosk((int X, int Y) p) => PanelKioskWindow.PointInAnyKiosk(p.X, p.Y);
+
+    private static (int Left, int Top, int Right, int Bottom)[] MonitorRects()
+    {
+        var monitors = Monitors.Enumerate();
+        var rects = new (int Left, int Top, int Right, int Bottom)[monitors.Count];
+        for (var i = 0; i < rects.Length; i++)
+        {
+            var b = monitors[i].Bounds;
+            rects[i] = (b.Left, b.Top, b.Right, b.Bottom);
+        }
+        return rects;
+    }
+
+    /// <summary>The hook point lies off every monitor when the mouse pushes past an outer or offset edge.</summary>
+    private static Native.POINT OnDesktop(Native.POINT p)
+    {
+        if (Native.MonitorFromPoint(p, Native.MONITOR_DEFAULTTONULL) != IntPtr.Zero) return p;
+        var q = CursorGuardGeometry.ClampToNearest((p.x, p.y), MonitorRects());
+        return new Native.POINT { x = q.X, y = q.Y };
+    }
+
     /// <summary>
     /// True when <paramref name="p"/> is on the kept-off panel. Checks the live
     /// monitor at the point as well, so bounds left stale by a display change
@@ -125,25 +151,18 @@ internal static unsafe class TouchCursorGuard
         return false;
     }
 
-    /// <summary>
-    /// True when <paramref name="p"/> is a place to return the cursor to: on a
-    /// live monitor, off every kiosk, and not on the monitor the cursor is on
-    /// now. The last check covers kiosk bounds that are stale for the few
-    /// seconds between a display change and the kiosk's recreate.
-    /// </summary>
-    private static bool IsReturnTarget(Native.POINT p, Native.POINT cursor)
-    {
-        if (InKiosk(p)) return false;
-        var monitor = Native.MonitorFromPoint(p, Native.MONITOR_DEFAULTTONULL);
-        return monitor != IntPtr.Zero
-            && monitor != Native.MonitorFromPoint(cursor, Native.MONITOR_DEFAULTTONEAREST);
-    }
+    private static bool IsReturnTarget(Native.POINT p, Native.POINT cursor) =>
+        CursorGuardGeometry.IsReturnTarget((p.x, p.y), (cursor.x, cursor.y), MonitorRects(), InKiosk);
 
-    private static Native.POINT PrimaryCenter() => new()
+    private static void LogMove(Native.POINT from, (int X, int Y) to, string reason)
     {
-        x = Native.GetSystemMetrics(Native.SM_CXSCREEN) / 2,
-        y = Native.GetSystemMetrics(Native.SM_CYSCREEN) / 2,
-    };
+        var now = Environment.TickCount64;
+        if (now < _nextMoveLogAt) { _unloggedMoves++; return; }
+        _nextMoveLogAt = now + MoveLogIntervalMs;
+        var unlogged = _unloggedMoves > 0 ? $", {_unloggedMoves} more since the last line" : "";
+        _unloggedMoves = 0;
+        Log.Info($"touch-cursor-guard moved the cursor {from.x},{from.y} -> {to.X},{to.Y} ({reason}{unlogged})");
+    }
 
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     private static IntPtr MouseProc(int nCode, IntPtr wParam, IntPtr lParam)
@@ -152,7 +171,7 @@ internal static unsafe class TouchCursorGuard
         {
             if (nCode == Native.HC_ACTION && lParam != IntPtr.Zero)
             {
-                var pt = ((Native.MSLLHOOKSTRUCT*)lParam)->pt;
+                var pt = OnDesktop(((Native.MSLLHOOKSTRUCT*)lParam)->pt);
                 var ptOnKiosk = InKiosk(pt);
                 if ((ptOnKiosk || _keepOffBounds.Length > 0) && Native.GetCursorPos(out var c))
                 {
@@ -180,19 +199,19 @@ internal static unsafe class TouchCursorGuard
             if (idObject != Native.OBJID_CURSOR) return;
             if (!Native.GetCursorPos(out var c)) return;
             var keepOff = OnKeepOffPanel(c);
-            if (!keepOff && !InKiosk(c)) return;
             var mouseOnPanel = _mouseOnKiosk && _strandedFrom is null;
-            if (mouseOnPanel && !keepOff) return;
+            if (!CursorGuardGeometry.MustLeave(InKiosk(c), keepOff, mouseOnPanel)) return;
 
             var origin = _strandedFrom ?? _lastMousePt;
-            var target = IsReturnTarget(origin, c) ? origin : PrimaryCenter();
-            if (IsReturnTarget(target, c))
+            if (CursorGuardGeometry.ReturnTarget((origin.x, origin.y), (c.x, c.y), MonitorRects(), InKiosk) is { } target)
             {
-                if (_strandedFrom is not null) Log.Info($"touch-cursor-guard returned the cursor to {target.x},{target.y}");
+                var reason = _strandedFrom is not null ? "display change" : keepOff ? "keep-off" : "touch";
+                if (target != (origin.x, origin.y)) reason += ", nearest monitor";
+                LogMove(c, target, reason);
                 _strandedFrom = null;
-                _lastMousePt = target;
+                _lastMousePt = new Native.POINT { x = target.X, y = target.Y };
                 _mouseOnKiosk = false;
-                Native.SetCursorPos(target.x, target.y);
+                Native.SetCursorPos(target.X, target.Y);
             }
             else if (!mouseOnPanel && _strandedFrom is null)
             {
