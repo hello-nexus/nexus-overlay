@@ -146,8 +146,8 @@ internal sealed class CursorGuardMachine
 
         var origin = _strandedFrom ?? _lastMousePt;
         var found = CursorGuardGeometry.ReturnTarget(origin, cursor, _world.Monitors, InKiosk);
-        // A display change can land before the guard hears of it; the layout is re-read only
-        // when the cached answer points at a monitor that is gone, or at none.
+        // A display change can land before the guard hears of it. The layout is re-read when the
+        // target's monitor is gone or its rect changed, or when there is no target; never while stranded.
         if (_strandedFrom is null && (found is not { } live || !TargetStillThere(live)))
         {
             _world.RefreshMonitors();
