@@ -19,14 +19,15 @@ namespace Nexus.Overlay;
 /// only when the largest child or the total crosses a 100 MB step, plus an
 /// hourly heartbeat. A steady-state host is near-silent.
 ///
-/// Counts only msedgewebview2.exe processes descended from this overlay: Windows
-/// runs WebView2 trees of its own, which a box-wide sum reported as ours.
+/// Counts only msedgewebview2.exe processes descended from this overlay, since
+/// Windows runs WebView2 trees of its own.
 /// </summary>
 internal sealed class WebView2MemorySampler : IDisposable
 {
     private const int SampleMs = 60_000;
     private const long HeartbeatMs = 60 * 60_000;
     private const int StepMb = 100;
+    private static readonly DateTime SelfStart = GetSelfStart();
 
     private readonly NexusApi _api;
     private readonly Timer _timer;
@@ -83,28 +84,39 @@ internal sealed class WebView2MemorySampler : IDisposable
     {
         long total = 0;
         int largest = 0, largestPid = 0, count = 0;
-        foreach (var pid in OwnWebViewPids())
+        var own = OwnDescendantPids();
+        foreach (var p in Process.GetProcessesByName("msedgewebview2"))
         {
             try
             {
-                using var p = Process.GetProcessById(pid);
+                // A child keeps its dead parent's id, which our tree can reuse.
+                if (!own.Contains(p.Id) || p.StartTime < SelfStart) continue;
                 var mb = (int)(p.WorkingSet64 / (1024 * 1024));
                 total += mb;
                 count++;
-                if (mb > largest) { largest = mb; largestPid = pid; }
+                if (mb > largest) { largest = mb; largestPid = p.Id; }
             }
             catch
             {
-                /* process exited between enumerate and read */
+                /* exited or access denied */
+            }
+            finally
+            {
+                p.Dispose();
             }
         }
         return ((int)total, largest, largestPid, count);
     }
 
-    private static unsafe List<int> OwnWebViewPids()
+    private static DateTime GetSelfStart()
+    {
+        using var self = Process.GetCurrentProcess();
+        return self.StartTime;
+    }
+
+    private static unsafe HashSet<int> OwnDescendantPids()
     {
         var procs = new List<(int Pid, int ParentPid)>();
-        var webViews = new HashSet<int>();
         var snap = Native.CreateToolhelp32Snapshot(Native.TH32CS_SNAPPROCESS, 0);
         if (snap == Native.INVALID_HANDLE_VALUE) return [];
         try
@@ -112,18 +124,12 @@ internal sealed class WebView2MemorySampler : IDisposable
             Native.PROCESSENTRY32W e = default;
             e.dwSize = (uint)sizeof(Native.PROCESSENTRY32W);
             for (var ok = Native.Process32FirstW(snap, &e); ok; ok = Native.Process32NextW(snap, &e))
-            {
                 procs.Add(((int)e.th32ProcessID, (int)e.th32ParentProcessID));
-                if (string.Equals(new string(e.szExeFile), "msedgewebview2.exe", StringComparison.OrdinalIgnoreCase))
-                    webViews.Add((int)e.th32ProcessID);
-            }
         }
         finally
         {
             Native.CloseHandle(snap);
         }
-        var own = ProcessTree.Descendants(Environment.ProcessId, procs);
-        own.IntersectWith(webViews);
-        return [.. own];
+        return ProcessTree.Descendants(Environment.ProcessId, procs);
     }
 }
