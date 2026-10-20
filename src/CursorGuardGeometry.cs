@@ -112,8 +112,7 @@ internal enum MouseEntryVerdict { None, Accepted, Rejected }
 /// gap between two kiosks has a hook point off every monitor; Windows then
 /// slides the cursor to the nearest point of the monitor beyond. The push arms
 /// the tracker. A cursor move onto a kiosk soon after, landing near the
-/// push point's closest spot on that kiosk and not against the push direction,
-/// is the mouse's own. A touch teleport lands at the tap, with no push before it.
+/// push point's closest spot on that kiosk, is the mouse's own. A touch teleport lands at the tap, with no push before it.
 /// Resting jitter never pushes, so it never arms. The armed state lives until
 /// it is judged or expires, so the hook and the cursor-move callback may run in
 /// either order.
@@ -121,10 +120,9 @@ internal enum MouseEntryVerdict { None, Accepted, Rejected }
 internal struct MouseEntryTracker
 {
     public const long WindowMs = 100;
-    // A fixed physical-pixel bound around the clamped push point. Windows lands
-    // the cursor on that point, so only rounding and the DPI mapping between
-    // monitors separate the two.
-    public const int SlideTolerancePx = 96;
+    // A fixed physical-pixel bound around the clamped push point. Windows maps the cursor
+    // across monitors of different DPI, which lands it past that point along the kiosk's edge.
+    public const int SlideTolerancePx = 160;
     private long _atMs;
     private bool _armed;
     private (int X, int Y) _raw;
@@ -174,9 +172,6 @@ internal struct MouseEntryTracker
         var near = CursorGuardGeometry.ClampInto(_raw, kiosks[kiosk]);
         long sx = cursorNow.X - near.X, sy = cursorNow.Y - near.Y;
         slidePx = (int)Math.Sqrt(sx * sx + sy * sy);
-        long px = _raw.X - _from.X, py = _raw.Y - _from.Y;
-        long lx = cursorNow.X - _from.X, ly = cursorNow.Y - _from.Y;
-        var withPush = px * lx + py * ly >= 0;
-        return withPush && slidePx <= SlideTolerancePx ? MouseEntryVerdict.Accepted : MouseEntryVerdict.Rejected;
+        return slidePx <= SlideTolerancePx ? MouseEntryVerdict.Accepted : MouseEntryVerdict.Rejected;
     }
 }

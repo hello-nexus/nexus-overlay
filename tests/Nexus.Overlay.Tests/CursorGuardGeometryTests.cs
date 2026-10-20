@@ -270,11 +270,14 @@ public class CursorGuardGeometryTests
     }
 
     [Fact]
-    public void MouseEntry_LandingAgainstThePushDirection_IsRejected()
+    public void MouseEntry_SlideLandingPastTheClampedPointFromDpiMapping_IsAccepted()
     {
+        // Measured on a kiosk of higher DPI than the primary: a push up into the gap lands well below the kiosk's top edge.
         var tracker = new MouseEntryTracker();
-        tracker.Arm((1915, 2000), (1925, 2000), 1000);
-        Assert.Equal(MouseEntryVerdict.Rejected, Judge(ref tracker, (1930, 2000), 1010));
+        tracker.Arm((1921, -2), (1914, 0), 1000);
+        var verdict = tracker.Judge((1926, 107), YRightKiosks, 1008, out var slide);
+        Assert.Equal(MouseEntryVerdict.Accepted, verdict);
+        Assert.Equal(85, slide);
     }
 
     [Theory]

@@ -117,7 +117,7 @@ public class CursorGuardMachineTests
 
     [Theory]
     [InlineData(2300, 1500)]
-    [InlineData(1925, 60)]
+    [InlineData(1925, 200)]
     public void TouchTeleportDuringAPushAtTheEdge_IsStillReturned(int x, int y)
     {
         var m = new CursorGuardMachine(SingleKiosk());
@@ -128,6 +128,16 @@ public class CursorGuardMachineTests
         Assert.Equal((1900, 0), result.Target);
         Assert.Equal("gap entry rejected, treated as touch", result.Reason);
         Assert.False(m.MouseOnKiosk);
+    }
+
+    [Fact]
+    public void SteepEntryThroughTheGapLandingPastTheEdgeFromDpiMapping_IsTheMouses()
+    {
+        var m = new CursorGuardMachine(SingleKiosk());
+        m.Start((1914, 0));
+        Hook(m, (1921, -2), (1914, 0), 1000);
+        Assert.Equal(GuardEventKind.EntryAccepted, m.CursorMoved((1926, 107), 1006).Kind);
+        Assert.True(m.MouseOnKiosk);
     }
 
     [Fact]
