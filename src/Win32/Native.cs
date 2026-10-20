@@ -621,6 +621,35 @@ internal static unsafe class Native
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool CloseHandle(IntPtr hObject);
 
+    // ====================== Process snapshot =====================
+
+    public const uint TH32CS_SNAPPROCESS = 0x00000002;
+    public static readonly IntPtr INVALID_HANDLE_VALUE = new(-1);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROCESSENTRY32W
+    {
+        public uint dwSize;
+        public uint cntUsage;
+        public uint th32ProcessID;
+        public nuint th32DefaultHeapID;
+        public uint th32ModuleID;
+        public uint cntThreads;
+        public uint th32ParentProcessID;
+        public int pcPriClassBase;
+        public uint dwFlags;
+        public fixed char szExeFile[260];
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr CreateToolhelp32Snapshot(uint dwFlags, uint th32ProcessID);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool Process32FirstW(IntPtr hSnapshot, PROCESSENTRY32W* lppe);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool Process32NextW(IntPtr hSnapshot, PROCESSENTRY32W* lppe);
+
     // ====================== Low-level mouse hook =====================
 
     public const int WH_MOUSE_LL = 14;

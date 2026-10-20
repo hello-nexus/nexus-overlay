@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
+using Nexus.Overlay.Win32;
 
 namespace Nexus.Overlay;
 
@@ -17,9 +19,8 @@ namespace Nexus.Overlay;
 /// only when the largest child or the total crosses a 100 MB step, plus an
 /// hourly heartbeat. A steady-state host is near-silent.
 ///
-/// `total` sums every msedgewebview2.exe on the box, which can include another
-/// WebView2 app; `largest` (the heaviest single child) is the renderer we care
-/// about and is unaffected by that.
+/// Counts only msedgewebview2.exe processes descended from this overlay: Windows
+/// runs WebView2 trees of its own, which a box-wide sum reported as ours.
 /// </summary>
 internal sealed class WebView2MemorySampler : IDisposable
 {
@@ -82,25 +83,47 @@ internal sealed class WebView2MemorySampler : IDisposable
     {
         long total = 0;
         int largest = 0, largestPid = 0, count = 0;
-        var procs = Process.GetProcessesByName("msedgewebview2");
-        foreach (var p in procs)
+        foreach (var pid in OwnWebViewPids())
         {
             try
             {
+                using var p = Process.GetProcessById(pid);
                 var mb = (int)(p.WorkingSet64 / (1024 * 1024));
                 total += mb;
                 count++;
-                if (mb > largest) { largest = mb; largestPid = p.Id; }
+                if (mb > largest) { largest = mb; largestPid = pid; }
             }
             catch
             {
                 /* process exited between enumerate and read */
             }
-            finally
-            {
-                p.Dispose();
-            }
         }
         return ((int)total, largest, largestPid, count);
+    }
+
+    private static unsafe List<int> OwnWebViewPids()
+    {
+        var procs = new List<(int Pid, int ParentPid)>();
+        var webViews = new HashSet<int>();
+        var snap = Native.CreateToolhelp32Snapshot(Native.TH32CS_SNAPPROCESS, 0);
+        if (snap == Native.INVALID_HANDLE_VALUE) return [];
+        try
+        {
+            Native.PROCESSENTRY32W e = default;
+            e.dwSize = (uint)sizeof(Native.PROCESSENTRY32W);
+            for (var ok = Native.Process32FirstW(snap, &e); ok; ok = Native.Process32NextW(snap, &e))
+            {
+                procs.Add(((int)e.th32ProcessID, (int)e.th32ParentProcessID));
+                if (string.Equals(new string(e.szExeFile), "msedgewebview2.exe", StringComparison.OrdinalIgnoreCase))
+                    webViews.Add((int)e.th32ProcessID);
+            }
+        }
+        finally
+        {
+            Native.CloseHandle(snap);
+        }
+        var own = ProcessTree.Descendants(Environment.ProcessId, procs);
+        own.IntersectWith(webViews);
+        return [.. own];
     }
 }
