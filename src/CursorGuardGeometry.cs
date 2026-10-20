@@ -6,6 +6,9 @@ namespace Nexus.Overlay;
 /// <summary>Geometry for <see cref="TouchCursorGuard"/>, Win32-free for tests. Rects are monitor bounds, Right and Bottom exclusive.</summary>
 internal static class CursorGuardGeometry
 {
+    /// <summary>Signature Windows puts in the extra info of mouse input promoted from touch or pen.</summary>
+    public static bool IsTouchOrPen(nuint extraInfo) => (extraInfo & 0xFFFFFF00u) == 0xFF515700u;
+
     /// <summary>True when the cursor is on a kept-off panel, or on a kiosk the mouse did not move it onto.</summary>
     public static bool MustLeave(bool onKiosk, bool onKeepOff, bool mouseOnPanel) =>
         onKeepOff || (onKiosk && !mouseOnPanel);
@@ -57,7 +60,7 @@ internal static class CursorGuardGeometry
         return best;
     }
 
-    private static int IndexContaining((int X, int Y) p, IReadOnlyList<(int Left, int Top, int Right, int Bottom)> monitors)
+    public static int IndexContaining((int X, int Y) p, IReadOnlyList<(int Left, int Top, int Right, int Bottom)> monitors)
     {
         for (var i = 0; i < monitors.Count; i++)
         {
@@ -80,6 +83,12 @@ internal static class CursorGuardGeometry
         return best;
     }
 
+    public static bool OnAnyMonitor((int X, int Y) p, IReadOnlyList<(int Left, int Top, int Right, int Bottom)> monitors) =>
+        IndexContaining(p, monitors) >= 0;
+
+    public static (int X, int Y) ClampInto((int X, int Y) p, (int Left, int Top, int Right, int Bottom) r) =>
+        (Math.Clamp(p.X, r.Left, Math.Max(r.Left, r.Right - 1)), Math.Clamp(p.Y, r.Top, Math.Max(r.Top, r.Bottom - 1)));
+
     private static bool TryClampInto((int X, int Y) p, (int Left, int Top, int Right, int Bottom) r, out (int X, int Y) q)
     {
         q = default;
@@ -92,5 +101,64 @@ internal static class CursorGuardGeometry
     {
         long dx = a.X - b.X, dy = a.Y - b.Y;
         return dx * dx + dy * dy;
+    }
+}
+
+internal enum MouseEntryVerdict { None, Accepted, Rejected }
+
+/// <summary>
+/// Tells a mouse that Windows slid onto a kiosk from a touch teleport. A mouse
+/// pushing past an edge, through the dead zone beside a kiosk, or across the
+/// gap between two kiosks has a hook point off every monitor; Windows then
+/// slides the cursor to the nearest point of the monitor beyond. The push arms
+/// the tracker. A cursor move onto a kiosk soon after, landing near the
+/// push point's closest spot on that kiosk and not against the push direction,
+/// is the mouse's own. A touch teleport lands at the tap, with no push before it.
+/// Resting jitter never pushes, so it never arms. The armed state lives until
+/// it is judged or expires, so the hook and the cursor-move callback may run in
+/// either order.
+/// </summary>
+internal struct MouseEntryTracker
+{
+    public const long WindowMs = 100;
+    public const int SlideTolerancePx = 96;
+    private long _atMs;
+    private bool _armed;
+    private (int X, int Y) _raw;
+    private (int X, int Y) _from;
+
+    public readonly bool Armed => _armed;
+
+    public void Arm((int X, int Y) rawPush, (int X, int Y) cursorBefore, long nowMs)
+    {
+        _armed = true;
+        _raw = rawPush;
+        _from = cursorBefore;
+        _atMs = nowMs;
+    }
+
+    public void Disarm() => _armed = false;
+
+    /// <summary>
+    /// Judges a cursor move that left the cursor at <paramref name="cursorNow"/>.
+    /// None when nothing armed it, it expired, or the cursor is on no kiosk;
+    /// Accepted consumes the push; Rejected consumes it too.
+    /// </summary>
+    public MouseEntryVerdict Judge((int X, int Y) cursorNow,
+        IReadOnlyList<(int Left, int Top, int Right, int Bottom)> kiosks, long nowMs, out int slidePx)
+    {
+        slidePx = 0;
+        if (!_armed) return MouseEntryVerdict.None;
+        if (nowMs - _atMs > WindowMs) { _armed = false; return MouseEntryVerdict.None; }
+        var kiosk = CursorGuardGeometry.IndexContaining(cursorNow, kiosks);
+        if (kiosk < 0) return MouseEntryVerdict.None;
+        _armed = false;
+        var near = CursorGuardGeometry.ClampInto(_raw, kiosks[kiosk]);
+        long sx = cursorNow.X - near.X, sy = cursorNow.Y - near.Y;
+        slidePx = (int)Math.Sqrt(sx * sx + sy * sy);
+        long px = _raw.X - _from.X, py = _raw.Y - _from.Y;
+        long lx = cursorNow.X - _from.X, ly = cursorNow.Y - _from.Y;
+        var withPush = px * lx + py * ly >= 0;
+        return withPush && slidePx <= SlideTolerancePx ? MouseEntryVerdict.Accepted : MouseEntryVerdict.Rejected;
     }
 }

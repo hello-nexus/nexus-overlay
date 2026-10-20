@@ -69,6 +69,9 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     // this array instead of enumerating _instances.
     private static Native.RECT[] _kioskRects = Array.Empty<Native.RECT>();
     private static int _nextInstanceId;
+
+    /// <summary>Snapshot of every open kiosk's monitor rect.</summary>
+    internal static Native.RECT[] KioskRects => _kioskRects;
     private readonly int _instanceId;
     private readonly bool _seeThrough;
     private readonly bool _compatibilityRendering;

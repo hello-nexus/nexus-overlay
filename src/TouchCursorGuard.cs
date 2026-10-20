@@ -26,7 +26,13 @@ namespace Nexus.Overlay;
 ///
 /// A mouse event that arrives while a touch has the cursor on the panel
 /// reports a point offset from the touch, not from the mouse, so it does not
-/// move <see cref="_lastMousePt"/>. When a display change leaves no other
+/// move <see cref="_lastMousePt"/>. Mouse input promoted from touch or pen
+/// carries a signature in its extra info; the entry check below ignores it.
+///
+/// A mouse pushing past an edge, through the dead zone beside a kiosk or across
+/// the gap between two kiosks is a case the hook point cannot explain: Windows
+/// slides the cursor onto the kiosk beyond. A <see cref="MouseEntryTracker"/>
+/// armed by such a push marks the slide as the mouse's own. When a display change leaves no other
 /// monitor to return to (the others went to sleep), the guard remembers where
 /// the mouse was and returns the cursor there once a monitor comes back.
 /// <see cref="KeepOffBounds"/> (each panel's "keep the mouse off" setting)
@@ -47,6 +53,7 @@ internal static unsafe class TouchCursorGuard
     private static bool _mouseOnKiosk;
     private static Native.POINT? _strandedFrom;
     private static Native.RECT[] _keepOffBounds = Array.Empty<Native.RECT>();
+    private static MouseEntryTracker _mouseEntry;
     // A push held against an edge can move the cursor once per mouse event.
     private const long MoveLogIntervalMs = 2000;
     private static long _nextMoveLogAt;
@@ -181,9 +188,40 @@ internal static unsafe class TouchCursorGuard
 
     private static void FlushMoveLog()
     {
-        if (_unloggedMoves == 0) return;
-        Log.Info($"touch-cursor-guard moved the cursor {_unloggedMoves} more times since the last line");
-        _unloggedMoves = 0;
+        if (_unloggedMoves > 0)
+        {
+            Log.Info($"touch-cursor-guard moved the cursor {_unloggedMoves} more times since the last line");
+            _unloggedMoves = 0;
+        }
+        FlushEntryLog();
+    }
+
+    private static (int Left, int Top, int Right, int Bottom)[] KioskRectTuples()
+    {
+        var kiosks = PanelKioskWindow.KioskRects;
+        var rects = new (int Left, int Top, int Right, int Bottom)[kiosks.Length];
+        for (var i = 0; i < rects.Length; i++) rects[i] = (kiosks[i].Left, kiosks[i].Top, kiosks[i].Right, kiosks[i].Bottom);
+        return rects;
+    }
+
+    private static long _nextEntryLogAt;
+    private static int _entries;
+    private static int _entryMaxSlidePx;
+
+    private static void LogEntry(int slidePx)
+    {
+        _entries++;
+        _entryMaxSlidePx = Math.Max(_entryMaxSlidePx, slidePx);
+        if (Environment.TickCount64 >= _nextEntryLogAt) FlushEntryLog();
+    }
+
+    private static void FlushEntryLog()
+    {
+        if (_entries == 0) return;
+        Log.Info($"touch-cursor-guard let the mouse slide onto a kiosk {_entries} time(s), largest slide {_entryMaxSlidePx} px");
+        _entries = 0;
+        _entryMaxSlidePx = 0;
+        _nextEntryLogAt = Environment.TickCount64 + MoveLogIntervalMs;
     }
 
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
@@ -193,8 +231,24 @@ internal static unsafe class TouchCursorGuard
         {
             if (nCode == Native.HC_ACTION && lParam != IntPtr.Zero)
             {
-                var pt = OnDesktop(((Native.MSLLHOOKSTRUCT*)lParam)->pt);
+                var hook = (Native.MSLLHOOKSTRUCT*)lParam;
+                var raw = hook->pt;
+                var pt = OnDesktop(raw);
                 var ptOnKiosk = InKiosk(pt);
+                if (wParam == Native.WM_MOUSEMOVE && !CursorGuardGeometry.IsTouchOrPen(hook->dwExtraInfo))
+                {
+                    if (!CursorGuardGeometry.OnAnyMonitor((raw.x, raw.y), _monitorRects))
+                    {
+                        if (Native.GetCursorPos(out var before))
+                            _mouseEntry.Arm((raw.x, raw.y), (before.x, before.y), Environment.TickCount64);
+                    }
+                    else if (ptOnKiosk)
+                    {
+                        // The hook saw the mouse land on the kiosk itself, so the
+                        // cursor-move callback has nothing left to judge.
+                        _mouseEntry.Disarm();
+                    }
+                }
                 if ((ptOnKiosk || _keepOffBounds.Length > 0) && Native.GetCursorPos(out var c))
                 {
                     if (wParam == Native.WM_MOUSEMOVE && OnKeepOffPanel(pt) && !OnKeepOffPanel(c))
@@ -221,13 +275,26 @@ internal static unsafe class TouchCursorGuard
             if (idObject != Native.OBJID_CURSOR) return;
             if (!Native.GetCursorPos(out var c)) return;
             var keepOff = OnKeepOffPanel(c);
+            var entry = MouseEntryVerdict.None;
+            var slidePx = 0;
+            if (!keepOff && _mouseEntry.Armed && InKiosk(c))
+                entry = _mouseEntry.Judge((c.x, c.y), KioskRectTuples(), Environment.TickCount64, out slidePx);
+            if (entry == MouseEntryVerdict.Accepted)
+            {
+                _strandedFrom = null;
+                _lastMousePt = c;
+                _mouseOnKiosk = true;
+                LogEntry(slidePx);
+                return;
+            }
             var mouseOnPanel = _mouseOnKiosk && _strandedFrom is null;
             if (!CursorGuardGeometry.MustLeave(InKiosk(c), keepOff, mouseOnPanel)) return;
 
             var origin = _strandedFrom ?? _lastMousePt;
-            if (CursorGuardGeometry.ReturnTarget((origin.x, origin.y), (c.x, c.y), RefreshMonitorRects(), InKiosk) is { } target)
+            if (CursorGuardGeometry.ReturnTarget((origin.x, origin.y), (c.x, c.y), _monitorRects, InKiosk) is { } target)
             {
-                var reason = _strandedFrom is not null ? "display change" : keepOff ? "keep-off" : "touch";
+                var reason = _strandedFrom is not null ? "display change" : keepOff ? "keep-off"
+                    : entry == MouseEntryVerdict.Rejected ? "gap entry rejected, treated as touch" : "touch";
                 if (target != (origin.x, origin.y)) reason += ", nearest monitor";
                 LogMove(c, target, reason);
                 _strandedFrom = null;

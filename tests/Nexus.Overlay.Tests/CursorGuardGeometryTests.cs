@@ -134,4 +134,131 @@ public class CursorGuardGeometryTests
         Assert.True(OnY70(recorded));
         Assert.False(CursorGuardGeometry.MustLeave(onKiosk: true, onKeepOff: false, mouseOnPanel: OnY70(recorded)));
     }
+
+    [Theory]
+    [InlineData(0xFF515700u, true)]
+    [InlineData(0xFF5157FFu, true)]
+    [InlineData(0u, false)]
+    [InlineData(0xFF515600u, false)]
+    public void IsTouchOrPen_MatchesTheTouchSignature(uint extraInfo, bool expected) =>
+        Assert.Equal(expected, CursorGuardGeometry.IsTouchOrPen(extraInfo));
+
+    // The lab Y70: a portrait kiosk right of the primary, 22 px lower, so the
+    // two share the primary's whole right edge (primary is 0,0,1920,1200) and a 22 px gap sits above the kiosk.
+    private static readonly (int Left, int Top, int Right, int Bottom) YRight = (1920, 22, 3020, 3862);
+    private static readonly (int Left, int Top, int Right, int Bottom)[] YRightKiosks = { YRight };
+
+    private static MouseEntryVerdict Judge(ref MouseEntryTracker tracker, (int X, int Y) now, long atMs,
+        (int Left, int Top, int Right, int Bottom)[]? kiosks = null) =>
+        tracker.Judge(now, kiosks ?? YRightKiosks, atMs, out _);
+
+    [Fact]
+    public void MouseEntry_NothingArmed_IsNone()
+    {
+        var tracker = new MouseEntryTracker();
+        Assert.Equal(MouseEntryVerdict.None, Judge(ref tracker, (1923, 22), 50));
+    }
+
+    [Fact]
+    public void MouseEntry_PushIntoTheGapAboveTheKiosk_SlideOntoItIsAccepted()
+    {
+        var tracker = new MouseEntryTracker();
+        tracker.Arm((1925, 10), (1914, 10), 1000);
+        var verdict = tracker.Judge((1923, 22), YRightKiosks, 1010, out var slide);
+        Assert.Equal(MouseEntryVerdict.Accepted, verdict);
+        Assert.Equal(2, slide);
+    }
+
+    [Fact]
+    public void MouseEntry_JudgedOnce_SecondCallSeesNothing()
+    {
+        var tracker = new MouseEntryTracker();
+        tracker.Arm((1925, 10), (1914, 10), 1000);
+        Assert.Equal(MouseEntryVerdict.Accepted, Judge(ref tracker, (1923, 22), 1010));
+        Assert.Equal(MouseEntryVerdict.None, Judge(ref tracker, (1923, 22), 1011));
+    }
+
+    [Fact]
+    public void MouseEntry_ArmedStateSurvivesUntilJudged_RegardlessOfOrdering()
+    {
+        // A later hook that is not a push neither disarms nor re-arms: the
+        // callback may judge at any time inside the window.
+        var tracker = new MouseEntryTracker();
+        tracker.Arm((1925, 10), (1914, 10), 1000);
+        Assert.True(tracker.Armed);
+        Assert.Equal(MouseEntryVerdict.Accepted, Judge(ref tracker, (1923, 22), 1000 + MouseEntryTracker.WindowMs));
+    }
+
+    [Fact]
+    public void MouseEntry_HookThatSawTheLandingDisarms_CallbackThenSeesNothing()
+    {
+        var tracker = new MouseEntryTracker();
+        tracker.Arm((1925, 10), (1914, 10), 1000);
+        tracker.Disarm();
+        Assert.Equal(MouseEntryVerdict.None, Judge(ref tracker, (1923, 22), 1010));
+    }
+
+    [Fact]
+    public void MouseEntry_Expired_IsNoneAndDisarms()
+    {
+        var tracker = new MouseEntryTracker();
+        tracker.Arm((1925, 10), (1914, 10), 1000);
+        Assert.Equal(MouseEntryVerdict.None, Judge(ref tracker, (1923, 22), 1000 + MouseEntryTracker.WindowMs + 1));
+        Assert.False(tracker.Armed);
+    }
+
+    [Fact]
+    public void MouseEntry_CursorOnNoKiosk_IsNoneAndStaysArmed()
+    {
+        var tracker = new MouseEntryTracker();
+        tracker.Arm((1925, 10), (1914, 10), 1000);
+        Assert.Equal(MouseEntryVerdict.None, Judge(ref tracker, (1500, 300), 1010));
+        Assert.True(tracker.Armed);
+    }
+
+    [Fact]
+    public void MouseEntry_TouchTapFarFromTheEdgePushing_IsRejected()
+    {
+        // The mouse pushes at the gap while a finger taps the middle of the kiosk.
+        var tracker = new MouseEntryTracker();
+        tracker.Arm((1925, 10), (1914, 10), 1000);
+        Assert.Equal(MouseEntryVerdict.Rejected, Judge(ref tracker, (2400, 1800), 1010));
+    }
+
+    [Fact]
+    public void MouseEntry_TouchNearTheEdgeWithoutAPush_IsNotAnEntry()
+    {
+        // A parked or jittering mouse never arms the tracker, so a tap beside it stays a teleport.
+        var tracker = new MouseEntryTracker();
+        Assert.Equal(MouseEntryVerdict.None, Judge(ref tracker, (1930, 300), 1010));
+    }
+
+    [Fact]
+    public void MouseEntry_LandingAgainstThePushDirection_IsRejected()
+    {
+        var tracker = new MouseEntryTracker();
+        tracker.Arm((1915, 2000), (1925, 2000), 1000);
+        Assert.Equal(MouseEntryVerdict.Rejected, Judge(ref tracker, (1930, 2000), 1010));
+    }
+
+    [Theory]
+    [InlineData(MouseEntryTracker.SlideTolerancePx, true)]
+    [InlineData(MouseEntryTracker.SlideTolerancePx + 1, false)]
+    public void MouseEntry_SlideAtTheToleranceBoundary(int slide, bool accepted)
+    {
+        var tracker = new MouseEntryTracker();
+        tracker.Arm((1925, 10), (1925, 0), 1000);
+        Assert.Equal(accepted ? MouseEntryVerdict.Accepted : MouseEntryVerdict.Rejected,
+            Judge(ref tracker, (1925, 22 + slide), 1010));
+    }
+
+    [Fact]
+    public void MouseEntry_CrossingTheGapBetweenTwoKiosks_IsAccepted()
+    {
+        var q60 = (Left: 2000, Top: 0, Right: 2720, Bottom: 1280);
+        var y70 = (Left: 2900, Top: 0, Right: 3600, Bottom: 3840);
+        var tracker = new MouseEntryTracker();
+        tracker.Arm((2800, 500), (2719, 500), 1000);
+        Assert.Equal(MouseEntryVerdict.Accepted, Judge(ref tracker, (2900, 500), 1010, new[] { q60, y70 }));
+    }
 }
