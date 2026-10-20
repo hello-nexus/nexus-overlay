@@ -132,6 +132,13 @@ internal struct MouseEntryTracker
 
     public readonly bool Armed => _armed;
 
+    /// <summary>Arms unless an earlier push is still waiting for its slide; that one keeps its window.</summary>
+    public void TryArm((int X, int Y) rawPush, (int X, int Y) cursorBefore, long nowMs)
+    {
+        if (_armed && nowMs - _atMs <= WindowMs) return;
+        Arm(rawPush, cursorBefore, nowMs);
+    }
+
     public void Arm((int X, int Y) rawPush, (int X, int Y) cursorBefore, long nowMs)
     {
         _armed = true;

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Nexus.Overlay.Win32;
@@ -17,7 +18,7 @@ namespace Nexus.Overlay;
 ///
 /// Two hooks, both event-driven:
 ///   * WH_MOUSE_LL records the physical mouse position. Touch generates no
-///     mouse events, so <see cref="_lastMousePt"/> only ever reflects the real
+///     mouse events, so <see cref="CursorGuardMachine.LastMousePt"/> only ever reflects the real
 ///     mouse - the signal that tells a genuine mouse move onto the panel from a
 ///     touch teleport.
 ///   * EVENT_OBJECT_LOCATIONCHANGE on the cursor fires when the cursor moves
@@ -26,7 +27,7 @@ namespace Nexus.Overlay;
 ///
 /// A mouse event that arrives while a touch has the cursor on the panel
 /// reports a point offset from the touch, not from the mouse, so it does not
-/// move <see cref="_lastMousePt"/>. Mouse input promoted from touch or pen
+/// move <see cref="CursorGuardMachine.LastMousePt"/>. Mouse input promoted from touch or pen
 /// carries a signature in its extra info; the entry check below ignores it.
 ///
 /// A mouse pushing past an edge, through the dead zone beside a kiosk or across
@@ -34,27 +35,34 @@ namespace Nexus.Overlay;
 /// slides the cursor onto the kiosk beyond. A <see cref="MouseEntryTracker"/>
 /// armed by such a push marks the slide as the mouse's own.
 ///
-/// When a display change leaves no other monitor to return to (the others went to sleep), the guard remembers where
-/// the mouse was and returns the cursor there once a monitor comes back.
+/// When a display change leaves no other monitor to return to (the others went to
+/// sleep), the guard remembers where the mouse was and returns the cursor there once a monitor comes back.
 /// <see cref="KeepOffBounds"/> (each panel's "keep the mouse off" setting)
 /// also stops the mouse itself from entering those panels.
 ///
-/// The hooks are global, so they live only while a kiosk is open (Acquire /
-/// Release ref-count). Every entry point and both callbacks run on the overlay
-/// message-loop thread.
+/// The decisions live in <see cref="CursorGuardMachine"/>; the callbacks here only
+/// feed it and carry out what it returns. The hooks are global, so they live only
+/// while a kiosk is open (Acquire / Release ref-count). Every entry point and both
+/// callbacks run on the overlay message-loop thread.
 /// </summary>
 internal static unsafe class TouchCursorGuard
 {
+    private sealed class World : ICursorGuardWorld
+    {
+        public IReadOnlyList<(int Left, int Top, int Right, int Bottom)> Monitors => _monitorRects;
+
+        public IReadOnlyList<(int Left, int Top, int Right, int Bottom)> Kiosks => KioskRectTuples();
+
+        public bool HasKeepOff => _keepOffBounds.Length > 0;
+
+        public bool OnKeepOffPanel((int X, int Y) p) => TouchCursorGuard.OnKeepOffPanel(new Native.POINT { x = p.X, y = p.Y });
+    }
+
     private static IntPtr _mouseHook;
     private static IntPtr _winEventHook;
     private static int _refCount;
-    private static Native.POINT _lastMousePt;
-    // Whether _lastMousePt was on a kiosk when recorded. Kept as a flag because
-    // a display change moves the kiosk bounds the point would be tested against.
-    private static bool _mouseOnKiosk;
-    private static Native.POINT? _strandedFrom;
+    private static readonly CursorGuardMachine Machine = new(new World());
     private static Native.RECT[] _keepOffBounds = Array.Empty<Native.RECT>();
-    private static MouseEntryTracker _mouseEntry;
     // A push held against an edge can move the cursor once per mouse event.
     private const long MoveLogIntervalMs = 2000;
     private static long _nextMoveLogAt;
@@ -80,17 +88,12 @@ internal static unsafe class TouchCursorGuard
     {
         if (++_refCount != 1)
         {
-            // A kiosk opened under a held guard: a mouse still resting at its
-            // recorded point may now be on it. A cursor anywhere else was moved
-            // by something other than the mouse, so the flag stays.
-            if (!_mouseOnKiosk && Native.GetCursorPos(out var c) && c.x == _lastMousePt.x && c.y == _lastMousePt.y)
-                _mouseOnKiosk = InKiosk(c);
+            if (Native.GetCursorPos(out var held)) Machine.KioskOpened((held.x, held.y));
             return;
         }
         RefreshMonitorRects();
-        Native.GetCursorPos(out _lastMousePt);
-        _mouseOnKiosk = InKiosk(_lastMousePt);
-        _strandedFrom = null;
+        Native.GetCursorPos(out var c);
+        Machine.Start((c.x, c.y));
         _mouseHook = Native.SetWindowsHookExW(Native.WH_MOUSE_LL, &MouseProc,
             Native.GetModuleHandleW(null), 0);
         _winEventHook = Native.SetWinEventHook(
@@ -128,11 +131,7 @@ internal static unsafe class TouchCursorGuard
         return true;
     }
 
-    private static bool InKiosk(Native.POINT p) => PanelKioskWindow.PointInAnyKiosk(p.x, p.y);
-
-    private static bool InKiosk((int X, int Y) p) => PanelKioskWindow.PointInAnyKiosk(p.X, p.Y);
-
-    private static (int Left, int Top, int Right, int Bottom)[] RefreshMonitorRects()
+    private static void RefreshMonitorRects()
     {
         var monitors = Monitors.Enumerate();
         var rects = new (int Left, int Top, int Right, int Bottom)[monitors.Count];
@@ -141,19 +140,7 @@ internal static unsafe class TouchCursorGuard
             var b = monitors[i].Bounds;
             rects[i] = (b.Left, b.Top, b.Right, b.Bottom);
         }
-        return _monitorRects = rects;
-    }
-
-    /// <summary>
-    /// The hook point lies off every monitor when the mouse pushes past an
-    /// outer or offset edge. Inside the hook, GetCursorPos is the pre-move position.
-    /// </summary>
-    private static Native.POINT OnDesktop(Native.POINT p)
-    {
-        if (Native.MonitorFromPoint(p, Native.MONITOR_DEFAULTTONULL) != IntPtr.Zero
-            || !Native.GetCursorPos(out var c)) return p;
-        var q = CursorGuardGeometry.ClampToCursorMonitor((p.x, p.y), (c.x, c.y), _monitorRects);
-        return new Native.POINT { x = q.X, y = q.Y };
+        _monitorRects = rects;
     }
 
     /// <summary>
@@ -174,17 +161,14 @@ internal static unsafe class TouchCursorGuard
         return false;
     }
 
-    private static bool IsReturnTarget(Native.POINT p, Native.POINT cursor) =>
-        CursorGuardGeometry.IsReturnTarget((p.x, p.y), (cursor.x, cursor.y), _monitorRects, InKiosk);
-
-    private static void LogMove(Native.POINT from, (int X, int Y) to, string reason)
+    private static void LogMove((int X, int Y) from, (int X, int Y) to, string reason)
     {
         var now = Environment.TickCount64;
         if (now < _nextMoveLogAt) { _unloggedMoves++; return; }
         _nextMoveLogAt = now + MoveLogIntervalMs;
         var unlogged = _unloggedMoves > 0 ? $", {_unloggedMoves} more since the last line" : "";
         _unloggedMoves = 0;
-        Log.Info($"touch-cursor-guard moved the cursor {from.x},{from.y} -> {to.X},{to.Y} ({reason}{unlogged})");
+        Log.Info($"touch-cursor-guard moved the cursor {from.X},{from.Y} -> {to.X},{to.Y} ({reason}{unlogged})");
     }
 
     private static void FlushMoveLog()
@@ -197,24 +181,19 @@ internal static unsafe class TouchCursorGuard
         FlushEntryLog();
     }
 
+    // PanelKioskWindow swaps in a new array whenever a kiosk opens or closes, so the
+    // converted copy is rebuilt only then, not on every mouse event.
+    private static Native.RECT[]? _kioskSource;
+    private static (int Left, int Top, int Right, int Bottom)[] _kioskTuples = Array.Empty<(int, int, int, int)>();
+
     private static (int Left, int Top, int Right, int Bottom)[] KioskRectTuples()
     {
         var kiosks = PanelKioskWindow.KioskRects;
+        if (ReferenceEquals(kiosks, _kioskSource)) return _kioskTuples;
         var rects = new (int Left, int Top, int Right, int Bottom)[kiosks.Length];
         for (var i = 0; i < rects.Length; i++) rects[i] = (kiosks[i].Left, kiosks[i].Top, kiosks[i].Right, kiosks[i].Bottom);
-        return rects;
-    }
-
-    // When the mouse hook rejected an entry, the tracker is already consumed by the
-    // time the cursor-move callback snaps the cursor back, so the reason is kept here.
-    private static long _hookRejectedAtMs = long.MinValue / 2;
-
-    private static void AcceptMouseEntry(Native.POINT c, int slidePx)
-    {
-        _strandedFrom = null;
-        _lastMousePt = c;
-        _mouseOnKiosk = true;
-        LogEntry(slidePx);
+        _kioskSource = kiosks;
+        return _kioskTuples = rects;
     }
 
     private static long _nextEntryLogAt;
@@ -242,42 +221,14 @@ internal static unsafe class TouchCursorGuard
     {
         try
         {
-            if (nCode == Native.HC_ACTION && lParam != IntPtr.Zero)
+            if (nCode == Native.HC_ACTION && lParam != IntPtr.Zero && Native.GetCursorPos(out var c))
             {
                 var hook = (Native.MSLLHOOKSTRUCT*)lParam;
-                var raw = hook->pt;
-                var pt = OnDesktop(raw);
-                var ptOnKiosk = InKiosk(pt);
-                var isMouseMove = wParam == Native.WM_MOUSEMOVE && !CursorGuardGeometry.IsTouchOrPen(hook->dwExtraInfo);
-                if (isMouseMove && !CursorGuardGeometry.OnAnyMonitor((raw.x, raw.y), _monitorRects)
-                    && Native.GetCursorPos(out var before))
-                {
-                    _mouseEntry.Arm((raw.x, raw.y), (before.x, before.y), Environment.TickCount64);
-                }
-                if ((ptOnKiosk || _keepOffBounds.Length > 0) && Native.GetCursorPos(out var c))
-                {
-                    if (wParam == Native.WM_MOUSEMOVE && OnKeepOffPanel(pt) && !OnKeepOffPanel(c))
-                        return 1; // the panel is a wall; the cursor stays where it is
-                    // The slide's cursor move may still be queued behind this event; judging
-                    // here keeps the entry from being undone whichever of the two runs first.
-                    var entry = MouseEntryVerdict.None;
-                    var slidePx = 0;
-                    if (isMouseMove && ptOnKiosk && _mouseEntry.Armed && !OnKeepOffPanel(c))
-                    {
-                        entry = MouseEntryTracker.JudgeAtHook(ref _mouseEntry, ptOnKiosk, InKiosk(c), (c.x, c.y),
-                            KioskRectTuples(), Environment.TickCount64, out slidePx);
-                    }
-                    if (entry == MouseEntryVerdict.Accepted) AcceptMouseEntry(c, slidePx);
-                    else if (entry == MouseEntryVerdict.Rejected) _hookRejectedAtMs = Environment.TickCount64;
-                    if (entry != MouseEntryVerdict.Accepted && ptOnKiosk && InKiosk(c) && !_mouseOnKiosk
-                        && _strandedFrom is null && IsReturnTarget(_lastMousePt, c))
-                    {
-                        return Native.CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam);
-                    }
-                }
-                _lastMousePt = pt;
-                _mouseOnKiosk = ptOnKiosk;
-                if (!ptOnKiosk) _strandedFrom = null;
+                var isMouseMessage = wParam == Native.WM_MOUSEMOVE;
+                var result = Machine.Hook((hook->pt.x, hook->pt.y), (c.x, c.y), isMouseMessage,
+                    isMouseMessage && !CursorGuardGeometry.IsTouchOrPen(hook->dwExtraInfo), Environment.TickCount64);
+                if (result.Block) return 1;
+                if (result.EntryAccepted) LogEntry(result.AcceptedSlidePx);
             }
         }
         catch { /* an exception must never cross back into the native hook chain */ }
@@ -292,36 +243,19 @@ internal static unsafe class TouchCursorGuard
         {
             if (idObject != Native.OBJID_CURSOR) return;
             if (!Native.GetCursorPos(out var c)) return;
-            var keepOff = OnKeepOffPanel(c);
-            var entry = MouseEntryVerdict.None;
-            var slidePx = 0;
-            if (!keepOff && _mouseEntry.Armed && InKiosk(c))
-                entry = _mouseEntry.Judge((c.x, c.y), KioskRectTuples(), Environment.TickCount64, out slidePx);
-            if (entry == MouseEntryVerdict.Accepted)
+            var result = Machine.CursorMoved((c.x, c.y), Environment.TickCount64);
+            switch (result.Kind)
             {
-                AcceptMouseEntry(c, slidePx);
-                return;
-            }
-            var mouseOnPanel = _mouseOnKiosk && _strandedFrom is null;
-            if (!CursorGuardGeometry.MustLeave(InKiosk(c), keepOff, mouseOnPanel)) return;
-
-            var origin = _strandedFrom ?? _lastMousePt;
-            if (CursorGuardGeometry.ReturnTarget((origin.x, origin.y), (c.x, c.y), _monitorRects, InKiosk) is { } target)
-            {
-                var reason = _strandedFrom is not null ? "display change" : keepOff ? "keep-off"
-                    : entry == MouseEntryVerdict.Rejected || Environment.TickCount64 - _hookRejectedAtMs <= MouseEntryTracker.WindowMs
-                        ? "gap entry rejected, treated as touch" : "touch";
-                if (target != (origin.x, origin.y)) reason += ", nearest monitor";
-                LogMove(c, target, reason);
-                _strandedFrom = null;
-                _lastMousePt = new Native.POINT { x = target.X, y = target.Y };
-                _mouseOnKiosk = false;
-                Native.SetCursorPos(target.X, target.Y);
-            }
-            else if (!mouseOnPanel && _strandedFrom is null)
-            {
-                _strandedFrom = origin;
-                Log.Info($"touch-cursor-guard no monitor to return to; holding {origin.x},{origin.y}");
+                case GuardEventKind.EntryAccepted:
+                    LogEntry(result.SlidePx);
+                    break;
+                case GuardEventKind.MoveCursor:
+                    LogMove((c.x, c.y), result.Target, result.Reason);
+                    Native.SetCursorPos(result.Target.X, result.Target.Y);
+                    break;
+                case GuardEventKind.HoldStranded:
+                    Log.Info($"touch-cursor-guard no monitor to return to; holding {result.Target.X},{result.Target.Y}");
+                    break;
             }
         }
         catch { /* an exception must never cross back into the native event callback */ }
