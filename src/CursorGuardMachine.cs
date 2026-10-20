@@ -14,8 +14,8 @@ internal interface ICursorGuardWorld
 
     bool OnKeepOffPanel((int X, int Y) p);
 
-    /// <summary>One cheap query: a monitor exists at the point right now.</summary>
-    bool MonitorLiveAt((int X, int Y) p);
+    /// <summary>One cheap query: the monitor at the point right now is the cached one with this rect.</summary>
+    bool MonitorStillAt((int X, int Y) p, (int Left, int Top, int Right, int Bottom) cachedRect);
 
     /// <summary>Re-reads the whole monitor layout; costly, so called only when the cheap query misses.</summary>
     void RefreshMonitors();
@@ -148,7 +148,7 @@ internal sealed class CursorGuardMachine
         var found = CursorGuardGeometry.ReturnTarget(origin, cursor, _world.Monitors, InKiosk);
         // A display change can land before the guard hears of it; the layout is re-read only
         // when the cached answer points at a monitor that is gone, or at none.
-        if (found is not { } live || !_world.MonitorLiveAt(live))
+        if (_strandedFrom is null && (found is not { } live || !TargetStillThere(live)))
         {
             _world.RefreshMonitors();
             found = CursorGuardGeometry.ReturnTarget(origin, cursor, _world.Monitors, InKiosk);
@@ -190,9 +190,16 @@ internal sealed class CursorGuardMachine
         return false;
     }
 
+    private bool TargetStillThere((int X, int Y) target)
+    {
+        var monitors = _world.Monitors;
+        var i = CursorGuardGeometry.IndexContaining(target, monitors);
+        return i >= 0 && _world.MonitorStillAt(target, monitors[i]);
+    }
+
     private bool RefreshedIsReturnTarget((int X, int Y) p, (int X, int Y) cursor)
     {
-        if (CursorGuardGeometry.IsReturnTarget(p, cursor, _world.Monitors, InKiosk) && _world.MonitorLiveAt(p)) return true;
+        if (CursorGuardGeometry.IsReturnTarget(p, cursor, _world.Monitors, InKiosk) && TargetStillThere(p)) return true;
         _world.RefreshMonitors();
         return CursorGuardGeometry.IsReturnTarget(p, cursor, _world.Monitors, InKiosk);
     }

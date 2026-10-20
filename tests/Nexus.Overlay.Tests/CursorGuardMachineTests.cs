@@ -25,11 +25,11 @@ public class CursorGuardMachineTests
 
         public int RefreshCalls { get; private set; }
 
-        public bool MonitorLiveAt((int X, int Y) p)
+        public bool MonitorStillAt((int X, int Y) p, (int Left, int Top, int Right, int Bottom) cachedRect)
         {
             foreach (var r in Live ?? MonitorList)
             {
-                if (p.X >= r.Left && p.X < r.Right && p.Y >= r.Top && p.Y < r.Bottom) return true;
+                if (p.X >= r.Left && p.X < r.Right && p.Y >= r.Top && p.Y < r.Bottom) return r == cachedRect;
             }
             return false;
         }
@@ -322,6 +322,7 @@ public class CursorGuardMachineTests
 
         world.Live = null;
         world.AfterRefresh = new List<(int Left, int Top, int Right, int Bottom)> { Primary, Panel };
+        world.RefreshMonitors(); // the display-change handler re-reads when the monitor comes back
         var back = m.CursorMoved((2300, 1501), 3000);
         Assert.Equal(GuardEventKind.MoveCursor, back.Kind);
         Assert.Equal((1005, 500), back.Target);
@@ -358,6 +359,41 @@ public class CursorGuardMachineTests
         Hook(m, (2000, 300), (2000, 300), 1500);
         Assert.Equal(1, world.RefreshCalls);
         Assert.Equal(0, world.MonitorList.IndexOf(Panel));
+        // On the fresh layout the old mouse spot is no return target, so the event is recorded, not passed through.
+        Assert.Equal((2000, 300), m.LastMousePt);
+        Assert.True(m.MouseOnKiosk);
+    }
+
+    [Fact]
+    public void StrandedEvents_AfterTheFirstHold_NeverReReadMonitors()
+    {
+        var world = SingleKiosk();
+        var m = new CursorGuardMachine(world);
+        m.Start((1000, 500));
+        Hook(m, (1005, 500), (1000, 500), 1000);
+        world.Live = new List<(int Left, int Top, int Right, int Bottom)> { Panel };
+        world.AfterRefresh = new List<(int Left, int Top, int Right, int Bottom)> { Panel };
+        Assert.Equal(GuardEventKind.HoldStranded, m.CursorMoved((2300, 1500), 1500).Kind);
+        var afterHold = world.RefreshCalls;
+        for (var i = 0; i < 30; i++) m.CursorMoved((2300 + i, 1500), 1600 + i);
+        Assert.Equal(afterHold, world.RefreshCalls);
+        Assert.NotNull(m.StrandedFrom);
+    }
+
+    [Fact]
+    public void CachedTargetLiveButItsMonitorChanged_ReReadsAndMovesOnTheFreshLayout()
+    {
+        var world = SingleKiosk();
+        var m = new CursorGuardMachine(world);
+        m.Start((1000, 500));
+        Hook(m, (1005, 500), (1000, 500), 1000);
+        var shrunk = (Left: 0, Top: 0, Right: 1920, Bottom: 1100);
+        world.Live = new List<(int Left, int Top, int Right, int Bottom)> { shrunk, Panel };
+        world.AfterRefresh = new List<(int Left, int Top, int Right, int Bottom)> { shrunk, Panel };
+        var result = m.CursorMoved((2300, 1500), 1500);
+        Assert.Equal(1, world.RefreshCalls);
+        Assert.Equal(GuardEventKind.MoveCursor, result.Kind);
+        Assert.Equal((1005, 500), result.Target);
     }
 
     [Fact]

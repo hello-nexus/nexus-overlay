@@ -116,9 +116,9 @@ internal enum MouseEntryVerdict { None, Accepted, Rejected }
 /// slides the cursor to the nearest point of the monitor beyond. The push arms
 /// the tracker. A cursor move onto a kiosk soon after, landing near the
 /// push point's closest spot on that kiosk, is the mouse's own. A touch
-/// teleport lands at the tap, with no push before it. Resting jitter never pushes, so it never arms. The armed state lives until
-/// it is judged or expires, so the hook and the cursor-move callback may run in
-/// either order.
+/// teleport lands at the tap, with no push before it. Resting jitter never
+/// pushes, so it never arms. The armed state lives until it is judged or
+/// expires, so the hook and the cursor-move callback may run in either order.
 /// </summary>
 internal struct MouseEntryTracker
 {

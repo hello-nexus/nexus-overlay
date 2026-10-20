@@ -57,8 +57,15 @@ internal static unsafe class TouchCursorGuard
 
         public bool OnKeepOffPanel((int X, int Y) p) => TouchCursorGuard.OnKeepOffPanel(new Native.POINT { x = p.X, y = p.Y });
 
-        public bool MonitorLiveAt((int X, int Y) p) =>
-            Native.MonitorFromPoint(new Native.POINT { x = p.X, y = p.Y }, Native.MONITOR_DEFAULTTONULL) != IntPtr.Zero;
+        public bool MonitorStillAt((int X, int Y) p, (int Left, int Top, int Right, int Bottom) cachedRect)
+        {
+            var monitor = Native.MonitorFromPoint(new Native.POINT { x = p.X, y = p.Y }, Native.MONITOR_DEFAULTTONULL);
+            if (monitor == IntPtr.Zero) return false;
+            var info = new Native.MonitorInfoNative { cbSize = Marshal.SizeOf<Native.MonitorInfoNative>() };
+            return Native.GetMonitorInfoW(monitor, ref info)
+                && info.rcMonitor.Left == cachedRect.Left && info.rcMonitor.Top == cachedRect.Top
+                && info.rcMonitor.Right == cachedRect.Right && info.rcMonitor.Bottom == cachedRect.Bottom;
+        }
 
         public void RefreshMonitors()
         {
@@ -189,6 +196,11 @@ internal static unsafe class TouchCursorGuard
         {
             Log.Info($"touch-cursor-guard moved the cursor {_unloggedMoves} more times since the last line");
             _unloggedMoves = 0;
+        }
+        if (_refreshes > 0)
+        {
+            Log.Info($"touch-cursor-guard re-read the monitors {_refreshes} time(s) since the last line");
+            _refreshes = 0;
         }
         FlushEntryLog();
     }
