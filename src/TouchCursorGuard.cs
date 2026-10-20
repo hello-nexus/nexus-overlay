@@ -56,6 +56,8 @@ internal static unsafe class TouchCursorGuard
         public bool HasKeepOff => _keepOffBounds.Length > 0;
 
         public bool OnKeepOffPanel((int X, int Y) p) => TouchCursorGuard.OnKeepOffPanel(new Native.POINT { x = p.X, y = p.Y });
+
+        public void RefreshMonitors() => RefreshMonitorRects();
     }
 
     private static IntPtr _mouseHook;
@@ -224,9 +226,9 @@ internal static unsafe class TouchCursorGuard
             if (nCode == Native.HC_ACTION && lParam != IntPtr.Zero && Native.GetCursorPos(out var c))
             {
                 var hook = (Native.MSLLHOOKSTRUCT*)lParam;
-                var isMouseMessage = wParam == Native.WM_MOUSEMOVE;
-                var result = Machine.Hook((hook->pt.x, hook->pt.y), (c.x, c.y), isMouseMessage,
-                    isMouseMessage && !CursorGuardGeometry.IsTouchOrPen(hook->dwExtraInfo), Environment.TickCount64);
+                var isWmMouseMove = wParam == Native.WM_MOUSEMOVE;
+                var result = Machine.Hook((hook->pt.x, hook->pt.y), (c.x, c.y), isWmMouseMove,
+                    isWmMouseMove && !CursorGuardGeometry.IsTouchOrPen(hook->dwExtraInfo), Environment.TickCount64);
                 if (result.Block) return 1;
                 if (result.EntryAccepted) LogEntry(result.AcceptedSlidePx);
             }

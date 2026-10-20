@@ -13,6 +13,9 @@ internal interface ICursorGuardWorld
     bool HasKeepOff { get; }
 
     bool OnKeepOffPanel((int X, int Y) p);
+
+    /// <summary>Re-reads the monitor layout; called only when the guard is about to act on it.</summary>
+    void RefreshMonitors();
 }
 
 /// <summary>Outcome of one mouse hook event: swallow it, and the slide length when it let an entry through.</summary>
@@ -60,6 +63,8 @@ internal sealed class CursorGuardMachine
     /// <summary>The first kiosk opened: the guard starts from where the cursor is.</summary>
     public void Start((int X, int Y) cursor)
     {
+        _mouseEntry = default;
+        _hookRejectedAtMs = long.MinValue / 2;
         _lastMousePt = cursor;
         _mouseOnKiosk = InKiosk(cursor);
         _strandedFrom = null;
@@ -75,7 +80,9 @@ internal sealed class CursorGuardMachine
         if (!_mouseOnKiosk && cursor == _lastMousePt) _mouseOnKiosk = InKiosk(cursor);
     }
 
-    public GuardHookResult Hook((int X, int Y) raw, (int X, int Y) cursor, bool isMouseMessage, bool isMouseMove,
+    /// <param name="isWmMouseMove">The event is a WM_MOUSEMOVE, whoever produced it.</param>
+    /// <param name="isUntaggedMouseMove">A WM_MOUSEMOVE without the touch or pen signature.</param>
+    public GuardHookResult Hook((int X, int Y) raw, (int X, int Y) cursor, bool isWmMouseMove, bool isUntaggedMouseMove,
         long nowMs)
     {
         var monitors = _world.Monitors;
@@ -84,16 +91,16 @@ internal sealed class CursorGuardMachine
         var entry = MouseEntryVerdict.None;
         var slidePx = 0;
         var passThrough = false;
-        var wall = (ptOnKiosk || _world.HasKeepOff) && isMouseMessage
+        var wall = (ptOnKiosk || _world.HasKeepOff) && isWmMouseMove
             && _world.OnKeepOffPanel(pt) && !_world.OnKeepOffPanel(cursor);
 
         // A push still waiting for its slide is judged before this event can arm another
         // one over it: the cursor being on a kiosk now is that slide having happened.
-        if (!wall && isMouseMove && ptOnKiosk && _mouseEntry.Armed && InKiosk(cursor) && !_world.OnKeepOffPanel(cursor))
+        if (!wall && isUntaggedMouseMove && ptOnKiosk && _mouseEntry.Armed && InKiosk(cursor) && !_world.OnKeepOffPanel(cursor))
             entry = MouseEntryTracker.JudgeAtHook(ref _mouseEntry, ptOnKiosk, true, cursor, _world.Kiosks, nowMs, out slidePx);
 
-        if (isMouseMove && !CursorGuardGeometry.OnAnyMonitor(raw, monitors))
-            _mouseEntry.TryArm(raw, cursor, nowMs);
+        if (isUntaggedMouseMove && !CursorGuardGeometry.OnAnyMonitor(raw, monitors))
+            _mouseEntry.Arm(raw, cursor, nowMs);
 
         if (wall) return new GuardHookResult(true, GuardHookResult.NoEntry); // the panel is a wall; the cursor stays where it is
 
@@ -104,7 +111,7 @@ internal sealed class CursorGuardMachine
                 AcceptEntry(cursor);
             }
             else if (ptOnKiosk && InKiosk(cursor) && !_mouseOnKiosk && _strandedFrom is null
-                && IsReturnTarget(_lastMousePt, cursor))
+                && RefreshedIsReturnTarget(_lastMousePt, cursor))
             {
                 passThrough = true;
                 if (entry == MouseEntryVerdict.Rejected) _hookRejectedAtMs = nowMs;
@@ -135,6 +142,7 @@ internal sealed class CursorGuardMachine
         if (!CursorGuardGeometry.MustLeave(InKiosk(cursor), keepOff, mouseOnPanel)) return default;
 
         var origin = _strandedFrom ?? _lastMousePt;
+        _world.RefreshMonitors();
         if (CursorGuardGeometry.ReturnTarget(origin, cursor, _world.Monitors, InKiosk) is { } target)
         {
             var reason = _strandedFrom is not null ? "display change" : keepOff ? "keep-off"
@@ -163,13 +171,20 @@ internal sealed class CursorGuardMachine
 
     private bool InKiosk((int X, int Y) p)
     {
-        foreach (var k in _world.Kiosks)
+        var kiosks = _world.Kiosks;
+        for (var i = 0; i < kiosks.Count; i++)
         {
+            var k = kiosks[i];
             if (p.X >= k.Left && p.X < k.Right && p.Y >= k.Top && p.Y < k.Bottom) return true;
         }
         return false;
     }
 
-    private bool IsReturnTarget((int X, int Y) p, (int X, int Y) cursor) =>
-        CursorGuardGeometry.IsReturnTarget(p, cursor, _world.Monitors, InKiosk);
+    // A display change can land before the guard hears of it, so the layout is re-read
+    // before a decision that sends the cursor to another monitor.
+    private bool RefreshedIsReturnTarget((int X, int Y) p, (int X, int Y) cursor)
+    {
+        _world.RefreshMonitors();
+        return CursorGuardGeometry.IsReturnTarget(p, cursor, _world.Monitors, InKiosk);
+    }
 }
