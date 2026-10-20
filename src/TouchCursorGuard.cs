@@ -32,8 +32,9 @@ namespace Nexus.Overlay;
 /// A mouse pushing past an edge, through the dead zone beside a kiosk or across
 /// the gap between two kiosks is a case the hook point cannot explain: Windows
 /// slides the cursor onto the kiosk beyond. A <see cref="MouseEntryTracker"/>
-/// armed by such a push marks the slide as the mouse's own. When a display change leaves no other
-/// monitor to return to (the others went to sleep), the guard remembers where
+/// armed by such a push marks the slide as the mouse's own.
+///
+/// When a display change leaves no other monitor to return to (the others went to sleep), the guard remembers where
 /// the mouse was and returns the cursor there once a monitor comes back.
 /// <see cref="KeepOffBounds"/> (each panel's "keep the mouse off" setting)
 /// also stops the mouse itself from entering those panels.
@@ -58,7 +59,7 @@ internal static unsafe class TouchCursorGuard
     private const long MoveLogIntervalMs = 2000;
     private static long _nextMoveLogAt;
     private static int _unloggedMoves;
-    // The mouse hook reads this cache; the cursor-move callback refreshes it.
+    // Both callbacks read this cache; Acquire and OnDisplayChange refresh it.
     private static (int Left, int Top, int Right, int Bottom)[] _monitorRects = Array.Empty<(int, int, int, int)>();
 
     /// <summary>Monitor rects the mouse is kept off; empty when no panel has the setting on.</summary>
@@ -235,25 +236,24 @@ internal static unsafe class TouchCursorGuard
                 var raw = hook->pt;
                 var pt = OnDesktop(raw);
                 var ptOnKiosk = InKiosk(pt);
-                if (wParam == Native.WM_MOUSEMOVE && !CursorGuardGeometry.IsTouchOrPen(hook->dwExtraInfo))
-                {
-                    if (!CursorGuardGeometry.OnAnyMonitor((raw.x, raw.y), _monitorRects))
-                    {
-                        if (Native.GetCursorPos(out var before))
-                            _mouseEntry.Arm((raw.x, raw.y), (before.x, before.y), Environment.TickCount64);
-                    }
-                    else if (ptOnKiosk)
-                    {
-                        // The hook saw the mouse land on the kiosk itself, so the
-                        // cursor-move callback has nothing left to judge.
-                        _mouseEntry.Disarm();
-                    }
-                }
+                var isMouseMove = wParam == Native.WM_MOUSEMOVE && !CursorGuardGeometry.IsTouchOrPen(hook->dwExtraInfo);
+                if (isMouseMove && !CursorGuardGeometry.OnAnyMonitor((raw.x, raw.y), _monitorRects)
+                    && Native.GetCursorPos(out var before))
+                    _mouseEntry.Arm((raw.x, raw.y), (before.x, before.y), Environment.TickCount64);
                 if ((ptOnKiosk || _keepOffBounds.Length > 0) && Native.GetCursorPos(out var c))
                 {
                     if (wParam == Native.WM_MOUSEMOVE && OnKeepOffPanel(pt) && !OnKeepOffPanel(c))
                         return 1; // the panel is a wall; the cursor stays where it is
-                    if (ptOnKiosk && InKiosk(c) && !_mouseOnKiosk && _strandedFrom is null
+                    // The slide's cursor move may still be queued behind this event; judging
+                    // here keeps the entry from being undone whichever of the two runs first.
+                    var entry = MouseEntryVerdict.None;
+                    var slidePx = 0;
+                    if (isMouseMove && ptOnKiosk && _mouseEntry.Armed && !OnKeepOffPanel(c))
+                        entry = MouseEntryTracker.JudgeAtHook(ref _mouseEntry, ptOnKiosk, InKiosk(c), (c.x, c.y),
+                            KioskRectTuples(), Environment.TickCount64, out slidePx);
+                    if (entry == MouseEntryVerdict.Accepted)
+                        LogEntry(slidePx);
+                    else if (ptOnKiosk && InKiosk(c) && !_mouseOnKiosk && _strandedFrom is null
                         && IsReturnTarget(_lastMousePt, c))
                         return Native.CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam);
                 }

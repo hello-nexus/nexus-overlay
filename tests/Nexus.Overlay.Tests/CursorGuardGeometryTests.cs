@@ -143,8 +143,8 @@ public class CursorGuardGeometryTests
     public void IsTouchOrPen_MatchesTheTouchSignature(uint extraInfo, bool expected) =>
         Assert.Equal(expected, CursorGuardGeometry.IsTouchOrPen(extraInfo));
 
-    // The lab Y70: a portrait kiosk right of the primary, 22 px lower, so the
-    // two share the primary's whole right edge (primary is 0,0,1920,1200) and a 22 px gap sits above the kiosk.
+    // A portrait kiosk right of the primary and offset a little lower, so a narrow
+    // gap sits above it and the two share the rest of the primary's right edge.
     private static readonly (int Left, int Top, int Right, int Bottom) YRight = (1920, 22, 3020, 3862);
     private static readonly (int Left, int Top, int Right, int Bottom)[] YRightKiosks = { YRight };
 
@@ -178,24 +178,60 @@ public class CursorGuardGeometryTests
         Assert.Equal(MouseEntryVerdict.None, Judge(ref tracker, (1923, 22), 1011));
     }
 
+    private static readonly (int X, int Y) PushRaw = (1925, 10);
+    private static readonly (int X, int Y) PushFrom = (1914, 10);
+    private static readonly (int X, int Y) SlideLanding = (1923, 22);
+
     [Fact]
-    public void MouseEntry_ArmedStateSurvivesUntilJudged_RegardlessOfOrdering()
+    public void MouseEntry_CallbackJudgesFirst_ThenTheHookSeesNothingLeft()
     {
-        // A later hook that is not a push neither disarms nor re-arms: the
-        // callback may judge at any time inside the window.
         var tracker = new MouseEntryTracker();
-        tracker.Arm((1925, 10), (1914, 10), 1000);
-        Assert.True(tracker.Armed);
-        Assert.Equal(MouseEntryVerdict.Accepted, Judge(ref tracker, (1923, 22), 1000 + MouseEntryTracker.WindowMs));
+        tracker.Arm(PushRaw, PushFrom, 1000);
+        Assert.Equal(MouseEntryVerdict.Accepted, Judge(ref tracker, SlideLanding, 1010));
+        Assert.Equal(MouseEntryVerdict.None,
+            MouseEntryTracker.JudgeAtHook(ref tracker, true, true, SlideLanding, YRightKiosks, 1011, out _));
     }
 
     [Fact]
-    public void MouseEntry_HookThatSawTheLandingDisarms_CallbackThenSeesNothing()
+    public void MouseEntry_HookJudgesFirst_ThenTheCallbackSeesNothingLeft()
+    {
+        // The hook for the next mouse event runs before the slide's WinEvent.
+        var tracker = new MouseEntryTracker();
+        tracker.Arm(PushRaw, PushFrom, 1000);
+        var verdict = MouseEntryTracker.JudgeAtHook(ref tracker, true, true, SlideLanding, YRightKiosks, 1010, out var slide);
+        Assert.Equal(MouseEntryVerdict.Accepted, verdict);
+        Assert.Equal(2, slide);
+        Assert.Equal(MouseEntryVerdict.None, Judge(ref tracker, SlideLanding, 1011));
+    }
+
+    [Fact]
+    public void MouseEntry_HookWithTheCursorStillOffTheKiosk_LeavesTheTrackerArmed()
     {
         var tracker = new MouseEntryTracker();
-        tracker.Arm((1925, 10), (1914, 10), 1000);
-        tracker.Disarm();
-        Assert.Equal(MouseEntryVerdict.None, Judge(ref tracker, (1923, 22), 1010));
+        tracker.Arm(PushRaw, PushFrom, 1000);
+        Assert.Equal(MouseEntryVerdict.None,
+            MouseEntryTracker.JudgeAtHook(ref tracker, true, false, (1919, 10), YRightKiosks, 1005, out _));
+        Assert.True(tracker.Armed);
+        Assert.Equal(MouseEntryVerdict.Accepted, Judge(ref tracker, SlideLanding, 1010));
+    }
+
+    [Fact]
+    public void MouseEntry_HookPointOffTheKiosk_IsNotJudgedThere()
+    {
+        var tracker = new MouseEntryTracker();
+        tracker.Arm(PushRaw, PushFrom, 1000);
+        Assert.Equal(MouseEntryVerdict.None,
+            MouseEntryTracker.JudgeAtHook(ref tracker, false, true, SlideLanding, YRightKiosks, 1010, out _));
+        Assert.True(tracker.Armed);
+    }
+
+    [Fact]
+    public void MouseEntry_HookJudgesATouchTapFarFromThePush_Rejected()
+    {
+        var tracker = new MouseEntryTracker();
+        tracker.Arm(PushRaw, PushFrom, 1000);
+        Assert.Equal(MouseEntryVerdict.Rejected,
+            MouseEntryTracker.JudgeAtHook(ref tracker, true, true, (2400, 1800), YRightKiosks, 1010, out _));
     }
 
     [Fact]

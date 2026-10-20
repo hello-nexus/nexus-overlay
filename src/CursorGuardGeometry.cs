@@ -121,6 +121,9 @@ internal enum MouseEntryVerdict { None, Accepted, Rejected }
 internal struct MouseEntryTracker
 {
     public const long WindowMs = 100;
+    // A fixed physical-pixel bound around the clamped push point. Windows lands
+    // the cursor on that point, so only rounding and the DPI mapping between
+    // monitors separate the two.
     public const int SlideTolerancePx = 96;
     private long _atMs;
     private bool _armed;
@@ -137,7 +140,17 @@ internal struct MouseEntryTracker
         _atMs = nowMs;
     }
 
-    public void Disarm() => _armed = false;
+    /// <summary>
+    /// The mouse hook's side of the judgement: an event whose point is on a kiosk
+    /// while the cursor already is means the slide's cursor move has happened,
+    /// whether or not its callback has run yet.
+    /// </summary>
+    public static MouseEntryVerdict JudgeAtHook(ref MouseEntryTracker tracker, bool pointOnKiosk, bool cursorOnKiosk,
+        (int X, int Y) cursor, IReadOnlyList<(int Left, int Top, int Right, int Bottom)> kiosks, long nowMs, out int slidePx)
+    {
+        slidePx = 0;
+        return pointOnKiosk && cursorOnKiosk ? tracker.Judge(cursor, kiosks, nowMs, out slidePx) : MouseEntryVerdict.None;
+    }
 
     /// <summary>
     /// Judges a cursor move that left the cursor at <paramref name="cursorNow"/>.
