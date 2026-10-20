@@ -20,8 +20,23 @@ public class CursorGuardMachineTests
         // The layout the guard reads once it re-reads monitors, when a display change has landed.
         public List<(int Left, int Top, int Right, int Bottom)>? AfterRefresh { get; set; }
 
+        // What the OS has right now; unset means the cached layout is current.
+        public List<(int Left, int Top, int Right, int Bottom)>? Live { get; set; }
+
+        public int RefreshCalls { get; private set; }
+
+        public bool MonitorLiveAt((int X, int Y) p)
+        {
+            foreach (var r in Live ?? MonitorList)
+            {
+                if (p.X >= r.Left && p.X < r.Right && p.Y >= r.Top && p.Y < r.Bottom) return true;
+            }
+            return false;
+        }
+
         public void RefreshMonitors()
         {
+            RefreshCalls++;
             if (AfterRefresh is null) return;
             MonitorList.Clear();
             MonitorList.AddRange(AfterRefresh);
@@ -297,18 +312,52 @@ public class CursorGuardMachineTests
         var m = new CursorGuardMachine(world);
         m.Start((1000, 500));
         Hook(m, (1005, 500), (1000, 500), 1000);
+        world.Live = new List<(int Left, int Top, int Right, int Bottom)> { Panel };
         world.AfterRefresh = new List<(int Left, int Top, int Right, int Bottom)> { Panel };
         var held = m.CursorMoved((2300, 1500), 1500);
+        Assert.Equal(1, world.RefreshCalls);
         Assert.Equal(GuardEventKind.HoldStranded, held.Kind);
         Assert.Equal((1005, 500), held.Target);
         Assert.Equal((1005, 500), m.StrandedFrom);
 
+        world.Live = null;
         world.AfterRefresh = new List<(int Left, int Top, int Right, int Bottom)> { Primary, Panel };
         var back = m.CursorMoved((2300, 1501), 3000);
         Assert.Equal(GuardEventKind.MoveCursor, back.Kind);
         Assert.Equal((1005, 500), back.Target);
         Assert.Equal("display change", back.Reason);
         Assert.Null(m.StrandedFrom);
+    }
+
+    [Fact]
+    public void LiveReturnTarget_BurstOfTouchTeleports_NeverReReadsMonitors()
+    {
+        var world = SingleKiosk();
+        var m = new CursorGuardMachine(world);
+        m.Start((1000, 500));
+        Hook(m, (1005, 500), (1000, 500), 1000);
+        for (var i = 0; i < 50; i++)
+        {
+            var result = m.CursorMoved((2300 + i, 1500), 1500 + i);
+            Assert.Equal(GuardEventKind.MoveCursor, result.Kind);
+            Hook(m, (1005, 500), (1000, 500), 1500 + i);
+        }
+        Assert.Equal(0, world.RefreshCalls);
+    }
+
+    [Fact]
+    public void DeadReturnTargetInTheHook_ReReadsOnceThenDecidesOnTheFreshLayout()
+    {
+        var world = SingleKiosk();
+        var m = new CursorGuardMachine(world);
+        m.Start((1000, 500));
+        Hook(m, (1005, 500), (1000, 500), 1000);
+        world.Live = new List<(int Left, int Top, int Right, int Bottom)> { Panel };
+        world.AfterRefresh = new List<(int Left, int Top, int Right, int Bottom)> { Panel };
+        // A mouse event while a touch has the cursor on the kiosk: the old mouse spot sits on a monitor that is gone.
+        Hook(m, (2000, 300), (2000, 300), 1500);
+        Assert.Equal(1, world.RefreshCalls);
+        Assert.Equal(0, world.MonitorList.IndexOf(Panel));
     }
 
     [Fact]

@@ -57,7 +57,14 @@ internal static unsafe class TouchCursorGuard
 
         public bool OnKeepOffPanel((int X, int Y) p) => TouchCursorGuard.OnKeepOffPanel(new Native.POINT { x = p.X, y = p.Y });
 
-        public void RefreshMonitors() => RefreshMonitorRects();
+        public bool MonitorLiveAt((int X, int Y) p) =>
+            Native.MonitorFromPoint(new Native.POINT { x = p.X, y = p.Y }, Native.MONITOR_DEFAULTTONULL) != IntPtr.Zero;
+
+        public void RefreshMonitors()
+        {
+            _refreshes++;
+            RefreshMonitorRects();
+        }
     }
 
     private static IntPtr _mouseHook;
@@ -69,6 +76,7 @@ internal static unsafe class TouchCursorGuard
     private const long MoveLogIntervalMs = 2000;
     private static long _nextMoveLogAt;
     private static int _unloggedMoves;
+    private static int _refreshes;
     // Both callbacks read this cache; Acquire and OnDisplayChange refresh it.
     private static (int Left, int Top, int Right, int Bottom)[] _monitorRects = Array.Empty<(int, int, int, int)>();
 
@@ -169,7 +177,9 @@ internal static unsafe class TouchCursorGuard
         if (now < _nextMoveLogAt) { _unloggedMoves++; return; }
         _nextMoveLogAt = now + MoveLogIntervalMs;
         var unlogged = _unloggedMoves > 0 ? $", {_unloggedMoves} more since the last line" : "";
+        if (_refreshes > 0) unlogged += $", {_refreshes} monitor re-read(s)";
         _unloggedMoves = 0;
+        _refreshes = 0;
         Log.Info($"touch-cursor-guard moved the cursor {from.X},{from.Y} -> {to.X},{to.Y} ({reason}{unlogged})");
     }
 

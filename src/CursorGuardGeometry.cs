@@ -60,6 +60,9 @@ internal static class CursorGuardGeometry
         return best;
     }
 
+    public static bool Inside((int X, int Y) p, (int Left, int Top, int Right, int Bottom) r) =>
+        p.X >= r.Left && p.X < r.Right && p.Y >= r.Top && p.Y < r.Bottom;
+
     public static int IndexContaining((int X, int Y) p, IReadOnlyList<(int Left, int Top, int Right, int Bottom)> monitors)
     {
         for (var i = 0; i < monitors.Count; i++)
@@ -112,8 +115,8 @@ internal enum MouseEntryVerdict { None, Accepted, Rejected }
 /// gap between two kiosks has a hook point off every monitor; Windows then
 /// slides the cursor to the nearest point of the monitor beyond. The push arms
 /// the tracker. A cursor move onto a kiosk soon after, landing near the
-/// push point's closest spot on that kiosk, is the mouse's own. A touch teleport lands at the tap, with no push before it.
-/// Resting jitter never pushes, so it never arms. The armed state lives until
+/// push point's closest spot on that kiosk, is the mouse's own. A touch
+/// teleport lands at the tap, with no push before it. Resting jitter never pushes, so it never arms. The armed state lives until
 /// it is judged or expires, so the hook and the cursor-move callback may run in
 /// either order.
 /// </summary>
@@ -168,7 +171,7 @@ internal struct MouseEntryTracker
         _armed = false;
         // A slide comes from outside the kiosk it lands on; a push that began on this kiosk
         // moves nothing onto it, so a cursor already there was put there some other way.
-        if (CursorGuardGeometry.IndexContaining(_from, new[] { kiosks[kiosk] }) >= 0) return MouseEntryVerdict.Rejected;
+        if (CursorGuardGeometry.Inside(_from, kiosks[kiosk])) return MouseEntryVerdict.Rejected;
         var near = CursorGuardGeometry.ClampInto(_raw, kiosks[kiosk]);
         long sx = cursorNow.X - near.X, sy = cursorNow.Y - near.Y;
         slidePx = (int)Math.Sqrt(sx * sx + sy * sy);

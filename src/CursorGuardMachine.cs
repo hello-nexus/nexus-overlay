@@ -14,7 +14,10 @@ internal interface ICursorGuardWorld
 
     bool OnKeepOffPanel((int X, int Y) p);
 
-    /// <summary>Re-reads the monitor layout; called only when the guard is about to act on it.</summary>
+    /// <summary>One cheap query: a monitor exists at the point right now.</summary>
+    bool MonitorLiveAt((int X, int Y) p);
+
+    /// <summary>Re-reads the whole monitor layout; costly, so called only when the cheap query misses.</summary>
     void RefreshMonitors();
 }
 
@@ -142,8 +145,15 @@ internal sealed class CursorGuardMachine
         if (!CursorGuardGeometry.MustLeave(InKiosk(cursor), keepOff, mouseOnPanel)) return default;
 
         var origin = _strandedFrom ?? _lastMousePt;
-        _world.RefreshMonitors();
-        if (CursorGuardGeometry.ReturnTarget(origin, cursor, _world.Monitors, InKiosk) is { } target)
+        var found = CursorGuardGeometry.ReturnTarget(origin, cursor, _world.Monitors, InKiosk);
+        // A display change can land before the guard hears of it; the layout is re-read only
+        // when the cached answer points at a monitor that is gone, or at none.
+        if (found is not { } live || !_world.MonitorLiveAt(live))
+        {
+            _world.RefreshMonitors();
+            found = CursorGuardGeometry.ReturnTarget(origin, cursor, _world.Monitors, InKiosk);
+        }
+        if (found is { } target)
         {
             var reason = _strandedFrom is not null ? "display change" : keepOff ? "keep-off"
                 : entry == MouseEntryVerdict.Rejected || nowMs - _hookRejectedAtMs <= MouseEntryTracker.WindowMs
@@ -180,10 +190,9 @@ internal sealed class CursorGuardMachine
         return false;
     }
 
-    // A display change can land before the guard hears of it, so the layout is re-read
-    // before a decision that sends the cursor to another monitor.
     private bool RefreshedIsReturnTarget((int X, int Y) p, (int X, int Y) cursor)
     {
+        if (CursorGuardGeometry.IsReturnTarget(p, cursor, _world.Monitors, InKiosk) && _world.MonitorLiveAt(p)) return true;
         _world.RefreshMonitors();
         return CursorGuardGeometry.IsReturnTarget(p, cursor, _world.Monitors, InKiosk);
     }
