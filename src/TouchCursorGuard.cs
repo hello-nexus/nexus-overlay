@@ -205,6 +205,18 @@ internal static unsafe class TouchCursorGuard
         return rects;
     }
 
+    // When the mouse hook rejected an entry, the tracker is already consumed by the
+    // time the cursor-move callback snaps the cursor back, so the reason is kept here.
+    private static long _hookRejectedAtMs = long.MinValue / 2;
+
+    private static void AcceptMouseEntry(Native.POINT c, int slidePx)
+    {
+        _strandedFrom = null;
+        _lastMousePt = c;
+        _mouseOnKiosk = true;
+        LogEntry(slidePx);
+    }
+
     private static long _nextEntryLogAt;
     private static int _entries;
     private static int _entryMaxSlidePx;
@@ -239,7 +251,9 @@ internal static unsafe class TouchCursorGuard
                 var isMouseMove = wParam == Native.WM_MOUSEMOVE && !CursorGuardGeometry.IsTouchOrPen(hook->dwExtraInfo);
                 if (isMouseMove && !CursorGuardGeometry.OnAnyMonitor((raw.x, raw.y), _monitorRects)
                     && Native.GetCursorPos(out var before))
+                {
                     _mouseEntry.Arm((raw.x, raw.y), (before.x, before.y), Environment.TickCount64);
+                }
                 if ((ptOnKiosk || _keepOffBounds.Length > 0) && Native.GetCursorPos(out var c))
                 {
                     if (wParam == Native.WM_MOUSEMOVE && OnKeepOffPanel(pt) && !OnKeepOffPanel(c))
@@ -249,13 +263,17 @@ internal static unsafe class TouchCursorGuard
                     var entry = MouseEntryVerdict.None;
                     var slidePx = 0;
                     if (isMouseMove && ptOnKiosk && _mouseEntry.Armed && !OnKeepOffPanel(c))
+                    {
                         entry = MouseEntryTracker.JudgeAtHook(ref _mouseEntry, ptOnKiosk, InKiosk(c), (c.x, c.y),
                             KioskRectTuples(), Environment.TickCount64, out slidePx);
-                    if (entry == MouseEntryVerdict.Accepted)
-                        LogEntry(slidePx);
-                    else if (ptOnKiosk && InKiosk(c) && !_mouseOnKiosk && _strandedFrom is null
-                        && IsReturnTarget(_lastMousePt, c))
+                    }
+                    if (entry == MouseEntryVerdict.Accepted) AcceptMouseEntry(c, slidePx);
+                    else if (entry == MouseEntryVerdict.Rejected) _hookRejectedAtMs = Environment.TickCount64;
+                    if (entry != MouseEntryVerdict.Accepted && ptOnKiosk && InKiosk(c) && !_mouseOnKiosk
+                        && _strandedFrom is null && IsReturnTarget(_lastMousePt, c))
+                    {
                         return Native.CallNextHookEx(IntPtr.Zero, nCode, wParam, lParam);
+                    }
                 }
                 _lastMousePt = pt;
                 _mouseOnKiosk = ptOnKiosk;
@@ -281,10 +299,7 @@ internal static unsafe class TouchCursorGuard
                 entry = _mouseEntry.Judge((c.x, c.y), KioskRectTuples(), Environment.TickCount64, out slidePx);
             if (entry == MouseEntryVerdict.Accepted)
             {
-                _strandedFrom = null;
-                _lastMousePt = c;
-                _mouseOnKiosk = true;
-                LogEntry(slidePx);
+                AcceptMouseEntry(c, slidePx);
                 return;
             }
             var mouseOnPanel = _mouseOnKiosk && _strandedFrom is null;
@@ -294,7 +309,8 @@ internal static unsafe class TouchCursorGuard
             if (CursorGuardGeometry.ReturnTarget((origin.x, origin.y), (c.x, c.y), _monitorRects, InKiosk) is { } target)
             {
                 var reason = _strandedFrom is not null ? "display change" : keepOff ? "keep-off"
-                    : entry == MouseEntryVerdict.Rejected ? "gap entry rejected, treated as touch" : "touch";
+                    : entry == MouseEntryVerdict.Rejected || Environment.TickCount64 - _hookRejectedAtMs <= MouseEntryTracker.WindowMs
+                        ? "gap entry rejected, treated as touch" : "touch";
                 if (target != (origin.x, origin.y)) reason += ", nearest monitor";
                 LogMove(c, target, reason);
                 _strandedFrom = null;

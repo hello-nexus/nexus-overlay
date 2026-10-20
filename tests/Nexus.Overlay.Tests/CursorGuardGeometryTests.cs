@@ -297,4 +297,40 @@ public class CursorGuardGeometryTests
         tracker.Arm((2800, 500), (2719, 500), 1000);
         Assert.Equal(MouseEntryVerdict.Accepted, Judge(ref tracker, (2900, 500), 1010, new[] { q60, y70 }));
     }
+
+    [Fact]
+    public void MouseEntry_PushBeganOnTheKioskTheCursorIsOn_IsNeverAccepted()
+    {
+        // A touch put the cursor on the kiosk and the mouse then pushes toward the gap beside it.
+        var onKiosk = (X: 2000, Y: 300);
+        var tracker = new MouseEntryTracker();
+        tracker.Arm((1915, 300), onKiosk, 1000);
+        Assert.Equal(MouseEntryVerdict.Rejected, Judge(ref tracker, onKiosk, 1010));
+
+        tracker.Arm((1915, 300), onKiosk, 2000);
+        Assert.Equal(MouseEntryVerdict.Rejected,
+            MouseEntryTracker.JudgeAtHook(ref tracker, true, true, onKiosk, YRightKiosks, 2010, out _));
+    }
+
+    [Fact]
+    public void MouseEntry_HookSideJudgementExpires()
+    {
+        var tracker = new MouseEntryTracker();
+        tracker.Arm(PushRaw, PushFrom, 1000);
+        Assert.Equal(MouseEntryVerdict.None,
+            MouseEntryTracker.JudgeAtHook(ref tracker, true, true, SlideLanding, YRightKiosks,
+                1000 + MouseEntryTracker.WindowMs + 1, out _));
+        Assert.False(tracker.Armed);
+    }
+
+    [Fact]
+    public void MouseEntry_CrossingBetweenKiosks_StartsOnADifferentKiosk_IsStillAccepted()
+    {
+        var q60 = (Left: 2000, Top: 0, Right: 2720, Bottom: 1280);
+        var y70 = (Left: 2900, Top: 0, Right: 3600, Bottom: 3840);
+        var tracker = new MouseEntryTracker();
+        tracker.Arm((2800, 500), (2719, 500), 1000);
+        Assert.Equal(MouseEntryVerdict.Accepted,
+            MouseEntryTracker.JudgeAtHook(ref tracker, true, true, (2900, 500), new[] { q60, y70 }, 1010, out _));
+    }
 }

@@ -155,7 +155,8 @@ internal struct MouseEntryTracker
     /// <summary>
     /// Judges a cursor move that left the cursor at <paramref name="cursorNow"/>.
     /// None when nothing armed it, it expired, or the cursor is on no kiosk;
-    /// Accepted consumes the push; Rejected consumes it too.
+    /// Accepted consumes the push; Rejected consumes it too, including a push
+    /// that began on the kiosk the cursor is on.
     /// </summary>
     public MouseEntryVerdict Judge((int X, int Y) cursorNow,
         IReadOnlyList<(int Left, int Top, int Right, int Bottom)> kiosks, long nowMs, out int slidePx)
@@ -166,6 +167,9 @@ internal struct MouseEntryTracker
         var kiosk = CursorGuardGeometry.IndexContaining(cursorNow, kiosks);
         if (kiosk < 0) return MouseEntryVerdict.None;
         _armed = false;
+        // A slide comes from outside the kiosk it lands on; a push that began on this kiosk
+        // moves nothing onto it, so a cursor already there was put there some other way.
+        if (CursorGuardGeometry.IndexContaining(_from, new[] { kiosks[kiosk] }) >= 0) return MouseEntryVerdict.Rejected;
         var near = CursorGuardGeometry.ClampInto(_raw, kiosks[kiosk]);
         long sx = cursorNow.X - near.X, sy = cursorNow.Y - near.Y;
         slidePx = (int)Math.Sqrt(sx * sx + sy * sy);
