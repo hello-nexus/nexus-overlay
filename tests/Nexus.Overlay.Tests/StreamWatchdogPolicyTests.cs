@@ -112,4 +112,30 @@ public class StreamWatchdogPolicyTests
         p.OnProbeFailed();
         Assert.False(p.ProbeBroken);
     }
+
+    [Fact]
+    public void Probing_resumes_after_frames_flow_again()
+    {
+        var p = new StreamWatchdogPolicy();
+        for (var i = 0; i < StreamWatchdogPolicy.MaxProbeFailures; i++)
+        {
+            p.Tick(0);
+            p.OnProbeFailed();
+        }
+        Assert.True(p.ProbeBroken);
+        p.Tick(1);
+        Assert.False(p.ProbeBroken);
+        Assert.Equal(WatchdogAction.Probe, p.Tick(0));
+    }
+
+    [Fact]
+    public void Probing_resumes_after_a_ceiling_restart()
+    {
+        var p = new StreamWatchdogPolicy();
+        for (var i = 0; i < StreamWatchdogPolicy.MaxProbeFailures; i++) p.OnProbeFailed();
+        var action = WatchdogAction.None;
+        for (var i = 0; i < StreamWatchdogPolicy.CeilingZeroTicks; i++) action = p.Tick(0);
+        Assert.Equal(WatchdogAction.Restart, action);
+        Assert.False(p.ProbeBroken);
+    }
 }

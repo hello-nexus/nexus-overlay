@@ -168,7 +168,7 @@ internal static unsafe class Wv2
         fixed (char* s = script) return fn(wv2, s, completedHandler);
     }
 
-    /// <summary>imageFormat 1 is JPEG; the stream receives the encoded image.</summary>
+    /// <summary>The stream receives the encoded image; see <see cref="WebView2Vtable.CapturePreviewFormatJpeg"/>.</summary>
     public static int Wv2_CapturePreview(IntPtr wv2, int imageFormat, IntPtr stream, IntPtr completedHandler)
     {
         var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, IntPtr, IntPtr, int>)Slot(wv2, WebView2Vtable.Wv2_CapturePreview);

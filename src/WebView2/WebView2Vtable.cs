@@ -78,6 +78,7 @@ internal static class WebView2Vtable
     public const int Wv2_RemoveScriptToExecuteOnDocumentCreated = 28;
     public const int Wv2_ExecuteScript = 29;
     public const int Wv2_CapturePreview = 30;
+    public const int CapturePreviewFormatJpeg = 1;
     public const int Wv2_Reload = 31;
     public const int Wv2_PostWebMessageAsJson = 32;
     public const int Wv2_PostWebMessageAsString = 33;

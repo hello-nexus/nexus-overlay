@@ -515,7 +515,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         _framesAtLastTick = pumped;
         // An unanswered probe stays pending so its late completion cannot land on a newer probe.
         var probeBusy = _previewStream != IntPtr.Zero;
-        if (probeBusy) _watchdog.OnProbeFailed();
+        if (probeBusy && delta == 0) _watchdog.OnProbeFailed();
         switch (_watchdog.Tick(delta))
         {
             case WatchdogAction.Probe:
@@ -545,8 +545,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
             return;
         }
         _previewStream = stream;
-        const int jpeg = 1;
-        if (WebView2Native.Failed(Wv2.Wv2_CapturePreview(_coreWebView2, jpeg, stream, _previewHandler)))
+        if (WebView2Native.Failed(Wv2.Wv2_CapturePreview(_coreWebView2, WebView2Vtable.CapturePreviewFormatJpeg, stream, _previewHandler)))
             FinishProbe(failed: true);
     }
 

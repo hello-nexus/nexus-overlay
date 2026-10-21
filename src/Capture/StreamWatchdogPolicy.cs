@@ -27,6 +27,7 @@ internal sealed class StreamWatchdogPolicy
         {
             _zeroTicks = 0;
             _lastHash = null;
+            _probeFailures = 0;
             return WatchdogAction.None;
         }
         _zeroTicks++;
@@ -56,6 +57,7 @@ internal sealed class StreamWatchdogPolicy
     {
         _zeroTicks = 0;
         _lastHash = null;
+        _probeFailures = 0;
         return WatchdogAction.Restart;
     }
 }
