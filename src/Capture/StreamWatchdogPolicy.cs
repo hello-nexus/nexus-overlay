@@ -1,51 +1,61 @@
 namespace Nexus.Overlay.Capture;
 
-/// <summary>
-/// Restart decision for the stream capture watchdog. WGC is change-driven, so
-/// zero frames means either a dead capture or a page with nothing to draw.
-/// The signal that tells them apart is what a restart yields: a recreated
-/// session always delivers one initial frame, so a restart followed by no
-/// more than that frame is unproductive (static page, or still dead) and the
-/// zero-frame ticks required before the next restart double up to a cap. A
-/// restart followed by further frames proves the capture was stale and
-/// resets the requirement.
-/// </summary>
+internal enum WatchdogAction
+{
+    None,
+    Probe,
+    Restart,
+}
+
+/// <summary>Restarts the WGC session only when the WebView rendered something new (probe hash changed) while WGC delivered no frames; the zero-frame ceiling bounds a probe that never changes or never answers.</summary>
 internal sealed class StreamWatchdogPolicy
 {
-    public const int BaseZeroTicks = 2;
-    public const int MaxZeroTicks = 60;
+    public const int MaxProbeFailures = 3;
+    public const int CeilingZeroTicks = 60;
 
     private int _zeroTicks;
-    private int _requiredZeroTicks = BaseZeroTicks;
-    private bool _judgingRestart;
-    private long _framesSinceRestart;
+    private int _probeFailures;
+    private ulong? _lastHash;
 
-    public int RequiredZeroTicks => _requiredZeroTicks;
+    public int ZeroTicks => _zeroTicks;
+    public bool ProbeBroken => _probeFailures >= MaxProbeFailures;
 
-    /// <summary>Feeds one watchdog tick with the frames pumped since the last
-    /// tick. Returns true when the capture session should be recreated.</summary>
-    public bool Tick(long framesDelta)
+    /// <summary>Feeds one watchdog tick with the frames pumped since the last tick.</summary>
+    public WatchdogAction Tick(long framesDelta)
     {
         if (framesDelta > 0)
         {
             _zeroTicks = 0;
-            if (_judgingRestart)
-            {
-                _framesSinceRestart += framesDelta;
-                if (_framesSinceRestart > 1)
-                {
-                    _judgingRestart = false;
-                    _requiredZeroTicks = BaseZeroTicks;
-                }
-            }
-            return false;
+            _lastHash = null;
+            return WatchdogAction.None;
         }
-        if (++_zeroTicks < _requiredZeroTicks) return false;
-        _zeroTicks = 0;
-        if (_judgingRestart)
-            _requiredZeroTicks = System.Math.Min(_requiredZeroTicks * 2, MaxZeroTicks);
-        _judgingRestart = true;
-        _framesSinceRestart = 0;
+        _zeroTicks++;
+        if (_zeroTicks >= CeilingZeroTicks) return Restarted();
+        if (ProbeBroken) return WatchdogAction.None;
+        return WatchdogAction.Probe;
+    }
+
+    /// <summary>A probe produced an image hash. True when the capture is stale and must be recreated.</summary>
+    public bool OnProbe(ulong hash)
+    {
+        _probeFailures = 0;
+        // The first probe of a run is a baseline; the page may have changed before the run began.
+        var changed = _lastHash is { } previous && previous != hash && _zeroTicks >= 2;
+        _lastHash = hash;
+        if (!changed) return false;
+        Restarted();
         return true;
+    }
+
+    public void OnProbeFailed()
+    {
+        _probeFailures++;
+    }
+
+    private WatchdogAction Restarted()
+    {
+        _zeroTicks = 0;
+        _lastHash = null;
+        return WatchdogAction.Restart;
     }
 }

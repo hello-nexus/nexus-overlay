@@ -80,6 +80,8 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private long _captureGapCount;
     private int _restartRequested;
     private readonly StreamWatchdogPolicy _watchdog = new();
+    private IntPtr _previewHandler;
+    private IntPtr _previewStream;
     private bool _engineStarted;
     private bool _disposed;
     private bool _taskbarTabPending;
@@ -497,12 +499,9 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         }
     }
 
-    // Bench-proven staleness fix: WGC on an off-screen window silently stops
-    // delivering frames after minutes; recreating item+pool+session on the
-    // same HWND re-hooks in under a second. Never reload the page (kills
-    // capture permanently). Zero frames is also what a fully static page
-    // produces; StreamWatchdogPolicy backs the restarts off when a restart
-    // yields nothing beyond the new session's initial frame.
+    // WGC on an off-screen window can silently stop delivering frames; recreating item+pool+session on the
+    // same HWND re-hooks it. Never reload the page (kills capture permanently). Zero frames is also a static
+    // page, so a restart needs the WebView's CapturePreview hash to have changed meanwhile.
     private void OnWatchdogTick()
     {
         if (_disposed || _capture is null) return;
@@ -514,9 +513,74 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         var pumped = Interlocked.Read(ref _framesPumped);
         var delta = pumped - _framesAtLastTick;
         _framesAtLastTick = pumped;
-        if (!_watchdog.Tick(delta)) return;
-        Log.Warn($"stream-host {SessionId}: no frames for {_watchdog.RequiredZeroTicks} ticks, recreating WGC session");
+        // An unanswered probe stays pending so its late completion cannot land on a newer probe.
+        var probeBusy = _previewStream != IntPtr.Zero;
+        if (probeBusy) _watchdog.OnProbeFailed();
+        switch (_watchdog.Tick(delta))
+        {
+            case WatchdogAction.Probe:
+                if (!probeBusy) StartProbe();
+                break;
+            case WatchdogAction.Restart:
+                RequestRestart($"no frames for {StreamWatchdogPolicy.CeilingZeroTicks} ticks (probe bound)");
+                break;
+        }
+    }
+
+    private void RequestRestart(string reason)
+    {
+        Log.Warn($"stream-host {SessionId}: {reason}, recreating WGC session");
         Interlocked.Exchange(ref _restartRequested, 1);
+    }
+
+    private void StartProbe()
+    {
+        if (_coreWebView2 == IntPtr.Zero) return;
+        if (_previewHandler == IntPtr.Zero)
+            _previewHandler = WebView2Callbacks.CreateCapturePreviewCompletedHandler(&OnPreviewCompletedStatic);
+        var stream = PreviewProbe.CreateStream();
+        if (stream == IntPtr.Zero)
+        {
+            _watchdog.OnProbeFailed();
+            return;
+        }
+        _previewStream = stream;
+        const int jpeg = 1;
+        if (WebView2Native.Failed(Wv2.Wv2_CapturePreview(_coreWebView2, jpeg, stream, _previewHandler)))
+            FinishProbe(failed: true);
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnPreviewCompletedStatic(IntPtr self, int errorCode)
+    {
+        FindByPreviewHandler(self)?.OnPreviewCompleted(errorCode);
+        return WebView2Native.S_OK;
+    }
+
+    private void OnPreviewCompleted(int errorCode)
+    {
+        if (_disposed || _previewStream == IntPtr.Zero) return;
+        FinishProbe(failed: WebView2Native.Failed(errorCode));
+    }
+
+    private void FinishProbe(bool failed)
+    {
+        var stream = _previewStream;
+        _previewStream = IntPtr.Zero;
+        if (stream == IntPtr.Zero) return;
+        ulong? hash = null;
+        try
+        {
+            if (!failed) hash = PreviewProbe.Hash(stream);
+        }
+        finally { Wv2.Release(stream); }
+        if (hash is null)
+        {
+            _watchdog.OnProbeFailed();
+            return;
+        }
+        if (_watchdog.OnProbe(hash.Value))
+            RequestRestart("page painted while WGC delivered no frames");
     }
 
     private void PostFault()
@@ -539,6 +603,11 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
             pumpExited = _pumpThread.Join(2000);
         _pumpThread = null;
 
+        if (_previewStream != IntPtr.Zero)
+        {
+            Wv2.Release(_previewStream);
+            _previewStream = IntPtr.Zero;
+        }
         _ingest?.Dispose();
         _ingest = null;
         if (!pumpExited)
@@ -581,6 +650,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         ReleaseHandler(ref _envCreatedHandler);
         ReleaseHandler(ref _ctrlCreatedHandler);
         ReleaseHandler(ref _navCompletedHandler);
+        ReleaseHandler(ref _previewHandler);
         if (_envOptions != IntPtr.Zero)
         {
             Wv2.Release(_envOptions);
@@ -616,6 +686,13 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     {
         foreach (var kv in _instances)
             if (kv.Value._ctrlCreatedHandler == h) return kv.Value;
+        return null;
+    }
+
+    private static StreamPanelHost? FindByPreviewHandler(IntPtr h)
+    {
+        foreach (var kv in _instances)
+            if (kv.Value._previewHandler == h) return kv.Value;
         return null;
     }
 

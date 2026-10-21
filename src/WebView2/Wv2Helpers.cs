@@ -168,6 +168,13 @@ internal static unsafe class Wv2
         fixed (char* s = script) return fn(wv2, s, completedHandler);
     }
 
+    /// <summary>imageFormat 1 is JPEG; the stream receives the encoded image.</summary>
+    public static int Wv2_CapturePreview(IntPtr wv2, int imageFormat, IntPtr stream, IntPtr completedHandler)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, IntPtr, IntPtr, int>)Slot(wv2, WebView2Vtable.Wv2_CapturePreview);
+        return fn(wv2, imageFormat, stream, completedHandler);
+    }
+
     public static int Wv2_Reload(IntPtr wv2)
     {
         var fn = (delegate* unmanaged[Stdcall]<IntPtr, int>)Slot(wv2, WebView2Vtable.Wv2_Reload);
