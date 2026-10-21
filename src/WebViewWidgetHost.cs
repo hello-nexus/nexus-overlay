@@ -222,6 +222,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
         if (!want)
         {
+            ShowCursorHiddenByTouch();
             var prev = _prevForeground;
             _prevForeground = IntPtr.Zero;
             if (Native.GetForegroundWindow() == _kioskHwnd && prev != IntPtr.Zero && prev != _kioskHwnd
@@ -236,6 +237,22 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         {
             if (v.Ready && v.AppliedShown && v.AppliedInteractive) { Wv2.Ctrl_MoveFocusProgrammatic(v.Controller); break; }
         }
+    }
+
+    // WebView2 hides the cursor on touch with ShowCursor and shows it again only on a mouse move over
+    // the view, which a non-interactive view never gets. Its browser thread shares this thread's input
+    // queue, so raising the count here makes the cursor visible over the overlay windows again.
+    private static void ShowCursorHiddenByTouch()
+    {
+        var count = Native.ShowCursor(true);
+        if (count > 0)
+        {
+            Native.ShowCursor(false);
+            return;
+        }
+        var shows = 1;
+        for (; count < 0 && shows < 64; shows++) count = Native.ShowCursor(true);
+        Log.Info($"webview-widget showed the cursor a touch had hidden, display count +{shows}");
     }
 
     // Last foreground window other than the kiosk, so focus can go back once no view is interactive.

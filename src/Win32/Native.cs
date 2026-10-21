@@ -683,6 +683,9 @@ internal static unsafe class Native
     public static extern bool SetCursorPos(int X, int Y);
 
     [DllImport("user32.dll")]
+    public static extern int ShowCursor(bool bShow);
+
+    [DllImport("user32.dll")]
     public static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
 
     public const uint MONITOR_DEFAULTTONULL = 0;
