@@ -78,9 +78,8 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private long _lastFrameArrivalTicks;
     private long _lastFrameTimeTicks;
     private long _captureGapCount;
-    private int _zeroFrameTicks;
     private int _restartRequested;
-    private bool _restartedThisEpisode;
+    private readonly StreamWatchdogPolicy _watchdog = new();
     private bool _engineStarted;
     private bool _disposed;
     private bool _taskbarTabPending;
@@ -502,8 +501,8 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     // delivering frames after minutes; recreating item+pool+session on the
     // same HWND re-hooks in under a second. Never reload the page (kills
     // capture permanently). Zero frames is also what a fully static page
-    // produces, and the two are indistinguishable here, so each zero-frame
-    // episode gets exactly one restart; frames flowing again re-arms it.
+    // produces; StreamWatchdogPolicy backs the restarts off when a restart
+    // yields nothing beyond the new session's initial frame.
     private void OnWatchdogTick()
     {
         if (_disposed || _capture is null) return;
@@ -515,17 +514,8 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         var pumped = Interlocked.Read(ref _framesPumped);
         var delta = pumped - _framesAtLastTick;
         _framesAtLastTick = pumped;
-        if (delta > 0)
-        {
-            _zeroFrameTicks = 0;
-            _restartedThisEpisode = false;
-            return;
-        }
-        _zeroFrameTicks++;
-        if (_zeroFrameTicks < 2 || _restartedThisEpisode) return;
-        _zeroFrameTicks = 0;
-        _restartedThisEpisode = true;
-        Log.Warn($"stream-host {SessionId}: no frames for two ticks, recreating WGC session");
+        if (!_watchdog.Tick(delta)) return;
+        Log.Warn($"stream-host {SessionId}: no frames for {_watchdog.RequiredZeroTicks} ticks, recreating WGC session");
         Interlocked.Exchange(ref _restartRequested, 1);
     }
 
