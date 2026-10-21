@@ -29,6 +29,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private const int ProcessFailedRenderExited = 1;
     // COREWEBVIEW2_COLOR as a raw uint has alpha in the low byte.
     private const uint DefaultBgOpaqueWhite = 0xFFFFFFFFu;
+    private const int MaxCursorShows = 64;
 
     private static readonly ConcurrentDictionary<long, WebViewWidgetHost> Hosts = new();
     private static readonly ConcurrentDictionary<long, NativeView> Views = new();
@@ -214,6 +215,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         }
         _activatable = want;
         if (want) RememberForeground();
+        else ShowCursorHiddenByTouch();
         if (!Native.IsWindow(_kioskHwnd)) return;
         var ex = Native.GetWindowLongW(_kioskHwnd, Native.GWL_EXSTYLE);
         ex = want ? ex & ~Native.WS_EX_NOACTIVATE : ex | Native.WS_EX_NOACTIVATE;
@@ -222,7 +224,6 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
         if (!want)
         {
-            ShowCursorHiddenByTouch();
             var prev = _prevForeground;
             _prevForeground = IntPtr.Zero;
             if (Native.GetForegroundWindow() == _kioskHwnd && prev != IntPtr.Zero && prev != _kioskHwnd
@@ -244,6 +245,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     // queue, so raising the count here makes the cursor visible over the overlay windows again.
     private static void ShowCursorHiddenByTouch()
     {
+        // With no mouse attached Windows starts the count at -1; raising it would show a cursor on a touch-only box.
+        if (Native.GetSystemMetrics(Native.SM_MOUSEPRESENT) == 0) return;
         var count = Native.ShowCursor(true);
         if (count > 0)
         {
@@ -251,8 +254,10 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             return;
         }
         var shows = 1;
-        for (; count < 0 && shows < 64; shows++) count = Native.ShowCursor(true);
-        Log.Info($"webview-widget showed the cursor a touch had hidden, display count +{shows}");
+        for (; count < 0 && shows < MaxCursorShows; shows++) count = Native.ShowCursor(true);
+        Log.Info(count < 0
+            ? $"webview-widget cursor still hidden after +{shows}, display count {count}"
+            : $"webview-widget showed the cursor a touch had hidden, display count +{shows}");
     }
 
     // Last foreground window other than the kiosk, so focus can go back once no view is interactive.

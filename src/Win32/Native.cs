@@ -176,6 +176,7 @@ internal static unsafe class Native
     public const int SM_CXSCREEN = 0;
     public const int SM_CYSCREEN = 1;
     public const int SM_CYCAPTION = 4;
+    public const int SM_MOUSEPRESENT = 19;
     public const int SM_CXFRAME = 32;
     public const int SM_CYFRAME = 33;
     public const int SM_CXPADDEDBORDER = 92;
