@@ -464,7 +464,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private void StartWebView2Init()
     {
         var userDataDir = UserDataPaths.Profile(
-            _compatibilityRendering ? "PanelCompatWebView2" : "DesktopWebView2");
+            _compatibilityRendering ? "PanelCompatWebView2" : "DesktopWebView2", ProfileMigration.UiState);
         try { Directory.CreateDirectory(userDataDir); } catch { /* best-effort */ }
 
         if (_compatibilityRendering) _envOptions = Wv2EnvironmentOptions.Create(CompatibilityBrowserArguments);

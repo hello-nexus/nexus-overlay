@@ -20,26 +20,21 @@ public sealed class UserDataPathsTests : IDisposable
         File.WriteAllText(path, text);
     }
 
-    private static readonly string[] Ui = ProfileMigration.StateFor("DesktopWebView2");
-    private static readonly string[] Widget = ProfileMigration.StateFor("WidgetWebView2");
+    private static readonly ProfileMigration.StateItem[] Ui = ProfileMigration.UiState;
+    private static readonly ProfileMigration.StateItem[] Widget = ProfileMigration.WidgetState;
 
     [Fact]
     public void LogsDir_is_under_the_nexus_root()
         => Assert.Equal(Path.Combine("x", "Nexus", "logs"), UserDataPaths.LogsDir("x"));
 
-    [Theory]
-    [InlineData("DesktopWebView2", false)]
-    [InlineData("PanelCompatWebView2", false)]
-    [InlineData("StreamWebView2", false)]
-    [InlineData("WidgetWebView2", true)]
-    [InlineData("PanelCompatWidgetWebView2", true)]
-    public void Widget_profiles_also_carry_cookies_and_the_crypt_key(string leaf, bool widget)
+    [Fact]
+    public void Only_the_widget_set_carries_cookies_and_the_crypt_key()
     {
-        var state = ProfileMigration.StateFor(leaf);
-        Assert.Equal(widget, state.Contains(Path.Combine("EBWebView", "Local State")));
-        Assert.Equal(widget, state.Contains(Path.Combine("EBWebView", "Default", "Network")));
-        Assert.Contains(Path.Combine("EBWebView", "Default", "Local Storage"), state);
-        Assert.Contains(Path.Combine("EBWebView", "Default", "IndexedDB"), state);
+        var local = Path.Combine("EBWebView", "Local State");
+        var net = Path.Combine("EBWebView", "Default", "Network");
+        Assert.DoesNotContain(Ui, i => i.Rel == local || i.Rel == net);
+        Assert.Contains(Widget, i => i.Rel == local && i.RequiresOwner);
+        Assert.Contains(Widget, i => i.Rel == net && i.After == local);
     }
 
     [Fact]
@@ -77,6 +72,53 @@ public sealed class UserDataPathsTests : IDisposable
         Assert.Equal("crypt-key", File.ReadAllText(Path.Combine(dest, "EBWebView", "Local State")));
         Assert.Equal("jar", File.ReadAllText(Path.Combine(dest, "EBWebView", "Default", "Network", "Cookies")));
         Assert.True(File.Exists(Path.Combine(dest, "EBWebView", "Default", "Network", "Cookies-journal")));
+    }
+
+    [Fact]
+    public void Cookies_are_not_copied_when_the_crypt_key_is_owned_by_another_account()
+    {
+        var legacy = Path.Combine(_root, "legacy");
+        var dest = Path.Combine(_root, "new");
+        Write(Path.Combine(legacy, "EBWebView", "Local State"), "key");
+        Write(Path.Combine(legacy, "EBWebView", "Default", "Network", "Cookies"), "jar");
+        Write(Path.Combine(legacy, "EBWebView", "Default", "Local Storage", "a"), "ls");
+
+        Assert.True(ProfileMigration.Run(legacy, dest, Widget, null, _ => false));
+
+        Assert.False(File.Exists(Path.Combine(dest, "EBWebView", "Local State")));
+        Assert.False(Directory.Exists(Path.Combine(dest, "EBWebView", "Default", "Network")));
+        Assert.True(File.Exists(Path.Combine(dest, "EBWebView", "Default", "Local Storage", "a")));
+    }
+
+    [Fact]
+    public void Cookies_are_not_copied_when_local_state_already_exists_at_the_destination()
+    {
+        var legacy = Path.Combine(_root, "legacy");
+        var dest = Path.Combine(_root, "new");
+        Write(Path.Combine(legacy, "EBWebView", "Local State"), "old-key");
+        Write(Path.Combine(legacy, "EBWebView", "Default", "Network", "Cookies"), "jar");
+        Write(Path.Combine(dest, "EBWebView", "Local State"), "new-key");
+
+        Assert.True(ProfileMigration.Run(legacy, dest, Widget));
+
+        Assert.Equal("new-key", File.ReadAllText(Path.Combine(dest, "EBWebView", "Local State")));
+        Assert.False(Directory.Exists(Path.Combine(dest, "EBWebView", "Default", "Network")));
+    }
+
+    [Fact]
+    public void Leftover_temp_items_are_removed_even_when_the_destination_exists()
+    {
+        var legacy = Path.Combine(_root, "legacy");
+        var dest = Path.Combine(_root, "new");
+        var ls = Path.Combine("EBWebView", "Default", "Local Storage");
+        Write(Path.Combine(legacy, ls, "a"), "old");
+        Write(Path.Combine(dest, ls, "a"), "live");
+        Write(Path.Combine(dest, ls + ".migrating", "junk"), "half");
+
+        ProfileMigration.Run(legacy, dest, Ui);
+
+        Assert.False(Directory.Exists(Path.Combine(dest, ls + ".migrating")));
+        Assert.Equal("live", File.ReadAllText(Path.Combine(dest, ls, "a")));
     }
 
     [Fact]

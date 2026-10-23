@@ -24,13 +24,13 @@ internal static class UserDataPaths
     /// Every surface must resolve it here so they keep sharing one browser
     /// process tree.
     /// </summary>
-    internal static string DesktopProfile() => Profile("DesktopWebView2");
+    internal static string DesktopProfile() => Profile("DesktopWebView2", ProfileMigration.UiState);
 
     /// <summary>
     /// The per-user profile folder for a leaf, migrated once from the legacy
     /// ProgramData profile of the same name. Memoized per process.
     /// </summary>
-    internal static string Profile(string leaf)
+    internal static string Profile(string leaf, ProfileMigration.StateItem[] state)
     {
         lock (Sync)
         {
@@ -39,11 +39,31 @@ internal static class UserDataPaths
                 NexusRoot(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)), leaf);
             var legacy = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Nexus", leaf);
-            try { ProfileMigration.Run(legacy, dir, ProfileMigration.StateFor(leaf), Log.Info); }
+            try { ProfileMigration.Run(legacy, dir, state, Log.Info, OwnedByCurrentUser); }
             catch (Exception ex) { Log.Warn($"profile migration failed: {ex.Message}"); }
             Resolved[leaf] = dir;
             return dir;
         }
+    }
+
+    /// <summary>True when the file's owner is the current user. A DPAPI-protected key written by another account (an elevated process) cannot be decrypted here.</summary>
+    internal static bool OwnedByCurrentUser(string path)
+    {
+        try
+        {
+            if (!OperatingSystem.IsWindows()) return true;
+            return OwnerMatches(path);
+        }
+        catch { return false; }
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static bool OwnerMatches(string path)
+    {
+        var owner = new FileInfo(path).GetAccessControl()
+            .GetOwner(typeof(System.Security.Principal.SecurityIdentifier));
+        return owner is not null
+            && owner.Equals(System.Security.Principal.WindowsIdentity.GetCurrent().User);
     }
 }
 
@@ -52,27 +72,33 @@ internal static class ProfileMigration
 {
     internal const string MarkerName = ".nexus-migrated";
 
+    /// <summary>
+    /// One migrated item. <paramref name="After"/> names another item that must have been copied
+    /// in the same run; <paramref name="RequiresOwner"/> limits the copy to files owned by the current user.
+    /// </summary>
+    internal sealed record StateItem(string Rel, string? After = null, bool RequiresOwner = false);
+
+    private static readonly string LocalState = Path.Combine("EBWebView", "Local State");
+
     // Local Storage holds the dashboard's cached auth token and UI settings;
     // IndexedDB holds app-level stores.
-    private static readonly string[] UiState =
+    internal static readonly StateItem[] UiState =
     {
-        Path.Combine("EBWebView", "Default", "Local Storage"),
-        Path.Combine("EBWebView", "Default", "IndexedDB"),
+        new(Path.Combine("EBWebView", "Default", "Local Storage")),
+        new(Path.Combine("EBWebView", "Default", "IndexedDB")),
     };
 
-    // Embedded-site profiles also carry logins: Network holds the cookie jar
-    // and Local State the DPAPI-protected os_crypt key, without which the
-    // browser silently drops the encrypted cookies.
-    private static readonly string[] WidgetState =
+    // Embedded-site profiles also carry logins: Network holds the cookie jar and
+    // Local State the DPAPI-protected os_crypt key. Cookies copied without the
+    // key they were encrypted with are silently dropped, so Network follows
+    // Local State and neither is copied for a key another account owns.
+    internal static readonly StateItem[] WidgetState =
     {
-        Path.Combine("EBWebView", "Local State"),
-        Path.Combine("EBWebView", "Default", "Network"),
-        Path.Combine("EBWebView", "Default", "Local Storage"),
-        Path.Combine("EBWebView", "Default", "IndexedDB"),
+        new(LocalState, RequiresOwner: true),
+        new(Path.Combine("EBWebView", "Default", "Network"), After: LocalState),
+        new(Path.Combine("EBWebView", "Default", "Local Storage")),
+        new(Path.Combine("EBWebView", "Default", "IndexedDB")),
     };
-
-    internal static string[] StateFor(string leaf) =>
-        leaf.Contains("Widget", StringComparison.OrdinalIgnoreCase) ? WidgetState : UiState;
 
     /// <summary>
     /// Copies each missing state item from the legacy profile, via a sibling
@@ -83,28 +109,33 @@ internal static class ProfileMigration
     /// marker is written only when every item was copied or skipped, so any
     /// failure retries on the next launch. Best effort: false on failure.
     /// </summary>
-    internal static bool Run(string legacyDir, string newDir, string[] state, Action<string>? log = null)
+    internal static bool Run(string legacyDir, string newDir, StateItem[] state, Action<string>? log = null,
+        Func<string, bool>? ownerOk = null)
     {
         if (File.Exists(Path.Combine(newDir, MarkerName)) || !Directory.Exists(legacyDir)) return false;
         var ok = true;
-        foreach (var rel in state)
+        var copied = new System.Collections.Generic.HashSet<string>();
+        foreach (var item in state)
         {
-            var src = Path.Combine(legacyDir, rel);
-            var dst = Path.Combine(newDir, rel);
-            if (!(Directory.Exists(src) || File.Exists(src)) || Directory.Exists(dst) || File.Exists(dst)) continue;
+            var src = Path.Combine(legacyDir, item.Rel);
+            var dst = Path.Combine(newDir, item.Rel);
             var temp = dst + ".migrating";
+            try { DeleteIfPresent(temp); } catch { }
+            if (!(Directory.Exists(src) || File.Exists(src)) || Directory.Exists(dst) || File.Exists(dst)) continue;
+            if (item.After is not null && !copied.Contains(item.After)) continue;
+            if (item.RequiresOwner && ownerOk is not null && !ownerOk(src)) continue;
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
-                DeleteIfPresent(temp);
                 Copy(src, temp);
                 if (Directory.Exists(temp)) Directory.Move(temp, dst);
                 else File.Move(temp, dst);
+                copied.Add(item.Rel);
             }
             catch (Exception ex)
             {
                 ok = false;
-                log?.Invoke($"profile migration of {rel} failed: {ex.Message}");
+                log?.Invoke($"profile migration of {item.Rel} failed: {ex.Message}");
                 try { DeleteIfPresent(temp); } catch { }
             }
         }
