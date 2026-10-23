@@ -309,7 +309,7 @@ internal static class Program
         var reserve = _state?.ReserveMonitor ?? true;
         var compat = _state?.Y70CompatibilityRendering ?? false;
         var topmost = _state?.PanelAlwaysOnTop ?? true;
-        var url = PanelKioskUrl.Y70(ServiceOrigin, _pairedToken, seeThrough);
+        var url = PanelKioskUrl.For(ServiceOrigin, PanelDisplay.Surface, _pairedToken, seeThrough);
         _panelKiosk = new PanelKioskWindow(target, url, reserve, seeThrough: seeThrough, compatibilityRendering: compat, topmost: topmost);
         var created = _panelKiosk;
         // Drop the reference on ANY teardown, including one the OS drives

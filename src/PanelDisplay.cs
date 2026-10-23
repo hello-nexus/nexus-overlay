@@ -23,6 +23,9 @@ internal static class PanelDisplay
         "RTK0004", "RTD1100", "RTK1234", "RTK2234", "BOE2143", "RTK409A", "RTK2345",
     };
 
+    // Every name above is a Y70 variant, so a Find() match is always this surface.
+    internal const string Surface = "y70";
+
     // Last scan result. The kiosk poll runs Find() every 5 s; logging only when
     // the monitor set or match outcome changes keeps the steady state silent
     // instead of spamming the log six lines per tick.
