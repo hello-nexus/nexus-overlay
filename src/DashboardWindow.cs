@@ -618,9 +618,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     {
         // Same user-data-dir as OverlayWindow so Chromium reuses the existing
         // browser/GPU/utility processes instead of spawning a second tree.
-        var userDataDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Nexus", "DesktopWebView2");
+        var userDataDir = UserDataPaths.DesktopProfile();
         try { Directory.CreateDirectory(userDataDir); } catch { /* best-effort */ }
 
         _envCreatedHandler = WebView2Callbacks.CreateEnvCreatedHandler(&OnEnvCreatedStatic);

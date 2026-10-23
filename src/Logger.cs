@@ -9,7 +9,8 @@ namespace Nexus.Overlay;
 /// nexus-service.log. ProgramData (not LocalAppData) because the overlay runs
 /// under SYSTEM or the console user: LocalAppData differs between them, and
 /// SYSTEM's resolves to C:\Windows\System32\config\systemprofile\AppData\Local,
-/// invisible to users.
+/// invisible to users. When that file is not writable (the folder holds files
+/// created by an elevated process), lines go to %LocalAppData%\Nexus\logs.
 /// </summary>
 internal static class Log
 {
@@ -19,7 +20,9 @@ internal static class Log
     private static readonly string LogDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "Nexus", "logs");
-    private static readonly string LogPath = Path.Combine(LogDir, "nexus-overlay.log");
+    private static readonly string FallbackDir = UserDataPaths.LogsDir(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+    private const string LogFileName = "nexus-overlay.log";
     private static readonly object Sync = new();
 
     public static void Info(string message) => Write("INFO", message);
@@ -32,9 +35,8 @@ internal static class Log
         {
             lock (Sync)
             {
-                Directory.CreateDirectory(LogDir);
-                File.AppendAllText(
-                    LogPath,
+                LogFallback.Append(
+                    LogDir, FallbackDir, LogFileName,
                     $"{DateTime.UtcNow:yyyy-MM-dd HH:mm:ss.fff} [{level}] {message}{Environment.NewLine}");
             }
         }
@@ -48,30 +50,36 @@ internal static class Log
     /// </summary>
     public static void Rotate()
     {
+        lock (Sync)
+        {
+            RotateIn(LogDir);
+            RotateIn(FallbackDir);
+        }
+    }
+
+    private static void RotateIn(string dir)
+    {
         try
         {
-            lock (Sync)
-            {
-                if (!File.Exists(LogPath) || new FileInfo(LogPath).Length == 0)
-                    return;
-                Directory.CreateDirectory(LogDir);
-                var archived = Path.Combine(LogDir, $"nexus-overlay-{DateTime.Now:yyyyMMdd-HHmmss}.log");
-                if (File.Exists(archived)) File.Delete(archived);
-                File.Move(LogPath, archived);
-                Prune();
-            }
+            var path = Path.Combine(dir, LogFileName);
+            if (!File.Exists(path) || new FileInfo(path).Length == 0)
+                return;
+            var archived = Path.Combine(dir, $"nexus-overlay-{DateTime.Now:yyyyMMdd-HHmmss}.log");
+            if (File.Exists(archived)) File.Delete(archived);
+            File.Move(path, archived);
+            Prune(dir);
         }
         catch { /* best effort */ }
     }
 
-    private static void Prune()
+    private static void Prune(string dir)
     {
         try
         {
             // The yyyyMMdd-HHmmss stamp sorts oldest-first by ordinal; drop
             // everything before the last MaxRotatedLogs. Matches nexus-overlay.log,
             // not the live nexus-overlay.log (no dash after the name).
-            var rotated = Directory.GetFiles(LogDir, "nexus-overlay-*.log");
+            var rotated = Directory.GetFiles(dir, "nexus-overlay-*.log");
             if (rotated.Length <= MaxRotatedLogs)
                 return;
             Array.Sort(rotated, StringComparer.Ordinal);

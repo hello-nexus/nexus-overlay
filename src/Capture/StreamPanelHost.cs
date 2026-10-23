@@ -166,9 +166,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
 
     private void StartWebView2Init()
     {
-        var userDataDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Nexus", "StreamWebView2");
+        var userDataDir = UserDataPaths.UserProfile("StreamWebView2");
         try { Directory.CreateDirectory(userDataDir); } catch { }
 
         _envOptions = Wv2EnvironmentOptions.Create();

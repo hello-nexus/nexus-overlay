@@ -463,9 +463,9 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
 
     private void StartWebView2Init()
     {
-        var userDataDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Nexus", _compatibilityRendering ? "PanelCompatWebView2" : "DesktopWebView2");
+        var userDataDir = _compatibilityRendering
+            ? UserDataPaths.UserProfile("PanelCompatWebView2")
+            : UserDataPaths.DesktopProfile();
         try { Directory.CreateDirectory(userDataDir); } catch { /* best-effort */ }
 
         if (_compatibilityRendering) _envOptions = Wv2EnvironmentOptions.Create(CompatibilityBrowserArguments);

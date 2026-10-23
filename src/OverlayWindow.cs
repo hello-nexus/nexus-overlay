@@ -186,11 +186,7 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
 
     private void StartWebView2Init()
     {
-        // %ProgramData%\Nexus\DesktopWebView2 - shared between SYSTEM and user
-        // sessions.
-        var userDataDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Nexus", "DesktopWebView2");
+        var userDataDir = UserDataPaths.DesktopProfile();
         try { Directory.CreateDirectory(userDataDir); } catch { /* best-effort */ }
 
         _envCreatedHandler = WebView2Callbacks.CreateEnvCreatedHandler(&OnEnvCreatedStatic);

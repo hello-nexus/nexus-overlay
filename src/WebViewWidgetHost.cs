@@ -319,9 +319,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private void EnsureEnv()
     {
         if (_env != IntPtr.Zero || _envPending) return;
-        var dir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-            "Nexus", _compatibilityRendering ? "PanelCompatWidgetWebView2" : "WidgetWebView2");
+        var dir = UserDataPaths.UserProfile(_compatibilityRendering ? "PanelCompatWidgetWebView2" : "WidgetWebView2");
         try { Directory.CreateDirectory(dir); } catch { /* best-effort */ }
 
         if (_envOptions != IntPtr.Zero) { Wv2.Release(_envOptions); _envOptions = IntPtr.Zero; }

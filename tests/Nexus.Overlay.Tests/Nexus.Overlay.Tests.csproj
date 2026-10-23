@@ -41,6 +41,8 @@
     <Compile Include="..\..\src\Capture\StreamHostPlan.cs" Link="src\Capture\StreamHostPlan.cs" />
     <Compile Include="..\..\src\Capture\StreamWatchdogPolicy.cs" Link="src\Capture\StreamWatchdogPolicy.cs" />
     <Compile Include="..\..\src\ProcessTree.cs" Link="src\ProcessTree.cs" />
+    <Compile Include="..\..\src\UserDataPaths.cs" Link="src\UserDataPaths.cs" />
+    <Compile Include="..\..\src\Logger.cs" Link="src\Logger.cs" />
   </ItemGroup>
 
 </Project>
