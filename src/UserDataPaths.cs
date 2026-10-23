@@ -183,7 +183,12 @@ internal static class ProfileMigration
         finally
         {
             System.Runtime.InteropServices.Marshal.FreeHGlobal(input.pbData);
-            if (output.pbData != IntPtr.Zero) LocalFree(output.pbData);
+            if (output.pbData != IntPtr.Zero)
+            {
+                // The output is the decrypted key: wipe it before releasing.
+                System.Runtime.InteropServices.Marshal.Copy(new byte[output.cbData], 0, output.pbData, (int)output.cbData);
+                LocalFree(output.pbData);
+            }
         }
     }
 
