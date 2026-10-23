@@ -12,86 +12,135 @@ namespace Nexus.Overlay;
 /// </summary>
 internal static class UserDataPaths
 {
-    internal const string DesktopProfileLeaf = "DesktopWebView2";
-
-    private static readonly object MigrationSync = new();
-    private static string? _desktopProfile;
+    private static readonly object Sync = new();
+    private static readonly System.Collections.Generic.Dictionary<string, string> Resolved = new(StringComparer.OrdinalIgnoreCase);
 
     internal static string NexusRoot(string localAppData) => Path.Combine(localAppData, "Nexus");
 
     internal static string LogsDir(string localAppData) => Path.Combine(NexusRoot(localAppData), "logs");
 
     /// <summary>
-    /// The shared profile folder for the dashboard, overlay and kiosk surfaces,
-    /// migrated from the legacy ProgramData profile on first use. Every surface
-    /// must resolve it here so they keep sharing one browser process tree.
+    /// The shared profile folder for the dashboard, overlay and kiosk surfaces.
+    /// Every surface must resolve it here so they keep sharing one browser
+    /// process tree.
     /// </summary>
-    internal static string DesktopProfile()
+    internal static string DesktopProfile() => Profile("DesktopWebView2");
+
+    /// <summary>
+    /// The per-user profile folder for a leaf, migrated once from the legacy
+    /// ProgramData profile of the same name. Memoized per process.
+    /// </summary>
+    internal static string Profile(string leaf)
     {
-        lock (MigrationSync)
+        lock (Sync)
         {
-            if (_desktopProfile is not null) return _desktopProfile;
+            if (Resolved.TryGetValue(leaf, out var cached)) return cached;
             var dir = Path.Combine(
-                NexusRoot(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)),
-                DesktopProfileLeaf);
+                NexusRoot(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)), leaf);
             var legacy = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                "Nexus", DesktopProfileLeaf);
-            try { ProfileMigration.Run(legacy, dir, Log.Info); }
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Nexus", leaf);
+            try { ProfileMigration.Run(legacy, dir, ProfileMigration.StateFor(leaf), Log.Info); }
             catch (Exception ex) { Log.Warn($"profile migration failed: {ex.Message}"); }
-            _desktopProfile = dir;
+            Resolved[leaf] = dir;
             return dir;
         }
     }
-
-    /// <summary>Per-user folder for a surface that never shared the desktop profile.</summary>
-    internal static string UserProfile(string leaf) => Path.Combine(
-        NexusRoot(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)), leaf);
 }
 
 /// <summary>One-time copy of the UI state from the legacy ProgramData profile.</summary>
 internal static class ProfileMigration
 {
-    // Relative to the user-data-dir. Local Storage holds the dashboard's cached
-    // auth token and UI settings; IndexedDB holds app-level stores.
-    private static readonly string[] StateDirs =
+    internal const string MarkerName = ".nexus-migrated";
+
+    // Local Storage holds the dashboard's cached auth token and UI settings;
+    // IndexedDB holds app-level stores.
+    private static readonly string[] UiState =
     {
         Path.Combine("EBWebView", "Default", "Local Storage"),
         Path.Combine("EBWebView", "Default", "IndexedDB"),
     };
 
-    /// <summary>True when a copy is warranted: nothing at the destination, a profile at the source.</summary>
-    internal static bool ShouldMigrate(bool destinationExists, bool legacyExists) =>
-        !destinationExists && legacyExists;
+    // Embedded-site profiles also carry logins: Network holds the cookie jar
+    // and Local State the DPAPI-protected os_crypt key, without which the
+    // browser silently drops the encrypted cookies.
+    private static readonly string[] WidgetState =
+    {
+        Path.Combine("EBWebView", "Local State"),
+        Path.Combine("EBWebView", "Default", "Network"),
+        Path.Combine("EBWebView", "Default", "Local Storage"),
+        Path.Combine("EBWebView", "Default", "IndexedDB"),
+    };
+
+    internal static string[] StateFor(string leaf) =>
+        leaf.Contains("Widget", StringComparison.OrdinalIgnoreCase) ? WidgetState : UiState;
 
     /// <summary>
-    /// Copies the state folders into a sibling temp folder, then renames it into
-    /// place so a failed copy never leaves a half profile that later launches
-    /// would treat as migrated. Best effort: returns false on any failure.
+    /// Copies each missing state item from the legacy profile, via a sibling
+    /// temp name renamed into place so a failed copy never leaves a half item.
+    /// An item that already exists at the destination is never touched, so a
+    /// profile the browser has since used is not clobbered; the cost is that
+    /// state is lost if the browser created that item before a retry. The
+    /// marker is written only when every item was copied or skipped, so any
+    /// failure retries on the next launch. Best effort: false on failure.
     /// </summary>
-    internal static bool Run(string legacyDir, string newDir, Action<string>? log = null)
+    internal static bool Run(string legacyDir, string newDir, string[] state, Action<string>? log = null)
     {
-        if (!ShouldMigrate(Directory.Exists(newDir), Directory.Exists(legacyDir))) return false;
-        var temp = newDir + ".migrating";
+        if (File.Exists(Path.Combine(newDir, MarkerName)) || !Directory.Exists(legacyDir)) return false;
+        var ok = true;
+        foreach (var rel in state)
+        {
+            var src = Path.Combine(legacyDir, rel);
+            var dst = Path.Combine(newDir, rel);
+            if (!(Directory.Exists(src) || File.Exists(src)) || Directory.Exists(dst) || File.Exists(dst)) continue;
+            var temp = dst + ".migrating";
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
+                DeleteIfPresent(temp);
+                Copy(src, temp);
+                if (Directory.Exists(temp)) Directory.Move(temp, dst);
+                else File.Move(temp, dst);
+            }
+            catch (Exception ex)
+            {
+                ok = false;
+                log?.Invoke($"profile migration of {rel} failed: {ex.Message}");
+                try { DeleteIfPresent(temp); } catch { }
+            }
+        }
+        if (!ok) return false;
         try
         {
-            if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true);
-            Directory.CreateDirectory(temp);
-            foreach (var rel in StateDirs)
-            {
-                var src = Path.Combine(legacyDir, rel);
-                if (Directory.Exists(src)) CopyTree(src, Path.Combine(temp, rel));
-            }
-            Directory.Move(temp, newDir);
-            log?.Invoke("migrated desktop profile state to the per-user folder");
+            Directory.CreateDirectory(newDir);
+            File.WriteAllText(Path.Combine(newDir, MarkerName), "");
+            log?.Invoke("migrated profile state to the per-user folder");
             return true;
         }
         catch (Exception ex)
         {
-            log?.Invoke($"desktop profile migration skipped: {ex.Message}");
-            try { if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true); } catch { }
+            log?.Invoke($"profile migration marker failed: {ex.Message}");
             return false;
         }
+    }
+
+    private static void DeleteIfPresent(string path)
+    {
+        if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+        else if (File.Exists(path)) File.Delete(path);
+    }
+
+    private static void Copy(string src, string dst)
+    {
+        if (File.Exists(src)) { CopyFile(src, dst); return; }
+        CopyTree(src, dst);
+    }
+
+    private static void CopyFile(string file, string target)
+    {
+        using var from = new FileStream(file, FileMode.Open, FileAccess.Read,
+            FileShare.ReadWrite | FileShare.Delete);
+        using var to = new FileStream(target, FileMode.Create, FileAccess.Write);
+        from.CopyTo(to);
     }
 
     private static void CopyTree(string src, string dst)
@@ -101,10 +150,7 @@ internal static class ProfileMigration
         {
             // The leveldb LOCK is recreated by the browser; copying a held one fails.
             if (string.Equals(Path.GetFileName(file), "LOCK", StringComparison.OrdinalIgnoreCase)) continue;
-            using var from = new FileStream(file, FileMode.Open, FileAccess.Read,
-                FileShare.ReadWrite | FileShare.Delete);
-            using var to = new FileStream(Path.Combine(dst, Path.GetFileName(file)), FileMode.Create, FileAccess.Write);
-            from.CopyTo(to);
+            CopyFile(file, Path.Combine(dst, Path.GetFileName(file)));
         }
         foreach (var sub in Directory.EnumerateDirectories(src))
             CopyTree(sub, Path.Combine(dst, Path.GetFileName(sub)));
@@ -114,15 +160,22 @@ internal static class ProfileMigration
 /// <summary>Append to a log under the shared dir, falling back to the per-user dir when that is not writable.</summary>
 internal static class LogFallback
 {
+    // Dirs whose write already failed this process: later lines skip the doomed attempt.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> Failed =
+        new(StringComparer.OrdinalIgnoreCase);
+
     internal static void Append(string primaryDir, string fallbackDir, string fileName, string text)
     {
-        try
+        if (!Failed.ContainsKey(primaryDir))
         {
-            Directory.CreateDirectory(primaryDir);
-            File.AppendAllText(Path.Combine(primaryDir, fileName), text);
-            return;
+            try
+            {
+                Directory.CreateDirectory(primaryDir);
+                File.AppendAllText(Path.Combine(primaryDir, fileName), text);
+                return;
+            }
+            catch { Failed[primaryDir] = true; }
         }
-        catch { }
         Directory.CreateDirectory(fallbackDir);
         File.AppendAllText(Path.Combine(fallbackDir, fileName), text);
     }
