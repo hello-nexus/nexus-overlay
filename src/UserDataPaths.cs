@@ -39,31 +39,11 @@ internal static class UserDataPaths
                 NexusRoot(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)), leaf);
             var legacy = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Nexus", leaf);
-            try { ProfileMigration.Run(legacy, dir, state, Log.Info, OwnedByCurrentUser); }
+            try { ProfileMigration.Run(legacy, dir, state, Log.Info, ProfileMigration.CanDecryptCryptKey); }
             catch (Exception ex) { Log.Warn($"profile migration failed: {ex.Message}"); }
             Resolved[leaf] = dir;
             return dir;
         }
-    }
-
-    /// <summary>True when the file's owner is the current user. A DPAPI-protected key written by another account (an elevated process) cannot be decrypted here.</summary>
-    internal static bool OwnedByCurrentUser(string path)
-    {
-        try
-        {
-            if (!OperatingSystem.IsWindows()) return true;
-            return OwnerMatches(path);
-        }
-        catch { return false; }
-    }
-
-    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static bool OwnerMatches(string path)
-    {
-        var owner = new FileInfo(path).GetAccessControl()
-            .GetOwner(typeof(System.Security.Principal.SecurityIdentifier));
-        return owner is not null
-            && owner.Equals(System.Security.Principal.WindowsIdentity.GetCurrent().User);
     }
 }
 
@@ -74,9 +54,10 @@ internal static class ProfileMigration
 
     /// <summary>
     /// One migrated item. <paramref name="After"/> names another item that must have been copied
-    /// in the same run; <paramref name="RequiresOwner"/> limits the copy to files owned by the current user.
+    /// in the same run; <paramref name="RequiresDecryptableKey"/> limits the copy to a Local State whose os_crypt key
+    /// the current user can decrypt.
     /// </summary>
-    internal sealed record StateItem(string Rel, string? After = null, bool RequiresOwner = false);
+    internal sealed record StateItem(string Rel, string? After = null, bool RequiresDecryptableKey = false);
 
     private static readonly string LocalState = Path.Combine("EBWebView", "Local State");
 
@@ -91,10 +72,11 @@ internal static class ProfileMigration
     // Embedded-site profiles also carry logins: Network holds the cookie jar and
     // Local State the DPAPI-protected os_crypt key. Cookies copied without the
     // key they were encrypted with are silently dropped, so Network follows
-    // Local State and neither is copied for a key another account owns.
+    // Local State, and neither is copied unless the current user can decrypt
+    // that key (a key made under another Windows account cannot be).
     internal static readonly StateItem[] WidgetState =
     {
-        new(LocalState, RequiresOwner: true),
+        new(LocalState, RequiresDecryptableKey: true),
         new(Path.Combine("EBWebView", "Default", "Network"), After: LocalState),
         new(Path.Combine("EBWebView", "Default", "Local Storage")),
         new(Path.Combine("EBWebView", "Default", "IndexedDB")),
@@ -110,7 +92,7 @@ internal static class ProfileMigration
     /// failure retries on the next launch. Best effort: false on failure.
     /// </summary>
     internal static bool Run(string legacyDir, string newDir, StateItem[] state, Action<string>? log = null,
-        Func<string, bool>? ownerOk = null)
+        Func<string, bool>? keyOk = null)
     {
         if (File.Exists(Path.Combine(newDir, MarkerName)) || !Directory.Exists(legacyDir)) return false;
         var ok = true;
@@ -123,7 +105,7 @@ internal static class ProfileMigration
             try { DeleteIfPresent(temp); } catch { }
             if (!(Directory.Exists(src) || File.Exists(src)) || Directory.Exists(dst) || File.Exists(dst)) continue;
             if (item.After is not null && !copied.Contains(item.After)) continue;
-            if (item.RequiresOwner && ownerOk is not null && !ownerOk(src)) continue;
+            if (item.RequiresDecryptableKey && keyOk is not null && !keyOk(src)) continue;
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
@@ -153,6 +135,72 @@ internal static class ProfileMigration
             return false;
         }
     }
+
+    /// <summary>The raw DPAPI blob of Chromium's os_crypt.encrypted_key in a Local State document, or null.</summary>
+    internal static byte[]? ExtractEncryptedKey(string localStateJson)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(localStateJson);
+            if (!doc.RootElement.TryGetProperty("os_crypt", out var crypt)
+                || !crypt.TryGetProperty("encrypted_key", out var key)
+                || key.GetString() is not { } b64)
+                return null;
+            var raw = Convert.FromBase64String(b64);
+            var prefix = System.Text.Encoding.ASCII.GetBytes("DPAPI");
+            if (raw.Length <= prefix.Length || !raw.AsSpan(0, prefix.Length).SequenceEqual(prefix)) return null;
+            return raw[prefix.Length..];
+        }
+        catch { return null; }
+    }
+
+    /// <summary>True when the current Windows user can DPAPI-decrypt the key in the given Local State file. Fails safe to false.</summary>
+    internal static bool CanDecryptCryptKey(string localStatePath)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        try
+        {
+            string json;
+            using (var fs = new FileStream(localStatePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (var reader = new StreamReader(fs))
+                json = reader.ReadToEnd();
+            var blob = ExtractEncryptedKey(json);
+            return blob is not null && Unprotects(blob);
+        }
+        catch { return false; }
+    }
+
+    private static bool Unprotects(byte[] blob)
+    {
+        var input = new DataBlob { cbData = (uint)blob.Length, pbData = System.Runtime.InteropServices.Marshal.AllocHGlobal(blob.Length) };
+        var output = default(DataBlob);
+        try
+        {
+            System.Runtime.InteropServices.Marshal.Copy(blob, 0, input.pbData, blob.Length);
+            if (!CryptUnprotectData(ref input, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 1, out output)) return false;
+            return true;
+        }
+        finally
+        {
+            System.Runtime.InteropServices.Marshal.FreeHGlobal(input.pbData);
+            if (output.pbData != IntPtr.Zero) LocalFree(output.pbData);
+        }
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct DataBlob
+    {
+        public uint cbData;
+        public IntPtr pbData;
+    }
+
+    // CRYPTPROTECT_UI_FORBIDDEN (1): never prompt.
+    [System.Runtime.InteropServices.DllImport("crypt32.dll", SetLastError = true)]
+    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
+    private static extern bool CryptUnprotectData(ref DataBlob dataIn, IntPtr description, IntPtr entropy, IntPtr reserved, IntPtr prompt, uint flags, out DataBlob dataOut);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr mem);
 
     private static void DeleteIfPresent(string path)
     {

@@ -33,7 +33,7 @@ public sealed class UserDataPathsTests : IDisposable
         var local = Path.Combine("EBWebView", "Local State");
         var net = Path.Combine("EBWebView", "Default", "Network");
         Assert.DoesNotContain(Ui, i => i.Rel == local || i.Rel == net);
-        Assert.Contains(Widget, i => i.Rel == local && i.RequiresOwner);
+        Assert.Contains(Widget, i => i.Rel == local && i.RequiresDecryptableKey);
         Assert.Contains(Widget, i => i.Rel == net && i.After == local);
     }
 
@@ -75,7 +75,7 @@ public sealed class UserDataPathsTests : IDisposable
     }
 
     [Fact]
-    public void Cookies_are_not_copied_when_the_crypt_key_is_owned_by_another_account()
+    public void Cookies_are_not_copied_when_the_crypt_key_cannot_be_decrypted()
     {
         var legacy = Path.Combine(_root, "legacy");
         var dest = Path.Combine(_root, "new");
@@ -209,5 +209,61 @@ public sealed class UserDataPathsTests : IDisposable
         LogFallback.Append(bad, fallback, "o.log", "2\n");
         Assert.Equal("1\n2\n", File.ReadAllText(Path.Combine(fallback, "o.log")));
         Assert.False(Directory.Exists(bad));
+    }
+
+    private static string LocalStateJson(byte[] dpapiBlob)
+    {
+        var raw = System.Text.Encoding.ASCII.GetBytes("DPAPI").Concat(dpapiBlob).ToArray();
+        return "{\"os_crypt\":{\"encrypted_key\":\"" + Convert.ToBase64String(raw) + "\"}}";
+    }
+
+    [Fact]
+    public void ExtractEncryptedKey_strips_the_dpapi_prefix_and_rejects_bad_documents()
+    {
+        Assert.Equal(new byte[] { 1, 2, 3 }, ProfileMigration.ExtractEncryptedKey(LocalStateJson(new byte[] { 1, 2, 3 })));
+        Assert.Null(ProfileMigration.ExtractEncryptedKey("{}"));
+        Assert.Null(ProfileMigration.ExtractEncryptedKey("not json"));
+        Assert.Null(ProfileMigration.ExtractEncryptedKey("{\"os_crypt\":{\"encrypted_key\":\"AAAA\"}}"));
+    }
+
+    [Fact]
+    public void CanDecryptCryptKey_fails_safe_for_missing_or_garbage_state()
+    {
+        Assert.False(ProfileMigration.CanDecryptCryptKey(Path.Combine(_root, "none")));
+        var garbage = Path.Combine(_root, "Local State");
+        File.WriteAllText(garbage, LocalStateJson(new byte[] { 9, 9, 9, 9 }));
+        Assert.False(ProfileMigration.CanDecryptCryptKey(garbage));
+    }
+
+    [Fact]
+    public void CanDecryptCryptKey_accepts_a_key_protected_for_the_current_user()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+        var path = Path.Combine(_root, "Local State");
+        File.WriteAllText(path, LocalStateJson(Protect(new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 })));
+        Assert.True(ProfileMigration.CanDecryptCryptKey(path));
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct Blob
+    {
+        public uint cb;
+        public IntPtr pb;
+    }
+
+    [System.Runtime.InteropServices.DllImport("crypt32.dll", SetLastError = true)]
+    private static extern bool CryptProtectData(ref Blob inp, IntPtr desc, IntPtr ent, IntPtr res, IntPtr prompt, uint flags, out Blob outp);
+
+    private static byte[] Protect(byte[] data)
+    {
+        var inp = new Blob { cb = (uint)data.Length, pb = System.Runtime.InteropServices.Marshal.AllocHGlobal(data.Length) };
+        System.Runtime.InteropServices.Marshal.Copy(data, 0, inp.pb, data.Length);
+        Assert.True(CryptProtectData(ref inp, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 1, out var outp));
+        var result = new byte[outp.cb];
+        System.Runtime.InteropServices.Marshal.Copy(outp.pb, result, 0, result.Length);
+        return result;
     }
 }
