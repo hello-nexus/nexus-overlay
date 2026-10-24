@@ -21,6 +21,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private const string ContainerClassName = "Nexus.Overlay.WebViewWidget";
     internal const uint WM_WIDGET_DEFERRED = Native.WM_USER + 4;
     internal static readonly UIntPtr TimerWatchdog = new(13);
+    internal static readonly UIntPtr TimerBlurGrace = new(14);
     private const uint WatchdogPollMs = 500;
     private const uint WS_DISABLED = 0x08000000u;
     private const int PermissionStateDeny = 2;
@@ -284,6 +285,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         view.EditFocus.SetLive(IsLive(view));
         view.EditFocus.OnReport(focused, Environment.TickCount64);
         if (view.EditFocus.Focused) _lastEditing = view;
+        ArmBlurTimer();
         UpdateActivation();
     }
 
@@ -325,8 +327,32 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         }
     }
 
+    private void ArmBlurTimer()
+    {
+        long? next = null;
+        foreach (var v in _byId.Values)
+        {
+            if (v.EditFocus.BlurDeadline is { } d && (next is null || d < next)) next = d;
+        }
+        if (next is not { } deadline)
+        {
+            Native.KillTimer(_kioskHwnd, TimerBlurGrace);
+            return;
+        }
+        Native.SetTimer(_kioskHwnd, TimerBlurGrace, (uint)Math.Max(1, deadline - Environment.TickCount64), IntPtr.Zero);
+    }
+
     public void OnTimer(IntPtr timerId)
     {
+        if (timerId == (IntPtr)(long)TimerBlurGrace.ToUInt64())
+        {
+            var now = Environment.TickCount64;
+            var expired = false;
+            foreach (var v in _byId.Values) expired |= v.EditFocus.ExpireBlur(now);
+            ArmBlurTimer();
+            if (expired) UpdateActivation();
+            return;
+        }
         if (timerId != (IntPtr)(long)TimerWatchdog.ToUInt64()) return;
         if (_registry.WatchdogExpired(Environment.TickCount64)) DestroyAll("watchdog");
         else RememberForeground();
@@ -700,7 +726,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                 {
                     foreach (var v in _byId.Values)
                     {
-                        if (v.Container == hwnd) { v.EditFocus.OnPointerDown(Environment.TickCount64); break; }
+                        if (v.Container == hwnd) v.EditFocus.OnPointerDown(Environment.TickCount64);
+                        else v.EditFocus.Disarm();
                     }
                 }
                 return null;
@@ -861,6 +888,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         view.Destroyed = true;
         Views.TryRemove(view.Key, out _);
         if (_byId.TryGetValue(view.Id, out var current) && ReferenceEquals(current, view)) _byId.Remove(view.Id);
+        if (ReferenceEquals(_lastEditing, view)) _lastEditing = null;
 
         try
         {
@@ -921,6 +949,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             Native.KillTimer(_kioskHwnd, TimerWatchdog);
             _timerRunning = false;
         }
+        Native.KillTimer(_kioskHwnd, TimerBlurGrace);
         _deferredDestroy.Clear();
         Hosts.TryRemove(_key, out _);
         if (_envPending) Log.Info("webview-widget disposed with environment creation pending");

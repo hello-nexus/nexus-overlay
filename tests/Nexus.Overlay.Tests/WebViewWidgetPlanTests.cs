@@ -419,11 +419,68 @@ public class WebViewWidgetPlanTests
         f.OnPointerDown(0);
         f.OnReport(true, 10);
         f.OnReport(false, 20);
-        f.OnReport(true, 30);
+        Assert.True(f.ExpireBlur(20 + WidgetEditFocus.BlurGraceMs));
+        f.OnReport(true, 1_000);
         Assert.False(f.Focused);
-        f.OnPointerDown(40);
-        f.OnReport(true, 50);
+        f.OnPointerDown(1_100);
+        f.OnReport(true, 1_200);
         Assert.True(f.Focused);
+    }
+
+    [Fact]
+    public void EditFocus_BlurThenRefocusWithinGraceKeepsFocus()
+    {
+        var f = LiveFocus();
+        f.OnPointerDown(0);
+        f.OnReport(true, 10);
+        f.OnReport(false, 100);
+        Assert.True(f.Focused);
+        Assert.Equal(100 + WidgetEditFocus.BlurGraceMs, f.BlurDeadline);
+        f.OnReport(true, 200);
+        Assert.Null(f.BlurDeadline);
+        Assert.False(f.ExpireBlur(10_000));
+        Assert.True(f.Focused);
+    }
+
+    [Fact]
+    public void EditFocus_BlurExpiresOnlyAtDeadline()
+    {
+        var f = LiveFocus();
+        f.OnPointerDown(0);
+        f.OnReport(true, 10);
+        f.OnReport(false, 100);
+        f.OnReport(false, 300);
+        Assert.False(f.ExpireBlur(100 + WidgetEditFocus.BlurGraceMs - 1));
+        Assert.True(f.ExpireBlur(100 + WidgetEditFocus.BlurGraceMs));
+        Assert.False(f.Focused);
+    }
+
+    [Fact]
+    public void EditFocus_FalseWithoutFocusArmsNoBlur()
+    {
+        var f = LiveFocus();
+        f.OnReport(false, 10);
+        Assert.Null(f.BlurDeadline);
+    }
+
+    [Fact]
+    public void EditFocus_DisarmDropsPendingPointerDown()
+    {
+        var f = LiveFocus();
+        f.OnPointerDown(0);
+        f.Disarm();
+        f.OnReport(true, 10);
+        Assert.False(f.Focused);
+    }
+
+    [Fact]
+    public void EditFocus_NavigationDropsPendingPointerDown()
+    {
+        var f = LiveFocus();
+        f.OnPointerDown(0);
+        f.OnNavigationStarting();
+        f.OnReport(true, 10);
+        Assert.False(f.Focused);
     }
 
     [Fact]

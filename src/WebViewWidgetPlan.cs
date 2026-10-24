@@ -436,18 +436,26 @@ internal sealed class WidgetRegistry
 /// <summary>
 /// Whether a view's page has a text field focused. The page's report is not
 /// trusted alone: focus is taken only within <see cref="PointerWindowMs"/> of a
-/// pointer-down on the view that no earlier report used, so a page cannot take
-/// the foreground without a touch, and each touch allows one activation.
+/// pointer-down on the view that no earlier report used. Any tap on the view
+/// arms one activation, so within that window a page can also focus a field
+/// from script; without a tap it cannot take the foreground.
 /// </summary>
 internal sealed class WidgetEditFocus
 {
     /// <summary>The page reports after pointerup, so this also covers a press held on the field.</summary>
     public const long PointerWindowMs = 3_000;
 
+    /// <summary>A page that blurs and refocuses its field (Enter to the next field, a re-mount) keeps focus across this gap.</summary>
+    public const long BlurGraceMs = 400;
+
     private bool _live;
     private long? _pointerDownAt;
+    private long? _blurAt;
 
     public bool Focused { get; private set; }
+
+    /// <summary>When focus ends unless the page reports a field again; null when no blur is pending.</summary>
+    public long? BlurDeadline => _blurAt + BlurGraceMs;
 
     /// <summary>A pointer went down on the view (a window message the page cannot forge).</summary>
     public void OnPointerDown(long nowMs)
@@ -455,30 +463,56 @@ internal sealed class WidgetEditFocus
         if (_live) _pointerDownAt = nowMs;
     }
 
+    /// <summary>A pointer went down on another view, so this view's tap no longer authorizes anything.</summary>
+    public void Disarm() => _pointerDownAt = null;
+
     public void OnReport(bool focused, long nowMs)
     {
-        if (!focused || !_live)
+        if (!_live)
         {
-            Focused = false;
+            Clear();
             return;
         }
-        if (Focused) return;
+        if (!focused)
+        {
+            if (Focused) _blurAt ??= nowMs;
+            return;
+        }
+        if (Focused)
+        {
+            _blurAt = null;
+            return;
+        }
         if (_pointerDownAt is not { } at || nowMs - at > PointerWindowMs) return;
         _pointerDownAt = null;
         Focused = true;
     }
 
-    /// <summary>Live = shown and interactive; leaving that clears focus, which the page does not report.</summary>
+    /// <summary>Ends focus once a blur has outlasted the grace; true when it did.</summary>
+    public bool ExpireBlur(long nowMs)
+    {
+        if (BlurDeadline is not { } deadline || nowMs < deadline) return false;
+        Focused = false;
+        _blurAt = null;
+        return true;
+    }
+
+    /// <summary>Live = shown and interactive; leaving that clears focus at once, which the page does not report.</summary>
     public void SetLive(bool live)
     {
         _live = live;
-        if (live) return;
-        Focused = false;
-        _pointerDownAt = null;
+        if (!live) Clear();
     }
 
-    /// <summary>A new document starts with nothing focused.</summary>
-    public void OnNavigationStarting() => Focused = false;
+    /// <summary>A new document starts with nothing focused, and a tap that navigated must not authorize its autofocus.</summary>
+    public void OnNavigationStarting() => Clear();
+
+    private void Clear()
+    {
+        Focused = false;
+        _pointerDownAt = null;
+        _blurAt = null;
+    }
 }
 
 /// <summary>Per-view navigation bookkeeping: remembers the settled state and swallows the failure that follows a blocked download.</summary>
