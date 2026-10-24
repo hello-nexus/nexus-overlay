@@ -34,6 +34,15 @@ internal sealed class MonitorKioskManager
 
     public int Count => _kiosks.Count;
 
+    /// <summary>Live kiosk windows currently outside the topmost band.</summary>
+    public IEnumerable<PanelKioskWindow> NonTopmostWindows()
+    {
+        foreach (var entry in _kiosks.Values)
+        {
+            if (entry.Window.Hwnd != IntPtr.Zero && !entry.Window.Topmost) yield return entry.Window;
+        }
+    }
+
     public void Reconcile(IReadOnlyList<DisplayAssignment> assignments, string pairedToken)
     {
         List<string>? unhealthy = null;
@@ -171,9 +180,11 @@ internal sealed class MonitorKioskManager
         // Per-panel always-on-top toggled on a live kiosk: flip the z-order in place.
         foreach (var (displayId, entry) in _kiosks)
         {
-            if (!topmostById.TryGetValue(displayId, out var topmost) || topmost == entry.Topmost) continue;
-            entry.Topmost = topmost;
+            if (!topmostById.TryGetValue(displayId, out var topmost)) continue;
+            // Every pass, not only on change: a non-topmost kiosk re-sinks on each call.
             try { entry.Window.SetTopmost(topmost); } catch { /* best-effort */ }
+            if (topmost == entry.Topmost) continue;
+            entry.Topmost = topmost;
             Log.Info($"monitor-kiosk topmost display={displayId} -> {topmost}");
         }
         foreach (var (displayId, entry) in _kiosks)

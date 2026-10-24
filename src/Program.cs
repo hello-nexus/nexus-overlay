@@ -659,10 +659,10 @@ internal static class Program
         catch (Exception ex) { Log.Error($"overlay reconcile: {ex.Message}"); }
         try { ApplyPanelKiosk(state); }
         catch (Exception ex) { Log.Error($"panel kiosk reconcile: {ex.Message}"); }
-        try { SyncPanelWidgetBand(); }
-        catch (Exception ex) { Log.Error($"panel widget z-order: {ex.Message}"); }
         try { _monitorKiosks?.Reconcile(state.Assignments, _pairedToken); }
         catch (Exception ex) { Log.Error($"monitor-kiosk reconcile: {ex.Message}"); }
+        try { SyncPanelWidgetBand(); }
+        catch (Exception ex) { Log.Error($"panel widget z-order: {ex.Message}"); }
         SyncKeepCursorOff();
         try { _streamHosts?.Reconcile(state.Streams, _pairedToken); }
         catch (Exception ex) { Log.Error($"stream-host reconcile: {ex.Message}"); }
@@ -727,13 +727,30 @@ internal static class Program
     // windows moved onto the panel cover them, but stay above the kiosk.
     private static void SyncPanelWidgetBand()
     {
-        var kiosk = _panelKiosk is { } k && k.Hwnd != IntPtr.Zero && !k.Topmost ? k : null;
-        var kioskMonitor = kiosk is null ? IntPtr.Zero : Native.MonitorFromWindow(kiosk.Hwnd, Native.MONITOR_DEFAULTTONEAREST);
+        var sunk = new List<(IntPtr Hwnd, IntPtr Monitor)>();
+        if (_panelKiosk is { } k && k.Hwnd != IntPtr.Zero && !k.Topmost)
+            sunk.Add((k.Hwnd, Native.MonitorFromWindow(k.Hwnd, Native.MONITOR_DEFAULTTONEAREST)));
+        if (_monitorKiosks is not null)
+        {
+            foreach (var w in _monitorKiosks.NonTopmostWindows())
+                sunk.Add((w.Hwnd, Native.MonitorFromWindow(w.Hwnd, Native.MONITOR_DEFAULTTONEAREST)));
+        }
         foreach (var overlay in Overlays)
         {
-            var onPanel = kiosk is not null && overlay.Hwnd != IntPtr.Zero
-                && Native.MonitorFromWindow(overlay.Hwnd, Native.MONITOR_DEFAULTTONEAREST) == kioskMonitor;
-            overlay.SetPanelBelow(onPanel ? kiosk!.Hwnd : IntPtr.Zero);
+            var below = IntPtr.Zero;
+            if (overlay.Hwnd != IntPtr.Zero)
+            {
+                var monitor = Native.MonitorFromWindow(overlay.Hwnd, Native.MONITOR_DEFAULTTONEAREST);
+                foreach (var s in sunk)
+                {
+                    if (s.Monitor == monitor)
+                    {
+                        below = s.Hwnd;
+                        break;
+                    }
+                }
+            }
+            overlay.SetPanelBelow(below);
         }
     }
 
