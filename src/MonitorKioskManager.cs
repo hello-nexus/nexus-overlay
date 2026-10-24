@@ -177,11 +177,12 @@ internal sealed class MonitorKioskManager
             try { entry.Window.SetMonitorGuard(reserve); } catch { /* best-effort */ }
             Log.Info($"monitor-kiosk guard display={displayId} -> {reserve}");
         }
-        // Per-panel always-on-top toggled on a live kiosk: flip the z-order in place.
+        // Apply each live kiosk's per-panel always-on-top setting in place.
         foreach (var (displayId, entry) in _kiosks)
         {
             if (!topmostById.TryGetValue(displayId, out var topmost)) continue;
-            // Every pass, not only on change: a non-topmost kiosk re-sinks on each call.
+            // Called on every pass: windows moved onto the panel stack above a
+            // non-topmost kiosk, so it must re-sink on each call.
             try { entry.Window.SetTopmost(topmost); } catch { /* best-effort */ }
             if (topmost == entry.Topmost) continue;
             entry.Topmost = topmost;
