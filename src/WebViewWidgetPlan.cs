@@ -239,6 +239,7 @@ internal static class WebViewWidgetProtocol
             if (window !== top) parent.postMessage({ nexusEditableFocus: v }, '*');
             else if (window.chrome && chrome.webview) chrome.webview.postMessage({ nexusEditableFocus: v });
           };
+          // Deferred so a focusout/focusin pair yields one report and activeElement has settled.
           const check = () => setTimeout(() => send(document.hasFocus() && focused()), 0);
           addEventListener('focusin', check, true);
           addEventListener('focusout', check, true);
@@ -248,6 +249,8 @@ internal static class WebViewWidgetProtocol
             frames.set(e.source, e.data.nexusEditableFocus);
             check();
           });
+          // Clears whatever the previous document in this frame last reported.
+          send(false);
         })();
         """;
 
@@ -430,21 +433,48 @@ internal sealed class WidgetRegistry
     public bool WatchdogExpired(long nowMs) => _live.Count > 0 && nowMs - _lastSyncMs >= WatchdogMs;
 }
 
-/// <summary>Whether a view's page has a text field focused; only counts while the view is shown and interactive.</summary>
+/// <summary>
+/// Whether a view's page has a text field focused. The page's report is not
+/// trusted alone: focus is taken only within <see cref="PointerWindowMs"/> of a
+/// pointer-down on the view that no earlier report used, so a page cannot take
+/// the foreground without a touch, and each touch allows one activation.
+/// </summary>
 internal sealed class WidgetEditFocus
 {
-    private bool _eligible;
+    /// <summary>The page reports after pointerup, so this also covers a press held on the field.</summary>
+    public const long PointerWindowMs = 3_000;
+
+    private bool _live;
+    private long? _pointerDownAt;
 
     public bool Focused { get; private set; }
 
-    /// <summary>A report while the view is not eligible is dropped, since it cannot come from a touch.</summary>
-    public void OnReport(bool focused) => Focused = focused && _eligible;
-
-    /// <summary>Losing eligibility clears focus; the page does not report it when it stops taking input.</summary>
-    public void SetEligible(bool eligible)
+    /// <summary>A pointer went down on the view (a window message the page cannot forge).</summary>
+    public void OnPointerDown(long nowMs)
     {
-        _eligible = eligible;
-        if (!eligible) Focused = false;
+        if (_live) _pointerDownAt = nowMs;
+    }
+
+    public void OnReport(bool focused, long nowMs)
+    {
+        if (!focused || !_live)
+        {
+            Focused = false;
+            return;
+        }
+        if (Focused) return;
+        if (_pointerDownAt is not { } at || nowMs - at > PointerWindowMs) return;
+        _pointerDownAt = null;
+        Focused = true;
+    }
+
+    /// <summary>Live = shown and interactive; leaving that clears focus, which the page does not report.</summary>
+    public void SetLive(bool live)
+    {
+        _live = live;
+        if (live) return;
+        Focused = false;
+        _pointerDownAt = null;
     }
 
     /// <summary>A new document starts with nothing focused.</summary>

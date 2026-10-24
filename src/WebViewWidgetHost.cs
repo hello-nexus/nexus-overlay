@@ -90,6 +90,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private double _viewportH;
     private bool _interactive;
     private bool _activatable;
+    private NativeView? _lastEditing;
     private IntPtr _prevForeground;
     private bool _disposed;
 
@@ -205,18 +206,16 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private void UpdateActivation()
     {
         var interactive = false;
-        NativeView? editing = null;
         foreach (var v in _byId.Values)
         {
             var live = !_disposed && IsLive(v);
-            v.EditFocus.SetEligible(live);
+            v.EditFocus.SetLive(live);
             interactive |= live;
-            if (v.EditFocus.Focused) editing ??= v;
         }
         if (_interactive && !interactive) ShowCursorHiddenByTouch();
         _interactive = interactive;
 
-        var want = editing is not null;
+        var want = EditingView() is not null;
         if (want == _activatable)
         {
             RememberForeground();
@@ -253,21 +252,27 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     /// <summary>Moves keyboard focus to the view whose text field asked for it; false when none did.</summary>
     public bool FocusEditingView()
     {
-        if (!_activatable) return false;
+        if (!_activatable || EditingView() is not { } v) return false;
+        // The touch already focused the view; MoveFocus would blur and refocus the page, which reports the blur.
+        if (!Native.IsChild(v.Container, Native.GetFocus())) Wv2.Ctrl_MoveFocusProgrammatic(v.Controller);
+        return true;
+    }
+
+    // The view that most recently reported a focused text field wins over any other still focused one.
+    private NativeView? EditingView()
+    {
+        if (_lastEditing is { Destroyed: false } last && last.EditFocus.Focused && IsLive(last)) return last;
         foreach (var v in _byId.Values)
         {
-            if (!v.EditFocus.Focused || !IsLive(v)) continue;
-            // The touch already focused the view; MoveFocus would blur and refocus the page, which reports the blur.
-            if (!Native.IsChild(v.Container, Native.GetFocus())) Wv2.Ctrl_MoveFocusProgrammatic(v.Controller);
-            return true;
+            if (v.EditFocus.Focused && IsLive(v)) return v;
         }
-        return false;
+        return null;
     }
 
     public void OnKioskDeactivated()
     {
         if (!_activatable) return;
-        foreach (var v in _byId.Values) v.EditFocus.SetEligible(false);
+        foreach (var v in _byId.Values) v.EditFocus.SetLive(false);
         UpdateActivation();
     }
 
@@ -276,8 +281,9 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private void OnEditFocus(NativeView view, bool focused)
     {
         if (view.Destroyed || _disposed) return;
-        view.EditFocus.SetEligible(IsLive(view));
-        view.EditFocus.OnReport(focused);
+        view.EditFocus.SetLive(IsLive(view));
+        view.EditFocus.OnReport(focused, Environment.TickCount64);
+        if (view.EditFocus.Focused) _lastEditing = view;
         UpdateActivation();
     }
 
@@ -687,6 +693,17 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     {
         switch (msg)
         {
+            // Windows notifies the container when a touch or click lands on the view's browser window.
+            case Native.WM_PARENTNOTIFY:
+                var evt = (uint)((long)wParam & 0xFFFF);
+                if (evt == Native.WM_POINTERDOWN || evt == Native.WM_LBUTTONDOWN)
+                {
+                    foreach (var v in _byId.Values)
+                    {
+                        if (v.Container == hwnd) { v.EditFocus.OnPointerDown(Environment.TickCount64); break; }
+                    }
+                }
+                return null;
             case Native.WM_NCHITTEST:
                 return (IntPtr)Native.HTTRANSPARENT;
             case Native.WM_ERASEBKGND:

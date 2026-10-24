@@ -385,37 +385,87 @@ public class WebViewWidgetPlanTests
     public void ParseEditFocus_RejectsEverythingElse(string? json)
         => Assert.Null(WebViewWidgetProtocol.ParseEditFocus(json));
 
-    [Fact]
-    public void EditFocus_CountsOnlyWhileEligible()
+    private static WidgetEditFocus LiveFocus()
     {
         var f = new WidgetEditFocus();
-        f.OnReport(true);
+        f.SetLive(true);
+        return f;
+    }
+
+    [Fact]
+    public void EditFocus_RequiresPointerDownOnView()
+    {
+        var f = LiveFocus();
+        f.OnReport(true, 1_000);
         Assert.False(f.Focused);
-        f.SetEligible(true);
-        f.OnReport(true);
+        f.OnPointerDown(2_000);
+        f.OnReport(true, 2_100);
         Assert.True(f.Focused);
-        f.OnReport(false);
+    }
+
+    [Fact]
+    public void EditFocus_PointerDownExpires()
+    {
+        var f = LiveFocus();
+        f.OnPointerDown(0);
+        f.OnReport(true, WidgetEditFocus.PointerWindowMs + 1);
         Assert.False(f.Focused);
     }
 
     [Fact]
-    public void EditFocus_LosingEligibilityClears()
+    public void EditFocus_OneActivationPerPointerDown()
+    {
+        var f = LiveFocus();
+        f.OnPointerDown(0);
+        f.OnReport(true, 10);
+        f.OnReport(false, 20);
+        f.OnReport(true, 30);
+        Assert.False(f.Focused);
+        f.OnPointerDown(40);
+        f.OnReport(true, 50);
+        Assert.True(f.Focused);
+    }
+
+    [Fact]
+    public void EditFocus_StaysFocusedAcrossRepeatedTrue()
+    {
+        var f = LiveFocus();
+        f.OnPointerDown(0);
+        f.OnReport(true, 10);
+        f.OnReport(true, 100_000);
+        Assert.True(f.Focused);
+    }
+
+    [Fact]
+    public void EditFocus_NotLive_DropsReportsAndPointerDowns()
     {
         var f = new WidgetEditFocus();
-        f.SetEligible(true);
-        f.OnReport(true);
-        f.SetEligible(false);
+        f.OnPointerDown(0);
+        f.SetLive(true);
+        f.OnReport(true, 10);
         Assert.False(f.Focused);
-        f.SetEligible(true);
+    }
+
+    [Fact]
+    public void EditFocus_LeavingLiveClearsFocusAndPointerDown()
+    {
+        var f = LiveFocus();
+        f.OnPointerDown(0);
+        f.OnReport(true, 10);
+        f.OnPointerDown(20);
+        f.SetLive(false);
+        Assert.False(f.Focused);
+        f.SetLive(true);
+        f.OnReport(true, 30);
         Assert.False(f.Focused);
     }
 
     [Fact]
     public void EditFocus_NavigationClears()
     {
-        var f = new WidgetEditFocus();
-        f.SetEligible(true);
-        f.OnReport(true);
+        var f = LiveFocus();
+        f.OnPointerDown(0);
+        f.OnReport(true, 10);
         f.OnNavigationStarting();
         Assert.False(f.Focused);
     }

@@ -88,6 +88,9 @@ internal static unsafe class Native
     public const uint WM_NCLBUTTONDOWN = 0x00A1;
     public const uint WM_NCLBUTTONUP = 0x00A2;
     public const uint WM_TIMER = 0x0113;
+    public const uint WM_LBUTTONDOWN = 0x0201;
+    public const uint WM_PARENTNOTIFY = 0x0210;
+    public const uint WM_POINTERDOWN = 0x0246;
     public const uint WM_DISPLAYCHANGE = 0x007E;
     public const uint WM_DPICHANGED = 0x02E0;
     public const uint WM_DWMCOLORIZATIONCOLORCHANGED = 0x0320;
