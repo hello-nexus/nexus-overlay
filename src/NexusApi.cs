@@ -138,6 +138,8 @@ internal sealed class DisplayAssignment
     public string Backdrop { get; set; } = "";
     [JsonPropertyName("keepCursorOff")]
     public bool KeepCursorOff { get; set; }
+    [JsonPropertyName("alwaysOnTop")]
+    public bool AlwaysOnTop { get; set; } = true;
 }
 
 /// <summary>

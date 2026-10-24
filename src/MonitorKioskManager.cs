@@ -19,6 +19,7 @@ internal sealed class MonitorKioskManager
         public required string PanelDeviceId { get; init; }
         public required bool Reserve { get; set; }
         public required bool SeeThrough { get; init; }
+        public required bool Topmost { get; set; }
         public bool KeepCursorOff { get; set; }
     }
 
@@ -69,6 +70,7 @@ internal sealed class MonitorKioskManager
         var reserveById = new Dictionary<string, bool>(StringComparer.Ordinal);
         var seeThroughById = new Dictionary<string, bool>(StringComparer.Ordinal);
         var keepCursorOffById = new Dictionary<string, bool>(StringComparer.Ordinal);
+        var topmostById = new Dictionary<string, bool>(StringComparer.Ordinal);
         foreach (var assignment in assignments)
         {
             if (string.IsNullOrEmpty(assignment.DisplayId) || string.IsNullOrEmpty(assignment.PanelDeviceId)) continue;
@@ -76,6 +78,7 @@ internal sealed class MonitorKioskManager
             reserveById[assignment.DisplayId] = assignment.ReserveMonitor;
             seeThroughById[assignment.DisplayId] = assignment.Backdrop == "desktop";
             keepCursorOffById[assignment.DisplayId] = assignment.KeepCursorOff;
+            topmostById[assignment.DisplayId] = assignment.AlwaysOnTop;
         }
 
         // Arrangement/resolution changes don't alter the attached-id set, so
@@ -139,15 +142,17 @@ internal sealed class MonitorKioskManager
             {
                 var reserve = reserveById.TryGetValue(entry.DisplayId, out var r) ? r : true;
                 var seeThrough = seeThroughById.TryGetValue(entry.DisplayId, out var st2) && st2;
+                var topmost = !topmostById.TryGetValue(entry.DisplayId, out var tm) || tm;
                 var url = $"{_serviceOrigin}/panel/{Uri.EscapeDataString(entry.PanelDeviceId)}?token={Uri.EscapeDataString(pairedToken)}{(seeThrough ? "&backdrop=desktop" : "")}";
                 _kiosks[entry.DisplayId] = new KioskEntry
                 {
-                    Window = new PanelKioskWindow(monitor, url, reserve, refitOnDisplayChange: true, seeThrough: seeThrough),
+                    Window = new PanelKioskWindow(monitor, url, reserve, refitOnDisplayChange: true, seeThrough: seeThrough, topmost: topmost),
                     PanelDeviceId = entry.PanelDeviceId,
                     Reserve = reserve,
                     SeeThrough = seeThrough,
+                    Topmost = topmost,
                 };
-                Log.Info($"monitor-kiosk opened display={entry.DisplayId} device={entry.PanelDeviceId} monitor={monitor.Index} guard={reserve} seeThrough={seeThrough}");
+                Log.Info($"monitor-kiosk opened display={entry.DisplayId} device={entry.PanelDeviceId} monitor={monitor.Index} guard={reserve} seeThrough={seeThrough} topmost={topmost}");
             }
             catch (Exception ex)
             {
@@ -162,6 +167,14 @@ internal sealed class MonitorKioskManager
             entry.Reserve = reserve;
             try { entry.Window.SetMonitorGuard(reserve); } catch { /* best-effort */ }
             Log.Info($"monitor-kiosk guard display={displayId} -> {reserve}");
+        }
+        // Per-panel always-on-top toggled on a live kiosk: flip the z-order in place.
+        foreach (var (displayId, entry) in _kiosks)
+        {
+            if (!topmostById.TryGetValue(displayId, out var topmost) || topmost == entry.Topmost) continue;
+            entry.Topmost = topmost;
+            try { entry.Window.SetTopmost(topmost); } catch { /* best-effort */ }
+            Log.Info($"monitor-kiosk topmost display={displayId} -> {topmost}");
         }
         foreach (var (displayId, entry) in _kiosks)
             entry.KeepCursorOff = keepCursorOffById.TryGetValue(displayId, out var keepOff) && keepOff;

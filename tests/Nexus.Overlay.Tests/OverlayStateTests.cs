@@ -9,7 +9,7 @@ public class OverlayStateTests
     {
         const string json = """
             {"autoLaunch":true,"reserveMonitor":false,"y70Backdrop":"desktop","y70CompatibilityRendering":true,"y70KeepCursorOff":true,"overlayEnabled":true,"alwaysOnTop":true,"monitor":1,"pinned":2,
-             "assignments":[{"displayId":"d1","panelDeviceId":"p1","reserveMonitor":true,"backdrop":"wallpaper","keepCursorOff":true}],
+             "assignments":[{"displayId":"d1","panelDeviceId":"p1","reserveMonitor":true,"backdrop":"wallpaper","keepCursorOff":true,"alwaysOnTop":false}],
              "streams":[{"sessionId":"s1","panelDeviceId":"p2","cssWidth":800,"cssHeight":480,"dpr":1.5,"fps":30,"bitrateKbps":4000,"codec":"h264"}]}
             """;
         var state = JsonSerializer.Deserialize(json, ApiJson.Default.OverlayState)!;
@@ -23,6 +23,7 @@ public class OverlayStateTests
         Assert.Single(state.Assignments);
         Assert.Equal("wallpaper", state.Assignments[0].Backdrop);
         Assert.True(state.Assignments[0].KeepCursorOff);
+        Assert.False(state.Assignments[0].AlwaysOnTop);
         Assert.Single(state.Streams);
         Assert.Equal(1.5, state.Streams[0].Dpr);
     }
