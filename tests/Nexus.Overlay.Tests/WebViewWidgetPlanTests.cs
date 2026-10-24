@@ -362,4 +362,61 @@ public class WebViewWidgetPlanTests
         Assert.Equal("error", n.SettledState);
         Assert.Equal("12", n.SettledCode);
     }
+
+    [Theory]
+    [InlineData("{\"nexusEditableFocus\":true}", true)]
+    [InlineData("{\"nexusEditableFocus\":false}", false)]
+    public void ParseEditFocus_Accepts(string json, bool expected)
+        => Assert.Equal(expected, WebViewWidgetProtocol.ParseEditFocus(json));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("true")]
+    [InlineData("\"nexusEditableFocus\"")]
+    [InlineData("{}")]
+    [InlineData("{\"nexusEditableFocus\":1}")]
+    [InlineData("{\"nexusEditableFocus\":\"true\"}")]
+    [InlineData("{\"nexusEditableFocus\":true,\"x\":1}")]
+    [InlineData("{\"x\":1,\"nexusEditableFocus\":true}")]
+    [InlineData("{\"nexusEditableFocus\":true,\"nexusEditableFocus\":false}")]
+    [InlineData("{\"type\":\"nexus.webview.sync\"}")]
+    [InlineData("not json")]
+    public void ParseEditFocus_RejectsEverythingElse(string? json)
+        => Assert.Null(WebViewWidgetProtocol.ParseEditFocus(json));
+
+    [Fact]
+    public void EditFocus_CountsOnlyWhileEligible()
+    {
+        var f = new WidgetEditFocus();
+        f.OnReport(true);
+        Assert.False(f.Focused);
+        f.SetEligible(true);
+        f.OnReport(true);
+        Assert.True(f.Focused);
+        f.OnReport(false);
+        Assert.False(f.Focused);
+    }
+
+    [Fact]
+    public void EditFocus_LosingEligibilityClears()
+    {
+        var f = new WidgetEditFocus();
+        f.SetEligible(true);
+        f.OnReport(true);
+        f.SetEligible(false);
+        Assert.False(f.Focused);
+        f.SetEligible(true);
+        Assert.False(f.Focused);
+    }
+
+    [Fact]
+    public void EditFocus_NavigationClears()
+    {
+        var f = new WidgetEditFocus();
+        f.SetEligible(true);
+        f.OnReport(true);
+        f.OnNavigationStarting();
+        Assert.False(f.Focused);
+    }
 }

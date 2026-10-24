@@ -53,12 +53,14 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         public IntPtr PermissionHandler;
         public IntPtr ProcessFailedHandler;
         public IntPtr DownloadHandler;
+        public IntPtr WebMessageHandler;
         public long NavStartingToken;
         public long NavCompletedToken;
         public long NewWindowToken;
         public long PermissionToken;
         public long ProcessFailedToken;
         public long DownloadToken;
+        public long WebMessageToken;
         public bool Ready;
         public bool Destroyed;
         public WidgetPixelRect AppliedRect;
@@ -68,6 +70,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         public int AppliedRadiusX;
         public int AppliedRadiusY;
         public readonly WidgetNavState Nav = new();
+        public readonly WidgetEditFocus EditFocus = new();
     }
 
     private readonly long _key = Interlocked.Increment(ref _nextKey);
@@ -85,6 +88,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private bool _timerRunning;
     private double _viewportW;
     private double _viewportH;
+    private bool _interactive;
     private bool _activatable;
     private IntPtr _prevForeground;
     private bool _disposed;
@@ -196,18 +200,23 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         if (any) Log.Info($"webview-widget destroyed all views reason={reason}");
     }
 
-    // The kiosk is WS_EX_NOACTIVATE; while a view is interactive and shown that flag is dropped so a touch on it activates the kiosk and keystrokes reach the page.
+    // The kiosk stays WS_EX_NOACTIVATE so a touch on it never takes the foreground (a fullscreen game drops out of
+    // fullscreen); only while a text field in an interactive view has focus is the flag dropped and the kiosk focused.
     private void UpdateActivation()
     {
-        var want = !_disposed;
-        if (want)
+        var interactive = false;
+        NativeView? editing = null;
+        foreach (var v in _byId.Values)
         {
-            want = false;
-            foreach (var v in _byId.Values)
-            {
-                if (v.Ready && !v.Destroyed && v.AppliedShown && v.AppliedInteractive) { want = true; break; }
-            }
+            var live = !_disposed && IsLive(v);
+            v.EditFocus.SetEligible(live);
+            interactive |= live;
+            if (v.EditFocus.Focused) editing ??= v;
         }
+        if (_interactive && !interactive) ShowCursorHiddenByTouch();
+        _interactive = interactive;
+
+        var want = editing is not null;
         if (want == _activatable)
         {
             RememberForeground();
@@ -215,7 +224,6 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         }
         _activatable = want;
         if (want) RememberForeground();
-        else ShowCursorHiddenByTouch();
         if (!Native.IsWindow(_kioskHwnd)) return;
         var ex = Native.GetWindowLongW(_kioskHwnd, Native.GWL_EXSTYLE);
         ex = want ? ex & ~Native.WS_EX_NOACTIVATE : ex | Native.WS_EX_NOACTIVATE;
@@ -233,11 +241,44 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             }
             return;
         }
-        if (Native.GetForegroundWindow() != _kioskHwnd) return;
+        if (Native.GetForegroundWindow() != _kioskHwnd && !Native.SetForegroundWindow(_kioskHwnd))
+        {
+            Log.Warn("webview-widget text field focused but the kiosk could not take the foreground");
+            OnKioskDeactivated();
+            return;
+        }
+        FocusEditingView();
+    }
+
+    /// <summary>Moves keyboard focus to the view whose text field asked for it; false when none did.</summary>
+    public bool FocusEditingView()
+    {
+        if (!_activatable) return false;
         foreach (var v in _byId.Values)
         {
-            if (v.Ready && v.AppliedShown && v.AppliedInteractive) { Wv2.Ctrl_MoveFocusProgrammatic(v.Controller); break; }
+            if (!v.EditFocus.Focused || !IsLive(v)) continue;
+            // The touch already focused the view; MoveFocus would blur and refocus the page, which reports the blur.
+            if (!Native.IsChild(v.Container, Native.GetFocus())) Wv2.Ctrl_MoveFocusProgrammatic(v.Controller);
+            return true;
         }
+        return false;
+    }
+
+    public void OnKioskDeactivated()
+    {
+        if (!_activatable) return;
+        foreach (var v in _byId.Values) v.EditFocus.SetEligible(false);
+        UpdateActivation();
+    }
+
+    private static bool IsLive(NativeView v) => v.Ready && !v.Destroyed && v.AppliedShown && v.AppliedInteractive;
+
+    private void OnEditFocus(NativeView view, bool focused)
+    {
+        if (view.Destroyed || _disposed) return;
+        view.EditFocus.SetEligible(IsLive(view));
+        view.EditFocus.OnReport(focused);
+        UpdateActivation();
     }
 
     // WebView2 hides the cursor on touch with ShowCursor and shows it again only on a mouse move over
@@ -498,7 +539,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         Wv2.Settings_put_IsStatusBarEnabled(settings, false);
         Wv2.Settings_put_IsZoomControlEnabled(settings, false);
         Wv2.Settings_put_AreDefaultScriptDialogsEnabled(settings, false);
-        Wv2.Settings_put_IsWebMessageEnabled(settings, false);
+        // Carries only the edit-focus report; OnWebMessageReceivedStatic accepts nothing else.
+        Wv2.Settings_put_IsWebMessageEnabled(settings, true);
         Wv2.Settings_put_AreHostObjectsAllowed(settings, false);
         var settings3 = Wv2.QueryInterface(settings, WebView2Native.IID_ICoreWebView2Settings3);
         if (settings3 != IntPtr.Zero)
@@ -537,6 +579,12 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         v.ProcessFailedHandler = WebView2Callbacks.CreateProcessFailedHandler(&OnProcessFailedStatic);
         WebView2Callbacks.SetUserData(v.ProcessFailedHandler, v.Key);
         Wv2.Wv2_add_ProcessFailed(v.Core, v.ProcessFailedHandler, out v.ProcessFailedToken);
+
+        v.WebMessageHandler = WebView2Callbacks.CreateWebMessageReceivedHandler(&OnWebMessageReceivedStatic);
+        WebView2Callbacks.SetUserData(v.WebMessageHandler, v.Key);
+        Wv2.Wv2_add_WebMessageReceived(v.Core, v.WebMessageHandler, out v.WebMessageToken);
+        var scriptHr = Wv2.Wv2_AddScriptToExecuteOnDocumentCreated(v.Core, WebViewWidgetProtocol.EditFocusScript);
+        if (WebView2Native.Failed(scriptHr)) Log.Warn($"webview-widget edit-focus script hr=0x{scriptHr:X8}");
 
         v.Core4 = Wv2.QueryInterface(v.Core, WebView2Native.IID_ICoreWebView2_4);
         if (v.Core4 == IntPtr.Zero)
@@ -663,6 +711,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                 return WebView2Native.S_OK;
             }
             view.Nav.OnNavigationStarting();
+            view.EditFocus.OnNavigationStarting();
+            view.Host.UpdateActivation();
             view.Host.PostState(view, "loading");
         }
         catch (Exception ex) { Log.Error($"webview-widget NavStarting: {ex.Message}"); }
@@ -697,6 +747,18 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             else view.Host.PostState(view, "error", status.ToString());
         }
         catch (Exception ex) { Log.Error($"webview-widget NavCompleted: {ex.Message}"); }
+        return WebView2Native.S_OK;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnWebMessageReceivedStatic(IntPtr self, IntPtr sender, IntPtr args)
+    {
+        try
+        {
+            if (args == IntPtr.Zero || !Views.TryGetValue(WebView2Callbacks.GetUserData(self), out var view)) return WebView2Native.S_OK;
+            if (WebViewWidgetProtocol.ParseEditFocus(Wv2.WebMsgArgs_GetJson(args)) is { } focused) view.Host.OnEditFocus(view, focused);
+        }
+        catch (Exception ex) { Log.Error($"webview-widget WebMessage: {ex.Message}"); }
         return WebView2Native.S_OK;
     }
 
@@ -792,6 +854,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                 if (view.NewWindowToken != 0) Wv2.Wv2_remove_NewWindowRequested(view.Core, view.NewWindowToken);
                 if (view.PermissionToken != 0) Wv2.Wv2_remove_PermissionRequested(view.Core, view.PermissionToken);
                 if (view.ProcessFailedToken != 0) Wv2.Wv2_remove_ProcessFailed(view.Core, view.ProcessFailedToken);
+                if (view.WebMessageToken != 0) Wv2.Wv2_remove_WebMessageReceived(view.Core, view.WebMessageToken);
             }
             if (view.Core4 != IntPtr.Zero)
             {
@@ -812,6 +875,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             ReleaseHandler(view.PermissionHandler);
             ReleaseHandler(view.ProcessFailedHandler);
             ReleaseHandler(view.DownloadHandler);
+            ReleaseHandler(view.WebMessageHandler);
         }
         catch (Exception ex) { Log.Error($"webview-widget destroy: {ex.Message}"); }
         view.Core = view.Core4 = view.Controller = view.Controller2 = IntPtr.Zero;

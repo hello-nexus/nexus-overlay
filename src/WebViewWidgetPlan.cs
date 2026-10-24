@@ -216,6 +216,63 @@ internal static class WebViewWidgetProtocol
         return ((int)Math.Round(radius * boundsW / viewportW), (int)Math.Round(radius * boundsH / viewportH));
     }
 
+    /// <summary>
+    /// Runs in every frame of a hosted view and reports whether a text field
+    /// has focus after user input. Child frames relay through parent.postMessage,
+    /// so the top frame also sees fields inside cross-origin iframes.
+    /// </summary>
+    public const string EditFocusScript = """
+        (() => {
+          const NON_TEXT = /^(button|checkbox|color|file|hidden|image|radio|range|reset|submit)$/i;
+          const frames = new WeakMap();
+          const editable = (el) => !!el && (el.isContentEditable
+            || (el.tagName === 'TEXTAREA' && !el.readOnly && !el.disabled)
+            || (el.tagName === 'INPUT' && !NON_TEXT.test(el.type) && !el.readOnly && !el.disabled));
+          const focused = () => {
+            let el = document.activeElement;
+            while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+            if (el && (el.tagName === 'IFRAME' || el.tagName === 'FRAME')) return frames.get(el.contentWindow) === true;
+            return editable(el);
+          };
+          const send = (v) => {
+            if (v && !(navigator.userActivation && navigator.userActivation.isActive)) return;
+            if (window !== top) parent.postMessage({ nexusEditableFocus: v }, '*');
+            else if (window.chrome && chrome.webview) chrome.webview.postMessage({ nexusEditableFocus: v });
+          };
+          const check = () => setTimeout(() => send(document.hasFocus() && focused()), 0);
+          addEventListener('focusin', check, true);
+          addEventListener('focusout', check, true);
+          addEventListener('pointerup', check, true);
+          addEventListener('message', (e) => {
+            if (!e.source || !e.data || typeof e.data.nexusEditableFocus !== 'boolean') return;
+            frames.set(e.source, e.data.nexusEditableFocus);
+            check();
+          });
+        })();
+        """;
+
+    /// <summary>Accepts only <c>{"nexusEditableFocus":bool}</c> from a hosted view; anything else is null.</summary>
+    public static bool? ParseEditFocus(string? json)
+    {
+        if (string.IsNullOrEmpty(json) || json.Length > 256) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            bool? value = null;
+            foreach (var prop in root.EnumerateObject())
+            {
+                if (value is not null || prop.Name != "nexusEditableFocus") return null;
+                if (prop.Value.ValueKind == JsonValueKind.True) value = true;
+                else if (prop.Value.ValueKind == JsonValueKind.False) value = false;
+                else return null;
+            }
+            return value;
+        }
+        catch (JsonException) { return null; }
+    }
+
     public static string BuildCaps(bool interactive)
         => Write(w =>
         {
@@ -371,6 +428,27 @@ internal sealed class WidgetRegistry
 
     /// <summary>True when views are live and no sync arrived within <see cref="WatchdogMs"/>.</summary>
     public bool WatchdogExpired(long nowMs) => _live.Count > 0 && nowMs - _lastSyncMs >= WatchdogMs;
+}
+
+/// <summary>Whether a view's page has a text field focused; only counts while the view is shown and interactive.</summary>
+internal sealed class WidgetEditFocus
+{
+    private bool _eligible;
+
+    public bool Focused { get; private set; }
+
+    /// <summary>A report while the view is not eligible is dropped, since it cannot come from a touch.</summary>
+    public void OnReport(bool focused) => Focused = focused && _eligible;
+
+    /// <summary>Losing eligibility clears focus; the page does not report it when it stops taking input.</summary>
+    public void SetEligible(bool eligible)
+    {
+        _eligible = eligible;
+        if (!eligible) Focused = false;
+    }
+
+    /// <summary>A new document starts with nothing focused.</summary>
+    public void OnNavigationStarting() => Focused = false;
 }
 
 /// <summary>Per-view navigation bookkeeping: remembers the settled state and swallows the failure that follows a blocked download.</summary>

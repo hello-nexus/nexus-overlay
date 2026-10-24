@@ -419,6 +419,15 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 if (wParam == IntPtr.Zero) _widgets?.DestroyAll("kiosk hidden");
                 return null;
 
+            case Native.WM_ACTIVATE:
+                if (((long)wParam & 0xFFFF) == 0)
+                {
+                    _widgets?.OnKioskDeactivated();
+                    return null;
+                }
+                // DefWindowProc would focus the kiosk itself, blurring the text field that asked for activation.
+                return _widgets?.FocusEditingView() == true ? IntPtr.Zero : null;
+
             case WebViewWidgetHost.WM_WIDGET_DEFERRED:
                 _widgets?.ProcessDeferred();
                 return IntPtr.Zero;
