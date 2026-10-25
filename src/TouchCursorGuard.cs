@@ -79,7 +79,7 @@ internal static unsafe class TouchCursorGuard
 
     // Set by the mouse hook, consumed by the next cursor-moved event: the hook runs before the move lands, and
     // ShowCursor does not belong inside a time-limited low-level hook.
-    private static bool _realMouseMovePending;
+    private static long _realMouseMoveAt = -1;
     private static IntPtr _mouseHook;
     private static IntPtr _winEventHook;
     private static int _refCount;
@@ -258,7 +258,11 @@ internal static unsafe class TouchCursorGuard
                 var result = Machine.Hook((hook->pt.x, hook->pt.y), (c.x, c.y), isWmMouseMove,
                     isWmMouseMove && !CursorGuardGeometry.IsTouchOrPen(hook->dwExtraInfo), Environment.TickCount64);
                 if (result.Block) return 1;
-                if (isWmMouseMove && !CursorGuardGeometry.IsTouchOrPen(hook->dwExtraInfo)) _realMouseMovePending = true;
+                if (isWmMouseMove)
+                {
+                    // A touch or pen move clears a flag a real move left behind that never moved the cursor.
+                    _realMouseMoveAt = CursorGuardGeometry.IsTouchOrPen(hook->dwExtraInfo) ? -1 : Environment.TickCount64;
+                }
                 if (result.EntryAccepted) LogEntry(result.AcceptedSlidePx);
             }
         }
@@ -274,11 +278,9 @@ internal static unsafe class TouchCursorGuard
         {
             if (idObject != Native.OBJID_CURSOR) return;
             if (!Native.GetCursorPos(out var c)) return;
-            if (_realMouseMovePending)
-            {
-                _realMouseMovePending = false;
-                RealMouseMoved?.Invoke();
-            }
+            var realAt = _realMouseMoveAt;
+            _realMouseMoveAt = -1;
+            if (RealMouseSignal.IsFresh(realAt, Environment.TickCount64)) RealMouseMoved?.Invoke();
             var result = Machine.CursorMoved((c.x, c.y), Environment.TickCount64);
             switch (result.Kind)
             {

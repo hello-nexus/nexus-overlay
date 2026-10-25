@@ -553,4 +553,21 @@ public class WebViewWidgetPlanTests
         Assert.False(t.TryAcquire(300));
         Assert.True(t.TryAcquire(350));
     }
+
+    [Theory]
+    [InlineData(-1, 1000, false)]
+    [InlineData(1000, 1000, true)]
+    [InlineData(1000, 1100, true)]
+    [InlineData(1000, 1101, false)]
+    public void RealMouseSignal_IsFresh(long flaggedAt, long now, bool expected)
+        => Assert.Equal(expected, RealMouseSignal.IsFresh(flaggedAt, now));
+
+    [Theory]
+    [InlineData(-3, true)]
+    [InlineData(-1, true)]
+    [InlineData(0, null)]
+    [InlineData(1, false)]
+    [InlineData(4, false)]
+    public void CursorCountClamp_NextCall_MovesTowardZero(int count, bool? expected)
+        => Assert.Equal(expected, CursorCountClamp.NextCall(count));
 }

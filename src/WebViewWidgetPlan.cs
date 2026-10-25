@@ -564,3 +564,19 @@ internal struct CursorRestoreThrottle
         return true;
     }
 }
+
+/// <summary>Decides whether a flagged real mouse move still explains a cursor-moved event.</summary>
+internal static class RealMouseSignal
+{
+    public const long MaxAgeMs = 100;
+
+    /// <summary>False for an unset flag (negative) or one older than <see cref="MaxAgeMs"/>.</summary>
+    public static bool IsFresh(long flaggedAtMs, long nowMs) => flaggedAtMs >= 0 && nowMs - flaggedAtMs <= MaxAgeMs;
+}
+
+/// <summary>Which ShowCursor call moves a display count toward zero.</summary>
+internal static class CursorCountClamp
+{
+    /// <summary>True to call ShowCursor(true), false for ShowCursor(false), null when the count is already zero.</summary>
+    public static bool? NextCall(int count) => count < 0 ? true : count > 0 ? false : null;
+}
