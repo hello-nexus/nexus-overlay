@@ -542,3 +542,25 @@ internal sealed class WidgetNavState
         SettledCode = code;
     }
 }
+
+/// <summary>Rate limit for the cursor display-count restore driven by mouse moves.</summary>
+internal struct CursorRestoreThrottle
+{
+    private readonly long _intervalMs;
+    private long _lastAt;
+    private bool _used;
+
+    public CursorRestoreThrottle(long intervalMs)
+    {
+        _intervalMs = intervalMs;
+    }
+
+    /// <summary>True, and starts a new interval, when at least the interval passed since the last acquire.</summary>
+    public bool TryAcquire(long nowMs)
+    {
+        if (_used && nowMs - _lastAt < _intervalMs) return false;
+        _used = true;
+        _lastAt = nowMs;
+        return true;
+    }
+}

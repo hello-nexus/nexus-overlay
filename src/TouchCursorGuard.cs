@@ -74,6 +74,12 @@ internal static unsafe class TouchCursorGuard
         }
     }
 
+    /// <summary>Raised on the overlay thread after the physical mouse moved the cursor; never for touch or pen.</summary>
+    public static event Action? RealMouseMoved;
+
+    // Set by the mouse hook, consumed by the next cursor-moved event: the hook runs before the move lands, and
+    // ShowCursor does not belong inside a time-limited low-level hook.
+    private static bool _realMouseMovePending;
     private static IntPtr _mouseHook;
     private static IntPtr _winEventHook;
     private static int _refCount;
@@ -252,6 +258,7 @@ internal static unsafe class TouchCursorGuard
                 var result = Machine.Hook((hook->pt.x, hook->pt.y), (c.x, c.y), isWmMouseMove,
                     isWmMouseMove && !CursorGuardGeometry.IsTouchOrPen(hook->dwExtraInfo), Environment.TickCount64);
                 if (result.Block) return 1;
+                if (isWmMouseMove && !CursorGuardGeometry.IsTouchOrPen(hook->dwExtraInfo)) _realMouseMovePending = true;
                 if (result.EntryAccepted) LogEntry(result.AcceptedSlidePx);
             }
         }
@@ -267,6 +274,11 @@ internal static unsafe class TouchCursorGuard
         {
             if (idObject != Native.OBJID_CURSOR) return;
             if (!Native.GetCursorPos(out var c)) return;
+            if (_realMouseMovePending)
+            {
+                _realMouseMovePending = false;
+                RealMouseMoved?.Invoke();
+            }
             var result = Machine.CursorMoved((c.x, c.y), Environment.TickCount64);
             switch (result.Kind)
             {

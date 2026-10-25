@@ -526,4 +526,31 @@ public class WebViewWidgetPlanTests
         f.OnNavigationStarting();
         Assert.False(f.Focused);
     }
+
+    [Fact]
+    public void CursorRestoreThrottle_FirstAcquireAlwaysPasses()
+    {
+        var t = new CursorRestoreThrottle(250);
+        Assert.True(t.TryAcquire(0));
+    }
+
+    [Theory]
+    [InlineData(249, false)]
+    [InlineData(250, true)]
+    [InlineData(1000, true)]
+    public void CursorRestoreThrottle_HonorsInterval(long later, bool expected)
+    {
+        var t = new CursorRestoreThrottle(250);
+        t.TryAcquire(0);
+        Assert.Equal(expected, t.TryAcquire(later));
+    }
+
+    [Fact]
+    public void CursorRestoreThrottle_RejectedCallDoesNotExtendInterval()
+    {
+        var t = new CursorRestoreThrottle(250);
+        t.TryAcquire(100);
+        Assert.False(t.TryAcquire(300));
+        Assert.True(t.TryAcquire(350));
+    }
 }

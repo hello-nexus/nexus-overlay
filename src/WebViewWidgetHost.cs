@@ -31,6 +31,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     // COREWEBVIEW2_COLOR as a raw uint has alpha in the low byte.
     private const uint DefaultBgOpaqueWhite = 0xFFFFFFFFu;
     private const int MaxCursorShows = 64;
+    private const long CursorRestoreIntervalMs = 250;
 
     private static readonly ConcurrentDictionary<long, WebViewWidgetHost> Hosts = new();
     private static readonly ConcurrentDictionary<long, NativeView> Views = new();
@@ -90,6 +91,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private double _viewportW;
     private double _viewportH;
     private bool _interactive;
+    private CursorRestoreThrottle _cursorRestoreThrottle = new(CursorRestoreIntervalMs);
+    private readonly Action _onRealMouseMove;
     private bool _activatable;
     private NativeView? _lastEditing;
     private IntPtr _prevForeground;
@@ -103,6 +106,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         _compatibilityRendering = compatibilityRendering;
         _post = post;
         Hosts[_key] = this;
+        _onRealMouseMove = OnRealMouseMove;
+        TouchCursorGuard.RealMouseMoved += _onRealMouseMove;
     }
 
     public int ViewCount => _byId.Count;
@@ -213,7 +218,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             v.EditFocus.SetLive(live);
             interactive |= live;
         }
-        if (_interactive && !interactive) ShowCursorHiddenByTouch();
+        if (_interactive != interactive) Log.Info($"webview-widget interactive views {(interactive ? "entered" : "left")}");
+        if (_interactive && !interactive) ShowCursorHiddenByTouch("last interactive view gone");
         _interactive = interactive;
 
         var want = EditingView() is not null;
@@ -290,9 +296,11 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     }
 
     // WebView2 hides the cursor on touch with ShowCursor and shows it again only on a mouse move over
-    // the view, which a non-interactive view never gets. Its browser thread shares this thread's input
-    // queue, so raising the count here makes the cursor visible over the overlay windows again.
-    private static void ShowCursorHiddenByTouch()
+    // the view. A non-interactive view never gets one, and with the mouse kept off the panel an interactive
+    // one does not either. The browser's UI thread is input-attached to this (the kiosk message-loop) thread,
+    // so they share one display count, and raising it here makes the cursor visible over the overlay windows
+    // again. Runs on this thread when the last interactive view goes (backstop) and on a real mouse move.
+    private static void ShowCursorHiddenByTouch(string reason, bool quietWhenVisible = false)
     {
         // With no mouse attached Windows starts the count at -1; raising it would show a cursor on a touch-only box.
         if (Native.GetSystemMetrics(Native.SM_MOUSEPRESENT) == 0) return;
@@ -300,13 +308,22 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         if (count > 0)
         {
             Native.ShowCursor(false);
+            if (!quietWhenVisible) Log.Info($"webview-widget cursor already visible ({reason}), display count {count - 1}");
             return;
         }
         var shows = 1;
         for (; count < 0 && shows < MaxCursorShows; shows++) count = Native.ShowCursor(true);
         Log.Info(count < 0
-            ? $"webview-widget cursor still hidden after +{shows}, display count {count}"
-            : $"webview-widget showed the cursor a touch had hidden, display count +{shows}");
+            ? $"webview-widget cursor still hidden after +{shows} ({reason}), display count {count}"
+            : $"webview-widget showed the cursor a touch had hidden ({reason}), display count +{shows}");
+    }
+
+    private void OnRealMouseMove()
+    {
+        if (_disposed || !_interactive) return;
+        var now = Environment.TickCount64;
+        if (!_cursorRestoreThrottle.TryAcquire(now)) return;
+        ShowCursorHiddenByTouch("real mouse move", quietWhenVisible: true);
     }
 
     // Last foreground window other than the kiosk, so focus can go back once no view is interactive.
@@ -944,6 +961,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         if (_disposed) return;
         DestroyAll("dispose");
         _disposed = true;
+        TouchCursorGuard.RealMouseMoved -= _onRealMouseMove;
         if (_timerRunning)
         {
             Native.KillTimer(_kioskHwnd, TimerWatchdog);
