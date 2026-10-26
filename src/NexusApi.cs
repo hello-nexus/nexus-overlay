@@ -139,6 +139,29 @@ internal sealed class OverlayState
     public List<DisplayAssignment> Assignments { get; set; } = new();
     [JsonPropertyName("streams")]
     public List<StreamAssignment> Streams { get; set; } = new();
+    [JsonPropertyName("identify")]
+    public IdentifyState? Identify { get; set; }
+}
+
+/// <summary>A display identify still showing. A new token restarts it; RemainingMs is what is left.</summary>
+internal sealed class IdentifyState
+{
+    [JsonPropertyName("token")]
+    public long Token { get; set; }
+    [JsonPropertyName("remainingMs")]
+    public int RemainingMs { get; set; }
+    [JsonPropertyName("displays")]
+    public List<IdentifyEntry> Displays { get; set; } = new();
+}
+
+internal sealed class IdentifyEntry
+{
+    [JsonPropertyName("displayId")]
+    public string DisplayId { get; set; } = "";
+    [JsonPropertyName("label")]
+    public string Label { get; set; } = "";
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
 }
 
 internal sealed class DisplayAssignment
@@ -220,6 +243,7 @@ internal sealed class ClientMemSample
 [JsonSerializable(typeof(ClientMemSample))]
 [JsonSerializable(typeof(PairResponse))]
 [JsonSerializable(typeof(OverlayState))]
+[JsonSerializable(typeof(IdentifyState))]
 [JsonSerializable(typeof(DisplayAssignment))]
 [JsonSerializable(typeof(List<DisplayAssignment>))]
 [JsonSerializable(typeof(OverlayMonitorEntry))]

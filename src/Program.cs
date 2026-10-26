@@ -38,6 +38,7 @@ internal static class Program
     // Distinct from _panelKiosk (the auto-detected Y70).
     private static MonitorKioskManager? _monitorKiosks;
     private static StreamHostManager? _streamHosts;
+    private static readonly IdentifyOverlay Identify = new();
     private static uint _showDashboardMsg;
     private static uint _showDashboardSettingsMsg;
     private static uint _showPanelKioskMsg;
@@ -342,6 +343,10 @@ internal static class Program
         {
             return false;
         }
+        if (Identify.Active)
+        {
+            return false;
+        }
         return true;
     }
 
@@ -599,6 +604,8 @@ internal static class Program
         try { _monitorKiosks?.Reconcile(state.Assignments, _pairedToken); }
         catch (Exception ex) { Log.Error($"monitor-kiosk reconcile: {ex.Message}"); }
         SyncKeepCursorOff();
+        try { Identify.Apply(state.Identify); }
+        catch (Exception ex) { Log.Error($"identify: {ex.Message}"); }
         try { _streamHosts?.Reconcile(state.Streams, _pairedToken); }
         catch (Exception ex) { Log.Error($"stream-host reconcile: {ex.Message}"); }
         if (IsIdle()) MaybeArmIdleExitTimer();
