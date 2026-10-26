@@ -147,17 +147,6 @@ internal static unsafe class Native
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct WINDOWPLACEMENT
-    {
-        public uint length;
-        public uint flags;
-        public uint showCmd;
-        public POINT ptMinPosition;
-        public POINT ptMaxPosition;
-        public RECT rcNormalPosition;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
     public struct NCCALCSIZE_PARAMS
     {
         public RECT rgrc0;
@@ -336,12 +325,6 @@ internal static unsafe class Native
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool BringWindowToTop(IntPtr hWnd);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool SetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT lpwndpl);
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SendMessageW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
