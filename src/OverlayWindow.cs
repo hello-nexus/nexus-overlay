@@ -552,7 +552,11 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
             var r = _frostRects[i];
             _frostPlates[i].Place(origin.Left + r.X, origin.Top + r.Y, r.W, r.H);
         }
-        if (created) RestackFrost();
+        if (created)
+        {
+            Log.Info($"overlay {_monitor.Index} frost plates={_frostPlates.Count}");
+            RestackFrost();
+        }
     }
 
     private void RestackFrost()

@@ -387,22 +387,23 @@ internal static unsafe class Native
     public const int DWMWA_CAPTION_COLOR = 35;
     public const int DWMWA_COLOR_NONE = unchecked((int)0xFFFFFFFE);
 
-    // Rounded-corner preference for a top-level window (Windows 11 22000+).
-    // DWMWCP_ROUND rounds even a WS_POPUP window; Windows 10 returns a
-    // nonzero HRESULT we ignore.
+    // Rounded-corner preference for a top-level window. Rounds even a
+    // WS_POPUP window on Windows 11; older Windows returns a nonzero HRESULT
+    // we ignore.
     public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
     public const int DWMWCP_ROUND = 2;
-    // DWMWA_BORDER_COLOR (Windows 11 22000+): DWMWA_COLOR_NONE draws no 1px window border.
+    // Window border color. DWMWA_COLOR_NONE draws no border at all.
     public const int DWMWA_BORDER_COLOR = 34;
 
-    // Undocumented but stable since Windows 10 1803: the accent policy that
-    // gives a window an acrylic blur-behind. Unlike the DWM system backdrop
-    // it blurs live content even on a never-activated window, but it fills
-    // the whole window rect and ignores SetWindowRgn.
+    // Undocumented but stable accent policy that gives a window an acrylic
+    // blur-behind. Unlike the DWM system backdrop it blurs live content even
+    // on a never-activated window, but it fills the whole window rect and
+    // ignores SetWindowRgn.
     public const int WCA_ACCENT_POLICY = 19;
     public const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
-    // Acrylic needs Windows 10 1803 (build 17134).
-    public const int AcrylicMinBuild = 17134;
+    // First Windows 11 build. Frost plates need its corner and border
+    // attributes, so earlier builds get no plates.
+    public const int Windows11MinBuild = 22000;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct AccentPolicy

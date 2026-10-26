@@ -14,13 +14,15 @@ internal sealed unsafe class FrostWindow : IWin32WindowOwner, IDisposable
 {
     private const string WindowClassName = "Nexus.Overlay.FrostWindow";
     private const uint MA_NOACTIVATE = 3;
-    // AABBGGRR. Light neutral tint so the blur stays the main effect; the
-    // card fill (opacity slider) sits on top of it.
+    // AABBGGRR. Near-black tint at low alpha so the blur stays the main
+    // effect; the card fill (opacity slider) sits on top of it.
     private const uint TintColor = 0x30181818;
+
+    private bool _shown;
 
     public IntPtr Hwnd { get; private set; }
 
-    public static bool IsSupported => Environment.OSVersion.Version.Build >= Native.AcrylicMinBuild;
+    public static bool IsSupported => Environment.OSVersion.Version.Build >= Native.Windows11MinBuild;
 
     /// <summary>Null when the window or the accent could not be created.</summary>
     public static FrostWindow? TryCreate()
@@ -74,15 +76,18 @@ internal sealed unsafe class FrostWindow : IWin32WindowOwner, IDisposable
         Native.DwmSetWindowAttribute(Hwnd, Native.DWMWA_WINDOW_CORNER_PREFERENCE, round, sizeof(int));
     }
 
-    /// <summary>Moves and sizes the plate to a screen rect without touching z-order.</summary>
+    /// <summary>Moves and sizes the plate to a screen rect without touching z-order or visibility.</summary>
     public void Place(int x, int y, int w, int h)
     {
         if (Hwnd == IntPtr.Zero) return;
         Native.SetWindowPos(Hwnd, IntPtr.Zero, x, y, w, h,
-            Native.SWP_NOACTIVATE | Native.SWP_NOZORDER | Native.SWP_SHOWWINDOW);
+            Native.SWP_NOACTIVATE | Native.SWP_NOZORDER);
     }
 
-    /// <summary>Stacks the plate directly below <paramref name="above"/>.</summary>
+    /// <summary>
+    /// Stacks the plate directly below <paramref name="above"/>, then shows it
+    /// on first use so it never appears above the foreground app.
+    /// </summary>
     public void Restack(IntPtr above)
     {
         if (Hwnd == IntPtr.Zero) return;
@@ -92,6 +97,11 @@ internal sealed unsafe class FrostWindow : IWin32WindowOwner, IDisposable
         const uint flags = Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE;
         Native.SetWindowPos(Hwnd, Native.HWND_NOTOPMOST, 0, 0, 0, 0, flags);
         Native.SetWindowPos(Hwnd, above, 0, 0, 0, 0, flags);
+        if (!_shown)
+        {
+            _shown = true;
+            Native.SetWindowPos(Hwnd, IntPtr.Zero, 0, 0, 0, 0, flags | Native.SWP_NOZORDER | Native.SWP_SHOWWINDOW);
+        }
     }
 
     public IntPtr? HandleMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
