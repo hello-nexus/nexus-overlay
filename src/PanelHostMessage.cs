@@ -103,8 +103,9 @@ internal readonly record struct PanelHostMessage(PanelMessageKind Kind, HitRegio
     private static FrostPlan ReadFrost(JsonElement root, int windowWidth, int windowHeight)
     {
         var level = root.TryGetProperty("level", out var l) && l.ValueKind == JsonValueKind.String ? l.GetString() : null;
-        var frostLevel = level switch { "light" => FrostLevel.Light, "heavy" => FrostLevel.Heavy, _ => FrostLevel.None };
-        if (frostLevel == FrostLevel.None || windowWidth <= 0 || windowHeight <= 0) return FrostPlan.Empty;
+        double? rawPercent = root.TryGetProperty("percent", out var pe) && pe.ValueKind == JsonValueKind.Number && pe.TryGetDouble(out var pv) ? pv : null;
+        var percent = FrostPolicy.ResolvePercent(level, rawPercent);
+        if (percent <= 0 || windowWidth <= 0 || windowHeight <= 0) return FrostPlan.Empty;
         if (!TryReadDpr(root, out var dpr)) return FrostPlan.Empty;
         if (!root.TryGetProperty("rects", out var arr) || arr.ValueKind != JsonValueKind.Array) return FrostPlan.Empty;
         var rects = ScaleRects(arr, dpr, windowWidth, windowHeight, FrostPolicy.MaxPlates);
@@ -113,7 +114,7 @@ internal readonly record struct PanelHostMessage(PanelMessageKind Kind, HitRegio
         if (root.TryGetProperty("radius", out var r) && r.ValueKind == JsonValueKind.Number
             && r.TryGetDouble(out var rv) && double.IsFinite(rv) && rv > 0)
             radius = rv * dpr;
-        return new FrostPlan(frostLevel, FrostPolicy.ClampRadius(radius), rects);
+        return new FrostPlan(percent, FrostPolicy.ClampRadius(radius), rects);
     }
 
     private static bool TryReadDpr(JsonElement root, out double dpr)

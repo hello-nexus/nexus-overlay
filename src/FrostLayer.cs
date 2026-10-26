@@ -43,13 +43,13 @@ internal sealed unsafe class FrostPlate : IWin32WindowOwner, IDisposable
         }
     }
 
-    public bool SetTint(FrostLevel level)
+    public bool SetTint(int percent)
     {
         var accent = new Native.AccentPolicy
         {
             AccentState = Native.ACCENT_ENABLE_ACRYLICBLURBEHIND,
             AccentFlags = 0,
-            GradientColor = FrostPolicy.TintFor(level),
+            GradientColor = FrostPolicy.TintFor(percent),
             AnimationId = 0,
         };
         var data = new Native.WindowCompositionAttributeData
@@ -152,20 +152,20 @@ internal sealed class FrostLayer : IDisposable
                 var isNew = i >= (_current.IsEmpty ? 0 : _current.Rects.Count);
                 if (isNew || diff.Retint)
                 {
-                    if (!_plates[i].SetTint(wanted.Level)) Log.Warn("panel-frost acrylic accent rejected");
+                    if (!_plates[i].SetTint(wanted.Percent)) Log.Warn("panel-frost acrylic accent rejected");
                 }
                 _plates[i].StackBelow(kiosk);
             }
         }
-        _current = live == 0 ? FrostPlan.Empty : new FrostPlan(wanted.Level, wanted.RadiusPx, applied);
-        LogState(kiosk, wanted.Level);
+        _current = live == 0 ? FrostPlan.Empty : new FrostPlan(wanted.Percent, wanted.RadiusPx, applied);
+        LogState(kiosk, wanted.Percent);
     }
 
     /// <summary>Re-insert every plate under the kiosk after it was raised, lowered or its topmost state changed.</summary>
     public void Restack(IntPtr kiosk)
     {
         foreach (var plate in _plates) plate.StackBelow(kiosk);
-        if (_plates.Count > 0) LogState(kiosk, _current.Level);
+        if (_plates.Count > 0) LogState(kiosk, _current.Percent);
     }
 
     /// <summary>Move every plate after the kiosk window moved or resized.</summary>
@@ -195,10 +195,10 @@ internal sealed class FrostLayer : IDisposable
 
     // Plates were once missing from the window list with always-on-top off and the
     // cause is unknown, so every change logs how many exist and where they sit.
-    private void LogState(IntPtr kiosk, FrostLevel level)
+    private void LogState(IntPtr kiosk, int percent)
     {
         var sb = new StringBuilder();
-        sb.Append($"panel-frost level={level} plates={_plates.Count} kioskZ={ZIndex(kiosk)} kioskTopmost={IsTopmost(kiosk)}");
+        sb.Append($"panel-frost percent={percent} plates={_plates.Count} kioskZ={ZIndex(kiosk)} kioskTopmost={IsTopmost(kiosk)}");
         for (var i = 0; i < _plates.Count && i < 3; i++)
         {
             var h = _plates[i].Hwnd;
