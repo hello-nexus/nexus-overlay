@@ -392,6 +392,8 @@ internal static unsafe class Native
     // nonzero HRESULT we ignore.
     public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
     public const int DWMWCP_ROUND = 2;
+    // DWMWA_BORDER_COLOR (Windows 11 22000+): DWMWA_COLOR_NONE draws no 1px window border.
+    public const int DWMWA_BORDER_COLOR = 34;
 
     // Undocumented but stable since Windows 10 1803: the accent policy that
     // gives a window an acrylic blur-behind. Unlike the DWM system backdrop
@@ -399,7 +401,6 @@ internal static unsafe class Native
     // the whole window rect and ignores SetWindowRgn.
     public const int WCA_ACCENT_POLICY = 19;
     public const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
-    public const int ACCENT_FLAG_DRAW_ALL_BORDERS = 2;
     // Acrylic needs Windows 10 1803 (build 17134).
     public const int AcrylicMinBuild = 17134;
 

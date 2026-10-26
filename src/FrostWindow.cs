@@ -52,7 +52,7 @@ internal sealed unsafe class FrostWindow : IWin32WindowOwner, IDisposable
         var accent = new Native.AccentPolicy
         {
             AccentState = Native.ACCENT_ENABLE_ACRYLICBLURBEHIND,
-            AccentFlags = Native.ACCENT_FLAG_DRAW_ALL_BORDERS,
+            AccentFlags = 0,
             GradientColor = TintColor,
             AnimationId = 0,
         };
@@ -66,6 +66,8 @@ internal sealed unsafe class FrostWindow : IWin32WindowOwner, IDisposable
         {
             throw new InvalidOperationException("SetWindowCompositionAttribute rejected the acrylic accent");
         }
+        // No window border: only the card shape drawn above defines the edge.
+        Native.DwmSetWindowAttribute(Hwnd, Native.DWMWA_BORDER_COLOR, Native.DWMWA_COLOR_NONE, sizeof(int));
         // Match the card corners (the host clips cards to a rounded region);
         // a no-op on Windows 10.
         int round = Native.DWMWCP_ROUND;
