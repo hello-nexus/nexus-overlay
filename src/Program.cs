@@ -648,7 +648,7 @@ internal static class Program
             Apply(state);
             if (recovered)
             {
-                MonitorMapPublisher().Invalidate();
+                MapPublisher().Invalidate();
                 _ = PostMonitorsAsync();
             }
         }
@@ -661,7 +661,7 @@ internal static class Program
     // Index to stable display id map for the service's desktop-widget migration.
     private static MonitorMapPublisher? _monitorMap;
 
-    private static MonitorMapPublisher MonitorMapPublisher() => _monitorMap ??= new MonitorMapPublisher(
+    private static MonitorMapPublisher MapPublisher() => _monitorMap ??= new MonitorMapPublisher(
         () =>
         {
             var list = new List<(int, string, bool)>();
@@ -672,7 +672,7 @@ internal static class Program
 
     private static async System.Threading.Tasks.Task PostMonitorsAsync()
     {
-        try { await MonitorMapPublisher().RequestAsync(); }
+        try { await MapPublisher().RequestAsync(); }
         catch (Exception ex) { Log.Error($"post monitors: {ex.Message}"); }
     }
 
