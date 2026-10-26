@@ -174,6 +174,7 @@ internal static class Program
         _monitorKiosks = new MonitorKioskManager(ServiceOrigin);
         _streamHosts = new StreamHostManager(ServiceOrigin);
         Apply(state);
+        _ = PostMonitorsAsync();
 
         // Pin the overlay's AppID across virtual desktops. Process-level
         // pin, not per-overlay - one call covers every HWND we own. Idempotent
@@ -530,6 +531,7 @@ internal static class Program
                 // kiosk on an unplugged monitor closes (and a replugged
                 // assigned monitor respawns) without waiting for the poll.
                 _ = PollAsync();
+                _ = PostMonitorsAsync();
                 return IntPtr.Zero;
             }
             if (msg == Native.WM_WTSSESSION_CHANGE)
@@ -639,12 +641,43 @@ internal static class Program
                 }
                 return;
             }
+            // The service keeps the monitor map in memory only; after an outage
+            // it may have restarted without it.
+            var recovered = _stateUnreachableSinceTick != 0;
             _stateUnreachableSinceTick = 0;
             Apply(state);
+            if (recovered)
+            {
+                _lastMonitorsSignature = null;
+                _ = PostMonitorsAsync();
+            }
         }
         catch (Exception ex)
         {
             Log.Error($"poll failed: {ex.Message}");
+        }
+    }
+
+    // Index to stable display id map for the service's desktop-widget migration.
+    // Signature-gated so a burst of WM_DISPLAYCHANGE posts once; a failed post
+    // leaves it unset so the next trigger retries.
+    private static string? _lastMonitorsSignature;
+
+    private static async System.Threading.Tasks.Task PostMonitorsAsync()
+    {
+        try
+        {
+            if (_api is null) return;
+            var list = new List<(int, string, bool)>();
+            foreach (var m in Monitors.Enumerate()) list.Add((m.Index, m.DeviceName, m.Primary));
+            var entries = MonitorMap.Build(list, DisplayIdentity.ResolveStableId);
+            var signature = MonitorMap.Signature(entries);
+            if (signature == _lastMonitorsSignature) return;
+            if (await _api.PostMonitorsAsync(entries)) _lastMonitorsSignature = signature;
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"post monitors: {ex.Message}");
         }
     }
 

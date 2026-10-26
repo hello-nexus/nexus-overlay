@@ -66,6 +66,29 @@ internal sealed class NexusApi
         }
     }
 
+    /// <summary>True when the service accepted the monitor map.</summary>
+    public async Task<bool> PostMonitorsAsync(List<OverlayMonitorEntry> monitors)
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/overlay/monitors")
+            {
+                Content = new StringContent(
+                    JsonSerializer.Serialize(new OverlayMonitorsBody { Monitors = monitors }, ApiJson.Default.OverlayMonitorsBody),
+                    System.Text.Encoding.UTF8,
+                    "application/json"),
+            };
+            if (!string.IsNullOrEmpty(Token))
+                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Token);
+            using var resp = await _http.SendAsync(req).ConfigureAwait(false);
+            return resp.IsSuccessStatusCode;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     /// <summary>Fire and forget: diagnostics must never delay or fail a caller.</summary>
     public void PostClientMem(ClientMemSample sample) => _ = PostClientMemAsync(sample);
 
@@ -140,6 +163,27 @@ internal sealed class DisplayAssignment
     public bool KeepCursorOff { get; set; }
     [JsonPropertyName("alwaysOnTop")]
     public bool AlwaysOnTop { get; set; } = true;
+    [JsonPropertyName("clickThrough")]
+    public bool ClickThrough { get; set; }
+    [JsonPropertyName("isPrimary")]
+    public bool IsPrimary { get; set; }
+}
+
+/// <summary>One row of POST /overlay/monitors.</summary>
+internal sealed class OverlayMonitorEntry
+{
+    [JsonPropertyName("index")]
+    public int Index { get; set; }
+    [JsonPropertyName("displayId")]
+    public string DisplayId { get; set; } = "";
+    [JsonPropertyName("primary")]
+    public bool Primary { get; set; }
+}
+
+internal sealed class OverlayMonitorsBody
+{
+    [JsonPropertyName("monitors")]
+    public List<OverlayMonitorEntry> Monitors { get; set; } = new();
 }
 
 /// <summary>
@@ -186,6 +230,8 @@ internal sealed class ClientMemSample
 [JsonSerializable(typeof(OverlayState))]
 [JsonSerializable(typeof(DisplayAssignment))]
 [JsonSerializable(typeof(List<DisplayAssignment>))]
+[JsonSerializable(typeof(OverlayMonitorEntry))]
+[JsonSerializable(typeof(OverlayMonitorsBody))]
 [JsonSerializable(typeof(StreamAssignment))]
 [JsonSerializable(typeof(List<StreamAssignment>))]
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]

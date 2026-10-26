@@ -17,10 +17,7 @@ internal sealed class MonitorKioskManager
     {
         public required PanelKioskWindow Window { get; init; }
         public required string PanelDeviceId { get; init; }
-        public required bool Reserve { get; set; }
-        public required bool SeeThrough { get; init; }
-        public required bool Topmost { get; set; }
-        public bool KeepCursorOff { get; set; }
+        public required KioskTraits Traits { get; set; }
     }
 
     private readonly string _serviceOrigin;
@@ -76,18 +73,14 @@ internal sealed class MonitorKioskManager
         }
 
         var assignmentMap = new Dictionary<string, string>(StringComparer.Ordinal);
-        var reserveById = new Dictionary<string, bool>(StringComparer.Ordinal);
-        var seeThroughById = new Dictionary<string, bool>(StringComparer.Ordinal);
-        var keepCursorOffById = new Dictionary<string, bool>(StringComparer.Ordinal);
-        var topmostById = new Dictionary<string, bool>(StringComparer.Ordinal);
+        var traitsById = new Dictionary<string, KioskTraits>(StringComparer.Ordinal);
         foreach (var assignment in assignments)
         {
             if (string.IsNullOrEmpty(assignment.DisplayId) || string.IsNullOrEmpty(assignment.PanelDeviceId)) continue;
             assignmentMap[assignment.DisplayId] = assignment.PanelDeviceId;
-            reserveById[assignment.DisplayId] = assignment.ReserveMonitor;
-            seeThroughById[assignment.DisplayId] = assignment.Backdrop == "desktop";
-            keepCursorOffById[assignment.DisplayId] = assignment.KeepCursorOff;
-            topmostById[assignment.DisplayId] = assignment.AlwaysOnTop;
+            // An unplugged display has no monitor to ask; it is not spawned anyway.
+            var onPrimary = byDisplayId.TryGetValue(assignment.DisplayId, out var m) && m.Primary;
+            traitsById[assignment.DisplayId] = KioskPolicy.Resolve(assignment, onPrimary);
         }
 
         // Arrangement/resolution changes don't alter the attached-id set, so
@@ -99,7 +92,7 @@ internal sealed class MonitorKioskManager
         // WM_DISPLAYCHANGE usually refits before this runs, leaving the compare
         // below equal.
         var existing = new Dictionary<string, string>(StringComparer.Ordinal);
-        List<string>? backdropChanged = null;
+        List<string>? traitsChanged = null;
         foreach (var (displayId, entry) in _kiosks)
         {
             if (byDisplayId.TryGetValue(displayId, out var monitor)
@@ -113,27 +106,28 @@ internal sealed class MonitorKioskManager
                 catch (Exception ex) { Log.Error($"monitor-kiosk refit {displayId}: {ex.Message}"); }
             }
             // The background brush and the WebView2 default background are
-            // fixed at creation, so a backdrop switch is a recreate. The plan
-            // only closes kiosks whose display lost its assignment, so this
-            // one has to be closed here; omitting it from `existing` is what
-            // makes the plan spawn the replacement in the same pass.
+            // fixed at creation, and the primary display wires differently
+            // (no guards, no touch-cursor guard), so a backdrop or primary
+            // switch is a recreate. The plan only closes kiosks whose display
+            // lost its assignment, so this one has to be closed here; omitting
+            // it from `existing` is what makes the plan spawn the replacement
+            // in the same pass.
             // Only when the display is still assigned: an unassigned one has
-            // no desired backdrop, and the plan's close path owns it with the
+            // no desired traits, and the plan's close path owns it with the
             // accurate reason.
-            var wantSeeThrough = seeThroughById.TryGetValue(displayId, out var st) && st;
-            if (assignmentMap.ContainsKey(displayId) && wantSeeThrough != entry.SeeThrough)
+            if (traitsById.TryGetValue(displayId, out var wanted) && KioskPolicy.NeedsRespawn(entry.Traits, wanted))
             {
-                (backdropChanged ??= new List<string>()).Add(displayId);
+                (traitsChanged ??= new List<string>()).Add(displayId);
                 continue;
             }
             entry.Window.ReassertTaskbar();
             existing[displayId] = entry.PanelDeviceId;
         }
-        if (backdropChanged is not null)
+        if (traitsChanged is not null)
         {
-            foreach (var displayId in backdropChanged)
+            foreach (var displayId in traitsChanged)
             {
-                CloseKiosk(displayId, "backdrop changed");
+                CloseKiosk(displayId, "backdrop or primary changed");
             }
         }
 
@@ -149,19 +143,17 @@ internal sealed class MonitorKioskManager
             if (!byDisplayId.TryGetValue(entry.DisplayId, out var monitor)) continue;
             try
             {
-                var reserve = reserveById.TryGetValue(entry.DisplayId, out var r) ? r : true;
-                var seeThrough = seeThroughById.TryGetValue(entry.DisplayId, out var st2) && st2;
-                var topmost = !topmostById.TryGetValue(entry.DisplayId, out var tm) || tm;
+                if (!traitsById.TryGetValue(entry.DisplayId, out var traits)) continue;
+                var seeThrough = traits.SeeThrough;
                 var url = $"{_serviceOrigin}/panel/{Uri.EscapeDataString(entry.PanelDeviceId)}?token={Uri.EscapeDataString(pairedToken)}{(seeThrough ? "&backdrop=desktop" : "")}";
                 _kiosks[entry.DisplayId] = new KioskEntry
                 {
-                    Window = new PanelKioskWindow(monitor, url, reserve, refitOnDisplayChange: true, seeThrough: seeThrough, topmost: topmost),
+                    Window = new PanelKioskWindow(monitor, url, traits.Reserve, refitOnDisplayChange: true, seeThrough: seeThrough,
+                        topmost: traits.Topmost, clickThrough: traits.ClickThrough, isPrimary: traits.IsPrimary),
                     PanelDeviceId = entry.PanelDeviceId,
-                    Reserve = reserve,
-                    SeeThrough = seeThrough,
-                    Topmost = topmost,
+                    Traits = traits,
                 };
-                Log.Info($"monitor-kiosk opened display={entry.DisplayId} device={entry.PanelDeviceId} monitor={monitor.Index} guard={reserve} seeThrough={seeThrough} topmost={topmost}");
+                Log.Info($"monitor-kiosk opened display={entry.DisplayId} device={entry.PanelDeviceId} monitor={monitor.Index} guard={traits.Reserve} seeThrough={seeThrough} topmost={traits.Topmost} clickThrough={traits.ClickThrough} primary={traits.IsPrimary}");
             }
             catch (Exception ex)
             {
@@ -169,27 +161,27 @@ internal sealed class MonitorKioskManager
             }
         }
 
-        // Per-panel reserve toggled on a live kiosk: flip the guard in place.
+        // Apply the live-changeable traits in place.
         foreach (var (displayId, entry) in _kiosks)
         {
-            if (!reserveById.TryGetValue(displayId, out var reserve) || reserve == entry.Reserve) continue;
-            entry.Reserve = reserve;
-            try { entry.Window.SetMonitorGuard(reserve); } catch { /* best-effort */ }
-            Log.Info($"monitor-kiosk guard display={displayId} -> {reserve}");
-        }
-        // Apply each live kiosk's per-panel always-on-top setting in place.
-        foreach (var (displayId, entry) in _kiosks)
-        {
-            if (!topmostById.TryGetValue(displayId, out var topmost)) continue;
+            if (!traitsById.TryGetValue(displayId, out var wanted)) continue;
+            var live = entry.Traits;
+            if (wanted.Reserve != live.Reserve)
+            {
+                try { entry.Window.SetMonitorGuard(wanted.Reserve); } catch { /* best-effort */ }
+                Log.Info($"monitor-kiosk guard display={displayId} -> {wanted.Reserve}");
+            }
+            if (wanted.ClickThrough != live.ClickThrough)
+            {
+                try { entry.Window.SetClickThrough(wanted.ClickThrough); } catch { /* best-effort */ }
+                Log.Info($"monitor-kiosk clickThrough display={displayId} -> {wanted.ClickThrough}");
+            }
             // Called on every pass: windows moved onto the panel stack above a
             // non-topmost kiosk, so it must re-sink on each call.
-            try { entry.Window.SetTopmost(topmost); } catch { /* best-effort */ }
-            if (topmost == entry.Topmost) continue;
-            entry.Topmost = topmost;
-            Log.Info($"monitor-kiosk topmost display={displayId} -> {topmost}");
+            try { entry.Window.SetTopmost(wanted.Topmost); } catch { /* best-effort */ }
+            if (wanted.Topmost != live.Topmost) Log.Info($"monitor-kiosk topmost display={displayId} -> {wanted.Topmost}");
+            entry.Traits = wanted;
         }
-        foreach (var (displayId, entry) in _kiosks)
-            entry.KeepCursorOff = keepCursorOffById.TryGetValue(displayId, out var keepOff) && keepOff;
     }
 
     /// <summary>Adds the monitor rect of every kiosk whose panel keeps the mouse off.</summary>
@@ -197,7 +189,7 @@ internal sealed class MonitorKioskManager
     {
         foreach (var entry in _kiosks.Values)
         {
-            if (entry.KeepCursorOff && entry.Window.Hwnd != IntPtr.Zero) bounds.Add(entry.Window.MonitorBounds);
+            if (entry.Traits.KeepCursorOff && !entry.Traits.IsPrimary && entry.Window.Hwnd != IntPtr.Zero) bounds.Add(entry.Window.MonitorBounds);
         }
     }
 
