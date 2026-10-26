@@ -27,5 +27,15 @@ internal static class IdentifyBadge
         return (StartScale + (1 - StartScale) * eased, (byte)Math.Round(alpha * 255));
     }
 
+    /// <summary>A service token different from the last seen one is a new identify, since the service counter restarts at zero.</summary>
+    public static bool IsNewToken(long? lastSeen, long token) => lastSeen != token;
+
+    /// <summary>Whether the time left covers a full fade in and fade out; anything shorter is skipped.</summary>
+    public static bool CanShow(long remainingMs) => remainingMs >= FadeInMs + FadeOutMs;
+
+    /// <summary>True while the badge is fading in or out; between the fades it is static.</summary>
+    public static bool IsAnimating(long elapsedMs, long totalMs)
+        => elapsedMs < FadeInMs || totalMs - elapsedMs < FadeOutMs;
+
     public static bool IsDone(long elapsedMs, long totalMs) => elapsedMs >= totalMs;
 }

@@ -48,4 +48,26 @@ public class IdentifyBadgeTests
     [InlineData(3000, true)]
     public void DoneAtTheTotal(long elapsed, bool done)
         => Assert.Equal(done, IdentifyBadge.IsDone(elapsed, 3000));
+
+    [Theory]
+    [InlineData(null, 1L, true)]
+    [InlineData(1L, 1L, false)]
+    [InlineData(5L, 1L, true)]
+    [InlineData(1L, 2L, true)]
+    public void AnyTokenOtherThanTheLastSeenIsNew(long? last, long token, bool isNew)
+        => Assert.Equal(isNew, IdentifyBadge.IsNewToken(last, token));
+
+    [Theory]
+    [InlineData(IdentifyBadge.FadeInMs + IdentifyBadge.FadeOutMs - 1, false)]
+    [InlineData(IdentifyBadge.FadeInMs + IdentifyBadge.FadeOutMs, true)]
+    public void SkipsAShowTooShortToFadeIn(long remaining, bool show)
+        => Assert.Equal(show, IdentifyBadge.CanShow(remaining));
+
+    [Theory]
+    [InlineData(0, true)]
+    [InlineData(IdentifyBadge.FadeInMs, false)]
+    [InlineData(3000 - IdentifyBadge.FadeOutMs, false)]
+    [InlineData(3000 - IdentifyBadge.FadeOutMs + 1, true)]
+    public void AnimatesOnlyDuringTheFades(long elapsed, bool animating)
+        => Assert.Equal(animating, IdentifyBadge.IsAnimating(elapsed, 3000));
 }

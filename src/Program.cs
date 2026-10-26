@@ -450,6 +450,7 @@ internal static class Program
                 // Monitor hot-plug / arrangement change: re-reconcile so a
                 // kiosk on an unplugged monitor closes (and a replugged
                 // assigned monitor respawns) without waiting for the poll.
+                Identify.OnDisplayChange();
                 _ = PollAsync();
                 _ = PostMonitorsAsync();
                 return IntPtr.Zero;
@@ -565,6 +566,8 @@ internal static class Program
             // it may have restarted without it.
             var recovered = _stateUnreachableSinceTick != 0;
             _stateUnreachableSinceTick = 0;
+            // The restarted service counts identify tokens from zero again.
+            if (recovered) Identify.ResetToken();
             Apply(state);
             if (recovered)
             {

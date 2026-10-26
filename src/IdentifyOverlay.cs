@@ -12,24 +12,26 @@ namespace Nexus.Overlay;
 internal sealed class IdentifyOverlay
 {
     private readonly List<BadgeWindow> _windows = new();
-    private long _lastToken;
+    private long? _lastToken;
 
     public bool Active => _windows.Count > 0;
 
-    /// <summary>Apply the state's identify; a new token restarts, a missing one is left to the running timers.</summary>
+    /// <summary>Apply the state's identify; a changed token restarts, a missing block forgets the token and leaves running timers alone.</summary>
     public void Apply(IdentifyState? identify)
     {
-        if (identify is null || identify.Token == _lastToken || identify.Displays.Count == 0) return;
+        if (identify is null)
+        {
+            _lastToken = null;
+            return;
+        }
+        if (!IdentifyBadge.IsNewToken(_lastToken, identify.Token) || identify.Displays.Count == 0) return;
         _lastToken = identify.Token;
+        // Too little time left to fade in is skipped; the token stays recorded so polls do not retry it.
+        if (!IdentifyBadge.CanShow(identify.RemainingMs)) return;
         CloseAll();
 
-        var byId = new Dictionary<string, MonitorInfo>(StringComparer.Ordinal);
-        foreach (var m in Monitors.Enumerate())
-        {
-            var id = DisplayIdentity.ResolveStableId(m.DeviceName);
-            if (!string.IsNullOrEmpty(id)) byId.TryAdd(id, m);
-        }
-        var totalMs = Math.Max(400, identify.RemainingMs);
+        var byId = ResolveMonitors();
+        var totalMs = (long)identify.RemainingMs;
         foreach (var entry in identify.Displays)
         {
             if (!byId.TryGetValue(entry.DisplayId, out var monitor)) continue;
@@ -37,6 +39,39 @@ internal sealed class IdentifyOverlay
             catch (Exception ex) { Log.Error($"identify badge: {ex.Message}"); }
         }
         Log.Info($"identify token={identify.Token} badges={_windows.Count}");
+    }
+
+    /// <summary>Forget the last seen token so the next identify shows even if the service restarted its counter.</summary>
+    public void ResetToken() => _lastToken = null;
+
+    /// <summary>Re-resolve each badge's monitor after a display change; a badge whose monitor is gone closes.</summary>
+    public void OnDisplayChange()
+    {
+        if (_windows.Count == 0) return;
+        var byId = ResolveMonitors();
+        foreach (var w in _windows.ToArray())
+        {
+            if (byId.TryGetValue(w.DisplayId, out var monitor))
+            {
+                w.Refit(monitor);
+            }
+            else
+            {
+                _windows.Remove(w);
+                w.Close();
+            }
+        }
+    }
+
+    private static Dictionary<string, MonitorInfo> ResolveMonitors()
+    {
+        var byId = new Dictionary<string, MonitorInfo>(StringComparer.Ordinal);
+        foreach (var m in Monitors.Enumerate())
+        {
+            var id = DisplayIdentity.ResolveStableId(m.DeviceName);
+            if (!string.IsNullOrEmpty(id)) byId.TryAdd(id, m);
+        }
+        return byId;
     }
 
     public void CloseAll()
@@ -61,24 +96,27 @@ internal sealed class IdentifyOverlay
         private const uint WmEraseBkgnd = 0x0014;
 
         private readonly IdentifyOverlay _owner;
-        private readonly Native.RECT _bounds;
+        private Native.RECT _bounds;
         private readonly string _label;
         private readonly string _name;
-        private readonly int _side;
+        private int _side;
         private readonly long _totalMs;
         private readonly long _startTick = Environment.TickCount64;
         private IntPtr _hwnd;
         private int _curSize;
+        private int _curAlpha = -1;
+        private bool _settled;
+        private readonly string _displayId;
 
         public BadgeWindow(IdentifyOverlay owner, MonitorInfo monitor, IdentifyEntry entry, long totalMs)
         {
             _owner = owner;
+            _displayId = entry.DisplayId;
             _bounds = monitor.Bounds;
             _label = entry.Label;
             _name = entry.Name ?? "";
             _totalMs = totalMs;
             _side = IdentifyBadge.Side(_bounds.Width, _bounds.Height);
-            _curSize = _side;
 
             var ex = (uint)(Native.WS_EX_TOPMOST | Native.WS_EX_NOACTIVATE | Native.WS_EX_TOOLWINDOW | WsExLayered | WsExTransparent);
             _hwnd = Win32Window.Create(ClassName, string.Empty, Native.WS_POPUP, ex,
@@ -101,17 +139,37 @@ internal sealed class IdentifyOverlay
             Native.DestroyWindow(hwnd);
         }
 
+        public string DisplayId => _displayId;
+
+        /// <summary>Move to the monitor's new bounds and redraw at the current point of the animation.</summary>
+        public void Refit(MonitorInfo monitor)
+        {
+            if (_hwnd == IntPtr.Zero) return;
+            _bounds = monitor.Bounds;
+            _side = IdentifyBadge.Side(_bounds.Width, _bounds.Height);
+            _curSize = 0;
+            Layout(IdentifyBadge.Frame(Environment.TickCount64 - _startTick, _totalMs));
+        }
+
+        // Geometry and repaint only when the size changes; alpha only when it changes.
         private void Layout((double Scale, byte Alpha) frame)
         {
             var size = Math.Max(8, (int)Math.Round(_side * frame.Scale));
-            var x = _bounds.Left + (_bounds.Width - size) / 2;
-            var y = _bounds.Top + (_bounds.Height - size) / 2;
-            _curSize = size;
-            Native.SetWindowPos(_hwnd, (IntPtr)(-1) /* HWND_TOPMOST */, x, y, size, size, Native.SWP_NOACTIVATE);
-            var radius = size / 5;
-            Native.SetWindowRgn(_hwnd, Native.CreateRoundRectRgn(0, 0, size + 1, size + 1, radius * 2, radius * 2), true);
-            SetLayeredWindowAttributes(_hwnd, 0, frame.Alpha, LwaAlpha);
-            InvalidateRect(_hwnd, IntPtr.Zero, false);
+            if (size != _curSize)
+            {
+                var x = _bounds.Left + (_bounds.Width - size) / 2;
+                var y = _bounds.Top + (_bounds.Height - size) / 2;
+                _curSize = size;
+                Native.SetWindowPos(_hwnd, (IntPtr)(-1) /* HWND_TOPMOST */, x, y, size, size, Native.SWP_NOACTIVATE);
+                var radius = size / 5;
+                Native.SetWindowRgn(_hwnd, Native.CreateRoundRectRgn(0, 0, size + 1, size + 1, radius * 2, radius * 2), true);
+                InvalidateRect(_hwnd, IntPtr.Zero, false);
+            }
+            if (frame.Alpha != _curAlpha)
+            {
+                _curAlpha = frame.Alpha;
+                SetLayeredWindowAttributes(_hwnd, 0, frame.Alpha, LwaAlpha);
+            }
         }
 
         public IntPtr? HandleMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
@@ -127,7 +185,10 @@ internal sealed class IdentifyOverlay
                             Close();
                             return IntPtr.Zero;
                         }
+                        var animating = IdentifyBadge.IsAnimating(elapsed, _totalMs);
+                        if (!animating && _settled) return IntPtr.Zero;
                         Layout(IdentifyBadge.Frame(elapsed, _totalMs));
+                        _settled = !animating;
                         return IntPtr.Zero;
                     }
                 case Native.WM_NCHITTEST:

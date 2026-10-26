@@ -24,7 +24,7 @@ All surfaces load the same React app from [`nexus-web`](https://github.com/hello
 
 At boot, and on every display change, the host posts its EnumDisplayMonitors index to stable display id map to the service's `/overlay/monitors`.
 
-The identify badge (Devices > Displays) is not a surface: the service puts an `identify` block in `/overlay/state` and sends `PrefsChanged`, and the host shows a layered, click-through, non-activating badge on each listed monitor for the time left, whether or not that monitor has a panel.
+The identify badge (Devices > Displays) is not a surface: the service puts an `identify` block in `/overlay/state` and sends `PrefsChanged`, and the host shows a layered, click-through, non-activating badge on each listed monitor for the time left, whether or not that monitor has a panel. A showing badge holds idle exit until it closes.
 
 When no surface needs to be visible (no panel assignments, dashboard hidden, panel hidden) the process self-terminates after a short grace window. The next "Open Nexus" click re-spawns it.
 
