@@ -59,12 +59,4 @@ internal static class DashboardBoundsGeometry
         if (firstNonPanel >= 0) return firstNonPanel;
         return primary >= 0 ? primary : (monitors.Count > 0 ? 0 : -1);
     }
-
-    /// <summary>
-    /// Converts a <c>WINDOWPLACEMENT</c> point from workspace coordinates
-    /// (relative to the work area's origin) to screen coordinates.
-    /// </summary>
-    public static (int X, int Y) WorkspaceToScreen(
-        int x, int y, int monitorLeft, int monitorTop, int workLeft, int workTop)
-        => (x + workLeft - monitorLeft, y + workTop - monitorTop);
 }

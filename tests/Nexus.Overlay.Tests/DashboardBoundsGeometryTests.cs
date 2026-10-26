@@ -97,25 +97,6 @@ public class DashboardBoundsGeometryTests
     }
 
     [Fact]
-    public void WorkspaceToScreen_TopTaskbar_ShiftsDownByTaskbar()
-    {
-        // Monitor at the origin with a top-docked taskbar: the work area starts below it.
-        Assert.Equal((100, 248), DashboardBoundsGeometry.WorkspaceToScreen(100, 200, 0, 0, 0, 48));
-    }
-
-    [Fact]
-    public void WorkspaceToScreen_SecondaryLeftTaskbar_ShiftsRightByTaskbar()
-    {
-        Assert.Equal((-1800, 50), DashboardBoundsGeometry.WorkspaceToScreen(-1860, 50, -1920, 0, -1860, 0));
-    }
-
-    [Fact]
-    public void WorkspaceToScreen_BottomTaskbar_Unchanged()
-    {
-        Assert.Equal((300, 400), DashboardBoundsGeometry.WorkspaceToScreen(300, 400, 0, 0, 0, 0));
-    }
-
-    [Fact]
     public void NoMonitors_NotReachable()
     {
         Assert.False(DashboardBoundsGeometry.StripReachable(0, 0, 1000, Caption, System.Array.Empty<(int, int, int, int)>(), MinW, MinH));

@@ -91,6 +91,8 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     private long _webMessageToken;
     private bool _disposed;
     private bool _saveOnClose;
+    private Native.RECT _restoredRect;
+    private bool _hasRestoredRect;
     // Last WM_SIZE kind, for skipping the per-tick repeats during an
     // interactive resize (see WM_SIZE handler).
     private int _lastSizeKind = Native.SIZE_RESTORED;
@@ -431,11 +433,13 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 if (sizeKind == Native.SIZE_RESTORED)
                 {
                     _saveOnClose = true;
+                    RecordRestoredRect();
                 }
                 return IntPtr.Zero;
 
             case Native.WM_MOVE:
                 _saveOnClose = true;
+                RecordRestoredRect();
                 return IntPtr.Zero;
 
             case Native.WM_GETMINMAXINFO:
@@ -1059,8 +1063,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         if (saved is not null) return saved.Value;
 
         // Default: centered in the target monitor's work area, capped to it.
-        // A panel monitor sits under a topmost kiosk, so it is not the target
-        // when another monitor exists. A zero rect sits at the primary's origin.
+        // A kiosk's monitor is not the target when another monitor exists:
+        // the dashboard would open under the kiosk. A zero rect sits at the
+        // primary's origin.
         var flags = new List<(bool, bool)>();
         for (int i = 0; i < monitors.Count; i++) flags.Add((monitors[i].Primary, isPanel[i]));
         int target = DashboardBoundsGeometry.DefaultMonitor(flags);
@@ -1115,16 +1120,11 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         return (dpi, work);
     }
 
-    // Per monitor in Monitors.Enumerate() order: true when a live kiosk or a
-    // HYTE panel display sits on it.
+    // Per monitor in Monitors.Enumerate() order: true when a live kiosk sits
+    // on it. A panel display without a kiosk is an ordinary monitor.
     private static List<bool> PanelFlags(IReadOnlyList<MonitorInfo> monitors)
     {
         var panelMonitors = Program.KioskMonitors();
-        if (PanelDisplay.Find() is { } y70)
-        {
-            var b = y70.Bounds;
-            panelMonitors.Add(Native.MonitorFromRect(ref b, Native.MONITOR_DEFAULTTONEAREST));
-        }
         var flags = new List<bool>();
         foreach (var m in monitors)
         {
@@ -1172,27 +1172,26 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         catch { return null; }
     }
 
+    // Screen coordinates, unlike WINDOWPLACEMENT.rcNormalPosition's workspace
+    // coordinates. Skipped while maximized or minimized so a close from
+    // either state saves the last restored rect; a snapped window records
+    // its snapped rect.
+    private void RecordRestoredRect()
+    {
+        if (Hwnd == IntPtr.Zero || Native.IsZoomed(Hwnd) || Native.IsIconic(Hwnd)) return;
+        if (!Native.GetWindowRect(Hwnd, out var rc)) return;
+        _restoredRect = rc;
+        _hasRestoredRect = true;
+    }
+
     private void SaveBounds()
     {
         if (Hwnd == IntPtr.Zero) return;
         try
         {
-            var wp = new Native.WINDOWPLACEMENT();
-            wp.length = (uint)sizeof(Native.WINDOWPLACEMENT);
-            if (!Native.GetWindowPlacement(Hwnd, ref wp)) return;
-            // Always save the rcNormalPosition (the restored bounds) so
-            // a maximized window doesn't restore to a maximized rect that
-            // covers the taskbar after a Win32-only restore.
-            var rc = wp.rcNormalPosition;
-            // rcNormalPosition is in workspace coordinates for a non-tool
-            // window; CreateWindow and the load check take screen coordinates.
-            var info = new Native.MonitorInfoNative { cbSize = Marshal.SizeOf<Native.MonitorInfoNative>() };
-            if (Native.GetMonitorInfoW(Native.MonitorFromWindow(Hwnd, Native.MONITOR_DEFAULTTONEAREST), ref info))
-            {
-                var (x, y) = DashboardBoundsGeometry.WorkspaceToScreen(rc.Left, rc.Top,
-                    info.rcMonitor.Left, info.rcMonitor.Top, info.rcWork.Left, info.rcWork.Top);
-                rc = new Native.RECT { Left = x, Top = y, Right = x + rc.Width, Bottom = y + rc.Height };
-            }
+            RecordRestoredRect();
+            if (!_hasRestoredRect) return;
+            var rc = _restoredRect;
             var path = BoundsFilePath();
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var data = new SavedBounds
