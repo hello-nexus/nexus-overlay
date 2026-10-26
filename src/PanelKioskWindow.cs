@@ -30,7 +30,6 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private static readonly UIntPtr TIMER_NAV_RETRY = new(12);
     private static readonly UIntPtr TIMER_LEASE = new(13);
     private const uint LeaseCheckIntervalMs = 1_000;
-    private bool _clickThrough;
     private const int WebErrorOperationCanceled = 14;
     // 0 BROWSER_PROCESS_EXITED, 1 RENDER_PROCESS_EXITED: only a recreate
     // recovers. 2 UNRESPONSIVE is a busy renderer, which can come back.
@@ -79,6 +78,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private readonly bool _seeThrough;
     private readonly bool _compatibilityRendering;
     private bool _isPrimary;
+    private bool _clickThrough;
     private bool _touchGuardHeld;
     private readonly PanelInputState _input;
 
@@ -379,6 +379,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         {
             ApplyRegion();
             if (raiseLowered) ApplyZOrder();
+            // The page's transient state outlived its renewals; ask it to re-send what still holds.
+            PostToPage(PanelHostMessage.RequestHitTestJson);
             Log.Info($"panel-kiosk full-window lease lapsed hwnd=0x{Hwnd:X}");
         }
         if (!_input.LeaseActive) Native.KillTimer(Hwnd, TIMER_LEASE);

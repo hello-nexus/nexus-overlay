@@ -12,7 +12,7 @@ namespace Nexus.Overlay;
 /// </summary>
 internal sealed class PanelInputState
 {
-    /// <summary>The page renews a lease every 2 s; three missed renewals lapse it.</summary>
+    /// <summary>How long a lease lasts without renewal: several of the page's renewal intervals.</summary>
     internal const long LeaseMs = 6_000;
 
     private HitRegionPlan _base = HitRegionPlan.Empty;
