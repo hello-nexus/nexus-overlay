@@ -274,6 +274,19 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         return new Native.RECT { Left = t.Left, Top = t.Top, Right = t.Right, Bottom = t.Bottom };
     }
 
+    /// <summary>Effective DPI of the monitor; 96 when it cannot be read.</summary>
+    internal static uint MonitorDpi(MonitorInfo monitor)
+    {
+        try
+        {
+            var rect = monitor.Bounds;
+            var handle = Native.MonitorFromRect(ref rect, Native.MONITOR_DEFAULTTONEAREST);
+            if (handle != IntPtr.Zero && Native.GetDpiForMonitor(handle, Native.MDT_EFFECTIVE_DPI, out var dx, out _) == 0 && dx > 0) return dx;
+        }
+        catch { /* shcore unavailable: 100% scale */ }
+        return 96;
+    }
+
     private static KioskBounds.Box ToBox(Native.RECT r) => new(r.Left, r.Top, r.Right, r.Bottom);
 
     /// <summary>
@@ -492,6 +505,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             _monitorGuard = PanelMonitorGuard.Start(Hwnd, _monitor);
         }
         _taskbarGuard?.Retarget(Hwnd);
+        // The page learns its new offset only from this message; the URL carried the initial one.
+        PostToPage(KioskBounds.OriginMessageJson(ToBox(b), ToBox(monitor.Bounds), MonitorDpi(monitor)));
         Log.Info($"panel-kiosk refit monitor={monitor.Index} bounds={b.Left},{b.Top},{b.Width}x{b.Height} hwnd=0x{Hwnd:X}");
     }
 

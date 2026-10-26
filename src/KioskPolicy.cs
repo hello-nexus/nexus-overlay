@@ -77,11 +77,26 @@ internal static class KioskBounds
         return (Math.Round((target.Left - monitor.Left) / scale, 2), Math.Round((target.Top - monitor.Top) / scale, 2));
     }
 
-    /// <summary>The <c>&amp;originX=..&amp;originY=..</c> URL suffix for <see cref="OriginCssPx"/>.</summary>
+    /// <summary>The <c>&amp;originX=..&amp;originY=..&amp;fullW=..&amp;fullH=..</c> URL suffix.</summary>
     public static string OriginQuery(Box target, Box monitor, uint dpi)
     {
-        var (x, y) = OriginCssPx(target, monitor, dpi);
-        return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"&originX={x}&originY={y}");
+        var (x, y, w, h) = Geometry(target, monitor, dpi);
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"&originX={x}&originY={y}&fullW={w}&fullH={h}");
+    }
+
+    /// <summary>The <c>nexus.panel.origin</c> message posted to the page after an in-place refit.</summary>
+    public static string OriginMessageJson(Box target, Box monitor, uint dpi)
+    {
+        var (x, y, w, h) = Geometry(target, monitor, dpi);
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"{{\"type\":\"nexus.panel.origin\",\"originX\":{x},\"originY\":{y},\"fullW\":{w},\"fullH\":{h}}}");
+    }
+
+    private static (double X, double Y, double W, double H) Geometry(Box target, Box monitor, uint dpi)
+    {
+        var scale = dpi == 0 ? 1.0 : dpi / 96.0;
+        return (Math.Round((target.Left - monitor.Left) / scale, 2), Math.Round((target.Top - monitor.Top) / scale, 2),
+            Math.Round(monitor.Width / scale, 2), Math.Round(monitor.Height / scale, 2));
     }
 }
 

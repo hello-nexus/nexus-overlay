@@ -219,15 +219,7 @@ internal sealed class MonitorKioskManager
         var full = new KioskBounds.Box(monitor.Bounds.Left, monitor.Bounds.Top, monitor.Bounds.Right, monitor.Bounds.Bottom);
         var work = new KioskBounds.Box(monitor.WorkArea.Left, monitor.WorkArea.Top, monitor.WorkArea.Right, monitor.WorkArea.Bottom);
         var target = KioskBounds.Target(traits.IsPrimary, full, work);
-        uint dpi = 96;
-        try
-        {
-            var rect = monitor.Bounds;
-            var handle = Native.MonitorFromRect(ref rect, Native.MONITOR_DEFAULTTONEAREST);
-            if (handle != IntPtr.Zero && Native.GetDpiForMonitor(handle, Native.MDT_EFFECTIVE_DPI, out var dx, out _) == 0 && dx > 0) dpi = dx;
-        }
-        catch { /* shcore unavailable: 100% scale */ }
-        return KioskBounds.OriginQuery(target, full, dpi);
+        return KioskBounds.OriginQuery(target, full, PanelKioskWindow.MonitorDpi(monitor));
     }
 
     private static bool SameBounds(Native.RECT a, Native.RECT b)

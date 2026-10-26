@@ -131,12 +131,12 @@ public class KioskPolicyTests
 
     [Fact]
     public void FullBoundsKioskHasZeroOrigin()
-        => Assert.Equal("&originX=0&originY=0", KioskBounds.OriginQuery(Mon, Mon, 144));
+        => Assert.Equal("&originX=0&originY=0&fullW=1706.67&fullH=960", KioskBounds.OriginQuery(Mon, Mon, 144));
 
     [Theory]
-    [InlineData(96u, "&originX=0&originY=40")]
-    [InlineData(144u, "&originX=0&originY=26.67")]
-    [InlineData(0u, "&originX=0&originY=40")]
+    [InlineData(96u, "&originX=0&originY=40&fullW=2560&fullH=1440")]
+    [InlineData(144u, "&originX=0&originY=26.67&fullW=1706.67&fullH=960")]
+    [InlineData(0u, "&originX=0&originY=40&fullW=2560&fullH=1440")]
     public void TopTaskbarOffsetIsInCssPx(uint dpi, string expected)
         => Assert.Equal(expected, KioskBounds.OriginQuery(new KioskBounds.Box(0, 40, 2560, 1440), Mon, dpi));
 
@@ -145,6 +145,12 @@ public class KioskPolicyTests
     {
         var mon = new KioskBounds.Box(-1920, 0, 0, 1080);
         var work = new KioskBounds.Box(-1860, 0, 0, 1080);
-        Assert.Equal("&originX=60&originY=0", KioskBounds.OriginQuery(work, mon, 96));
+        Assert.Equal("&originX=60&originY=0&fullW=1920&fullH=1080", KioskBounds.OriginQuery(work, mon, 96));
     }
+
+    [Fact]
+    public void OriginMessageCarriesTheSameNumbersAsTheQuery()
+        => Assert.Equal(
+            "{\"type\":\"nexus.panel.origin\",\"originX\":0,\"originY\":26.67,\"fullW\":1706.67,\"fullH\":960}",
+            KioskBounds.OriginMessageJson(new KioskBounds.Box(0, 40, 2560, 1440), Mon, 144));
 }
