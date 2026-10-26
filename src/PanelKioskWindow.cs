@@ -28,6 +28,9 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private const int PermissionStateDeny = 2;
     private static readonly UIntPtr TIMER_PAINT_POLL = new(11);
     private static readonly UIntPtr TIMER_NAV_RETRY = new(12);
+    private static readonly UIntPtr TIMER_LEASE = new(13);
+    private const uint LeaseCheckIntervalMs = 1_000;
+    private bool _clickThrough;
     private const int WebErrorOperationCanceled = 14;
     // 0 BROWSER_PROCESS_EXITED, 1 RENDER_PROCESS_EXITED: only a recreate
     // recovers. 2 UNRESPONSIVE is a busy renderer, which can come back.
@@ -174,7 +177,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     {
         _seeThrough = seeThrough;
         _isPrimary = isPrimary;
-        _input = new PanelInputState(seeThrough && clickThrough, topmost);
+        _clickThrough = seeThrough && clickThrough;
+        _input = new PanelInputState(seeThrough, topmost);
         _compatibilityRendering = compatibilityRendering;
         _instanceId = Interlocked.Increment(ref _nextInstanceId);
         _instances[_instanceId] = this;
@@ -334,14 +338,18 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         Native.SetWindowPos(Hwnd, _input.SinkToBottom ? Native.HWND_BOTTOM : Native.HWND_TOP, 0, 0, 0, 0, flags);
     }
 
-    /// <summary>Live click-through toggle; no recreate.</summary>
+    /// <summary>
+    /// Live click-through toggle; no recreate. The page reports a different
+    /// shape for each state, so the region drops to empty and it is asked again.
+    /// </summary>
     public void SetClickThrough(bool clickThrough)
     {
         if (_disposed || Hwnd == IntPtr.Zero) return;
-        if (!_input.SetClickThrough(_seeThrough && clickThrough)) return;
-        ApplyRegion();
-        // The region just went empty and the page does not know; it answers with a fresh report.
-        if (_input.ClickThrough) PostToPage(PanelHostMessage.RequestHitTestJson);
+        clickThrough = _seeThrough && clickThrough;
+        if (clickThrough == _clickThrough) return;
+        _clickThrough = clickThrough;
+        if (!_seeThrough) return;
+        OnPageLost(pageAlive: true, forceRequest: true);
     }
 
     private void ApplyRaise(bool raised)
@@ -353,14 +361,27 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     // The host reset the region and raise state. When the page is gone
     // (navigation, renderer exit) its next load reports unprompted; when it is
     // still alive it never heard about the reset, so it is asked to report again.
-    private void OnPageLost(bool pageAlive)
+    private void OnPageLost(bool pageAlive, bool forceRequest = false)
     {
         if (_disposed || Hwnd == IntPtr.Zero) return;
         var wasRaised = _input.Raised;
         var changed = _input.PageLost();
         if (changed) ApplyRegion();
         if (wasRaised) ApplyZOrder();
-        if (changed && pageAlive) PostToPage(PanelHostMessage.RequestHitTestJson);
+        Native.KillTimer(Hwnd, TIMER_LEASE);
+        if ((changed || forceRequest) && pageAlive) PostToPage(PanelHostMessage.RequestHitTestJson);
+    }
+
+    private void CheckLease()
+    {
+        if (_disposed || Hwnd == IntPtr.Zero) return;
+        if (_input.Expire(Environment.TickCount64, out var raiseLowered))
+        {
+            ApplyRegion();
+            if (raiseLowered) ApplyZOrder();
+            Log.Info($"panel-kiosk full-window lease lapsed hwnd=0x{Hwnd:X}");
+        }
+        if (!_input.LeaseActive) Native.KillTimer(Hwnd, TIMER_LEASE);
     }
 
     private void ApplyRegion()
@@ -396,7 +417,12 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         switch (msg.Kind)
         {
             case PanelMessageKind.HitTest:
-                if (msg.Plan is { } plan && _input.ApplyReport(plan)) ApplyRegion();
+                if (msg.Plan is { } plan)
+                {
+                    if (_input.ApplyReport(plan, Environment.TickCount64)) ApplyRegion();
+                    // SetTimer with the same id replaces the previous timer, so each renewal re-arms the check.
+                    if (_input.LeaseActive) Native.SetTimer(Hwnd, TIMER_LEASE, LeaseCheckIntervalMs, IntPtr.Zero);
+                }
                 break;
             case PanelMessageKind.Raise:
                 ApplyRaise(msg.RaiseValue);
@@ -566,6 +592,11 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 if (wParam == (IntPtr)(long)TIMER_PAINT_POLL.ToUInt64())
                 {
                     ProbePaint();
+                    return IntPtr.Zero;
+                }
+                if (wParam == (IntPtr)(long)TIMER_LEASE.ToUInt64())
+                {
+                    CheckLease();
                     return IntPtr.Zero;
                 }
                 if (wParam == (IntPtr)(long)TIMER_NAV_RETRY.ToUInt64())

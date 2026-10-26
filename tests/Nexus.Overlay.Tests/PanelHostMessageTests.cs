@@ -126,4 +126,24 @@ public class PanelHostMessageTests
         // Only the page consumes it; if it ever echoed back it must be dropped, not forwarded to widgets.
         Assert.Equal(PanelMessageKind.Ignored, Parse(PanelHostMessage.RequestHitTestJson).Kind);
     }
+
+    [Theory]
+    [InlineData("{\"type\":\"nexus.panel.hitTest\",\"mode\":\"full\",\"lease\":true,\"dpr\":1,\"rects\":[]}", true)]
+    [InlineData("{\"type\":\"nexus.panel.hitTest\",\"mode\":\"full\",\"lease\":false}", false)]
+    [InlineData("{\"type\":\"nexus.panel.hitTest\",\"mode\":\"full\"}", false)]
+    [InlineData("{\"type\":\"nexus.panel.hitTest\",\"mode\":\"full\",\"lease\":\"true\"}", false)]
+    public void FullLeaseFlagIsParsedAndDefaultsToFalse(string json, bool lease)
+    {
+        var plan = Parse(json).Plan!;
+        Assert.Equal(HitMode.Full, plan.Mode);
+        Assert.Equal(lease, plan.Lease);
+    }
+
+    [Fact]
+    public void LeaseOnARegionReportIsIgnored()
+    {
+        var plan = Parse("{\"type\":\"nexus.panel.hitTest\",\"mode\":\"region\",\"lease\":true,\"dpr\":1,\"rects\":[{\"x\":0,\"y\":0,\"w\":5,\"h\":5}]}").Plan!;
+        Assert.False(plan.Lease);
+        Assert.False(HitRegionPlan.Full.Equals(HitRegionPlan.FullLease));
+    }
 }

@@ -11,19 +11,23 @@ internal sealed class HitRegionPlan : IEquatable<HitRegionPlan>
 {
     public static readonly HitRegionPlan Empty = new(HitMode.Empty, Array.Empty<RegionLayout.Rect>());
     public static readonly HitRegionPlan Full = new(HitMode.Full, Array.Empty<RegionLayout.Rect>());
+    public static readonly HitRegionPlan FullLease = new(HitMode.Full, Array.Empty<RegionLayout.Rect>(), lease: true);
 
     public HitMode Mode { get; }
+    /// <summary>A transient full-window report the page must keep renewing.</summary>
+    public bool Lease { get; }
     public IReadOnlyList<RegionLayout.Rect> Rects { get; }
 
-    public HitRegionPlan(HitMode mode, IReadOnlyList<RegionLayout.Rect> rects)
+    public HitRegionPlan(HitMode mode, IReadOnlyList<RegionLayout.Rect> rects, bool lease = false)
     {
         Mode = mode;
+        Lease = lease;
         Rects = rects;
     }
 
     public bool Equals(HitRegionPlan? other)
     {
-        if (other is null || other.Mode != Mode || other.Rects.Count != Rects.Count) return false;
+        if (other is null || other.Mode != Mode || other.Lease != Lease || other.Rects.Count != Rects.Count) return false;
         for (var i = 0; i < Rects.Count; i++)
         {
             if (Rects[i] != other.Rects[i]) return false;
@@ -95,7 +99,11 @@ internal readonly record struct PanelHostMessage(PanelMessageKind Kind, HitRegio
     private static HitRegionPlan ReadPlan(JsonElement root, int windowWidth, int windowHeight)
     {
         var mode = root.TryGetProperty("mode", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : null;
-        if (mode == "full") return HitRegionPlan.Full;
+        if (mode == "full")
+        {
+            var lease = root.TryGetProperty("lease", out var l) && l.ValueKind == JsonValueKind.True;
+            return lease ? HitRegionPlan.FullLease : HitRegionPlan.Full;
+        }
         if (mode != "region") return HitRegionPlan.Empty;
         if (windowWidth <= 0 || windowHeight <= 0) return HitRegionPlan.Empty;
         if (!root.TryGetProperty("dpr", out var d) || d.ValueKind != JsonValueKind.Number
