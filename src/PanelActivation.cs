@@ -15,14 +15,26 @@ internal sealed class PanelActivation
 
     private IntPtr _previous;
 
-    public bool Activatable { get; private set; }
+    private bool _page;
+    private bool _widgetEditing;
 
-    /// <summary>Returns whether the state changed.</summary>
+    /// <summary>True while the page asks for it or a widget text field is being edited.</summary>
+    public bool Activatable => _page || _widgetEditing;
+
+    /// <summary>Page request. Returns whether <see cref="Activatable"/> changed.</summary>
     public bool Set(bool value, IntPtr foreground, IntPtr self)
+        => Update(ref _page, value, foreground, self);
+
+    /// <summary>Widget text-field editing. Returns whether <see cref="Activatable"/> changed.</summary>
+    public bool SetWidgetEditing(bool value, IntPtr foreground, IntPtr self)
+        => Update(ref _widgetEditing, value, foreground, self);
+
+    private bool Update(ref bool source, bool value, IntPtr foreground, IntPtr self)
     {
-        if (value == Activatable) return false;
-        Activatable = value;
-        if (value) _previous = foreground != self ? foreground : IntPtr.Zero;
+        var before = Activatable;
+        source = value;
+        if (Activatable == before) return false;
+        if (Activatable) _previous = foreground != self ? foreground : IntPtr.Zero;
         return true;
     }
 

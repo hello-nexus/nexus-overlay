@@ -21,6 +21,8 @@ internal sealed unsafe class FrostPlate : IWin32WindowOwner, IDisposable
 
     public IntPtr Hwnd { get; private set; }
 
+    public bool Shown => _shown;
+
     public static FrostPlate? TryCreate()
     {
         var plate = new FrostPlate();
@@ -139,6 +141,7 @@ internal sealed class FrostLayer : IDisposable
         var applied = new List<RegionLayout.Rect>();
         for (var i = 0; i < live; i++) applied.Add(wanted.Rects[i]);
 
+        var structural = diff.Create > 0 || diff.Destroy > 0;
         foreach (var i in diff.Place)
         {
             if (i >= live) continue;
@@ -154,18 +157,35 @@ internal sealed class FrostLayer : IDisposable
                 {
                     if (!_plates[i].SetTint(wanted.Percent)) Log.Warn("panel-frost acrylic accent rejected");
                 }
-                _plates[i].StackBelow(kiosk);
+                // Only a new plate needs inserting; a moved or resized one keeps its place.
+                if (isNew) _plates[i].StackBelow(kiosk);
             }
         }
         _current = live == 0 ? FrostPlan.Empty : new FrostPlan(wanted.Percent, wanted.RadiusPx, applied);
-        LogState(kiosk, wanted.Percent);
+        if (structural) LogState(kiosk, wanted.Percent);
     }
 
-    /// <summary>Re-insert every plate under the kiosk after it was raised, lowered or its topmost state changed.</summary>
+    /// <summary>Re-insert the plates under the kiosk after it was raised, lowered or its topmost state changed; a no-op when they already sit there.</summary>
     public void Restack(IntPtr kiosk)
     {
+        if (_plates.Count == 0 || IsStackedBelow(kiosk)) return;
         foreach (var plate in _plates) plate.StackBelow(kiosk);
-        if (_plates.Count > 0) LogState(kiosk, _current.Percent);
+        LogState(kiosk, _current.Percent);
+    }
+
+    // True when the windows right behind the kiosk are exactly the plates, in the kiosk's band.
+    private bool IsStackedBelow(IntPtr kiosk)
+    {
+        var topmost = IsTopmost(kiosk);
+        var h = kiosk;
+        for (var n = 0; n < _plates.Count; n++)
+        {
+            h = Native.GetWindow(h, Native.GW_HWNDNEXT);
+            if (h == IntPtr.Zero) return false;
+            var plate = _plates.Find(p => p.Hwnd == h);
+            if (plate is null || !plate.Shown || IsTopmost(h) != topmost) return false;
+        }
+        return true;
     }
 
     /// <summary>Move every plate after the kiosk window moved or resized.</summary>

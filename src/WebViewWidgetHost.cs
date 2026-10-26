@@ -96,12 +96,14 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private readonly Action _onRealMouseMove;
     private bool _activatable;
     private NativeView? _lastEditing;
-    private IntPtr _prevForeground;
+    private readonly Action<bool> _setEditing;
     private bool _disposed;
 
     /// <param name="post">Delivers a JSON message to the panel page.</param>
-    public WebViewWidgetHost(IntPtr kioskHwnd, string panelUrl, bool compatibilityRendering, Func<string, bool> post)
+    /// <param name="setEditing">Reports whether a widget text field is being edited; the kiosk owns the activation style.</param>
+    public WebViewWidgetHost(IntPtr kioskHwnd, string panelUrl, bool compatibilityRendering, Func<string, bool> post, Action<bool> setEditing)
     {
+        _setEditing = setEditing;
         _kioskHwnd = kioskHwnd;
         _panelUrl = panelUrl;
         _compatibilityRendering = compatibilityRendering;
@@ -225,30 +227,11 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         _interactive = interactive;
 
         var want = EditingView() is not null;
-        if (want == _activatable)
-        {
-            RememberForeground();
-            return;
-        }
+        if (want == _activatable) return;
         _activatable = want;
-        if (want) RememberForeground();
         if (!Native.IsWindow(_kioskHwnd)) return;
-        var ex = Native.GetWindowLongW(_kioskHwnd, Native.GWL_EXSTYLE);
-        ex = want ? ex & ~Native.WS_EX_NOACTIVATE : ex | Native.WS_EX_NOACTIVATE;
-        Native.SetWindowLongPtrW(_kioskHwnd, Native.GWL_EXSTYLE, (IntPtr)ex);
-        Native.SetWindowPos(_kioskHwnd, IntPtr.Zero, 0, 0, 0, 0,
-            Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE | Native.SWP_FRAMECHANGED);
-        if (!want)
-        {
-            var prev = _prevForeground;
-            _prevForeground = IntPtr.Zero;
-            if (Native.GetForegroundWindow() == _kioskHwnd && prev != IntPtr.Zero && prev != _kioskHwnd
-                && Native.IsWindow(prev) && Native.IsWindowVisible(prev) && !Native.IsIconic(prev))
-            {
-                Native.SetForegroundWindow(prev);
-            }
-            return;
-        }
+        _setEditing(want);
+        if (!want) return;
         if (Native.GetForegroundWindow() != _kioskHwnd && !Native.SetForegroundWindow(_kioskHwnd))
         {
             Log.Warn("webview-widget text field focused but the kiosk could not take the foreground");
@@ -341,14 +324,6 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         ClampCursorCount("real mouse move", quietWhenClean: true);
     }
 
-    // Last foreground window other than the kiosk, so focus can go back once no view is interactive.
-    private void RememberForeground()
-    {
-        if (!_activatable) return;
-        var fg = Native.GetForegroundWindow();
-        if (fg != IntPtr.Zero && fg != _kioskHwnd) _prevForeground = fg;
-    }
-
     public void OnKioskResized() => ApplyLayoutAll();
 
     public void OnKioskMoved()
@@ -387,7 +362,6 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         }
         if (timerId != (IntPtr)(long)TimerWatchdog.ToUInt64()) return;
         if (_registry.WatchdogExpired(Environment.TickCount64)) DestroyAll("watchdog");
-        else RememberForeground();
     }
 
     /// <summary>Destroys views queued by event handlers, which must not tear down inside their own callback.</summary>

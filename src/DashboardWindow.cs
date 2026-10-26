@@ -13,8 +13,9 @@ namespace Nexus.Overlay;
 /// <summary>
 /// Top-level WebView2 window hosting the main Nexus dashboard URL. Lives in
 /// the same process as the panel kiosks so its renderer shares the browser /
-/// GPU / network / utility process tree already running for them - the memory win over msedge --app. Singleton per process (the
-/// overlay process is itself singleton via the mutex in Program.cs).
+/// GPU / network / utility process tree already running for them - the memory
+/// win over msedge --app. Singleton per process (the overlay process is itself
+/// singleton via the mutex in Program.cs).
 /// </summary>
 internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 {

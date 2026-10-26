@@ -412,6 +412,20 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     {
         if (_disposed || Hwnd == IntPtr.Zero) return;
         if (!_activation.Set(value, Native.GetForegroundWindow(), Hwnd)) return;
+        ApplyActivatable();
+    }
+
+    // The widget host reports text-field editing here so one place owns the style bit.
+    private void SetWidgetEditing(bool value)
+    {
+        if (_disposed || Hwnd == IntPtr.Zero) return;
+        if (!_activation.SetWidgetEditing(value, Native.GetForegroundWindow(), Hwnd)) return;
+        ApplyActivatable();
+    }
+
+    private void ApplyActivatable()
+    {
+        var value = _activation.Activatable;
         var ex = Native.GetWindowLongW(Hwnd, Native.GWL_EXSTYLE);
         ex = value ? ex & ~Native.WS_EX_NOACTIVATE : ex | Native.WS_EX_NOACTIVATE;
         Native.SetWindowLongPtrW(Hwnd, Native.GWL_EXSTYLE, (IntPtr)ex);
@@ -658,6 +672,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                     return null;
                 }
                 _activation.OnActivated(lParam, hwnd);
+                // Activating a sunk kiosk raises it; the plates must follow.
+                if (!_input.Topmost) _frost?.Restack(hwnd);
                 // DefWindowProc would focus the kiosk itself, blurring the text field that asked for activation.
                 if (_widgets?.FocusEditingView() == true) return IntPtr.Zero;
                 if (!_activation.Activatable) return null;
@@ -676,6 +692,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                     Native.SetWindowPos(hwnd, IntPtr.Zero,
                         sug.Left, sug.Top, sug.Width, sug.Height,
                         Native.SWP_NOACTIVATE | Native.SWP_NOZORDER);
+                    _placed = sug;
+                    _frost?.Reposition(sug.Left, sug.Top);
                 }
                 return IntPtr.Zero;
 
@@ -821,7 +839,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         _processFailedHandler = WebView2Callbacks.CreateProcessFailedHandler(&OnProcessFailedStatic);
         Wv2.Wv2_add_ProcessFailed(_coreWebView2, _processFailedHandler, out _processFailedToken);
 
-        _widgets = new WebViewWidgetHost(Hwnd, _navigationUrl, _compatibilityRendering, PostToPage);
+        _widgets = new WebViewWidgetHost(Hwnd, _navigationUrl, _compatibilityRendering, PostToPage, SetWidgetEditing);
         _webMessageHandler = WebView2Callbacks.CreateWebMessageReceivedHandler(&OnWebMessageReceivedStatic);
         Wv2.Wv2_add_WebMessageReceived(_coreWebView2, _webMessageHandler, out _webMessageToken);
 

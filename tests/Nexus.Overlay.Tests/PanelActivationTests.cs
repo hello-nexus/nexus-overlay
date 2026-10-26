@@ -94,4 +94,27 @@ public class PanelActivationTests
     [InlineData("{\"type\":\"nexus.panel.activatable\",\"value\":1}")]
     public void ActivatableWithoutABooleanIsIgnored(string json)
         => Assert.Equal(PanelMessageKind.Ignored, PanelHostMessage.Parse(json, 100, 100).Kind);
+
+    [Fact]
+    public void WidgetEditingEndingKeepsAPageRequestActivatable()
+    {
+        var a = new PanelActivation();
+        Assert.True(a.Set(true, App, Self));
+        Assert.False(a.SetWidgetEditing(true, App, Self));
+        Assert.False(a.SetWidgetEditing(false, App, Self));
+        Assert.True(a.Activatable);
+        Assert.Equal(App, a.TakeRestoreTarget());
+    }
+
+    [Fact]
+    public void PageRequestEndingKeepsWidgetEditingActivatable()
+    {
+        var a = new PanelActivation();
+        Assert.True(a.SetWidgetEditing(true, App, Self));
+        Assert.False(a.Set(true, Other, Self));
+        Assert.False(a.Set(false, Other, Self));
+        Assert.True(a.Activatable);
+        Assert.True(a.SetWidgetEditing(false, Other, Self));
+        Assert.False(a.Activatable);
+    }
 }

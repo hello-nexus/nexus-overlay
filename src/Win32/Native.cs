@@ -378,12 +378,12 @@ internal static unsafe class Native
     // nonzero HRESULT ignored on older builds).
     public const int DWMWA_USE_HOSTBACKDROPBRUSH = 17;
 
-    // Caption colour override. DWMWA_COLOR_NONE stops DWM painting any
+    // Caption color override. DWMWA_COLOR_NONE stops DWM painting any
     // caption bar into the extended frame of a custom-frame window.
     public const int DWMWA_CAPTION_COLOR = 35;
     public const int DWMWA_COLOR_NONE = unchecked((int)0xFFFFFFFE);
 
-    // Rounded-corner preference and border colour of a top-level window.
+    // Rounded-corner preference and border color of a top-level window.
     // Windows 11 only; earlier builds return a nonzero HRESULT we ignore.
     public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
     public const int DWMWCP_DONOTROUND = 1;
@@ -487,7 +487,7 @@ internal static unsafe class Native
 
     public const int MDT_EFFECTIVE_DPI = 0;
 
-    // Reads a single REG_DWORD. Used to read the user's accent colour from
+    // Reads a single REG_DWORD. Used to read the user's accent color from
     // HKCU\Software\Microsoft\Windows\DWM\AccentColor (overlay runs as the user).
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
     public static extern int RegGetValueW(IntPtr hkey, string lpSubKey, string lpValue,
