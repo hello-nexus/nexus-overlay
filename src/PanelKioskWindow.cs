@@ -80,6 +80,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private bool _isPrimary;
     private bool _clickThrough;
     private Native.RECT _placed;
+    private FrostLayer? _frost;
     private bool _touchGuardHeld;
     private readonly PanelInputState _input;
 
@@ -355,6 +356,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         if (_input.Topmost)
         {
             Native.SetWindowPos(Hwnd, Native.HWND_TOPMOST, 0, 0, 0, 0, flags);
+            _frost?.Restack(Hwnd);
             return;
         }
         Native.SetWindowPos(Hwnd, Native.HWND_NOTOPMOST, 0, 0, 0, 0, flags);
@@ -363,6 +365,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         // top of the normal band, never into the topmost one; otherwise it
         // sinks under the other windows.
         Native.SetWindowPos(Hwnd, _input.SinkToBottom ? Native.HWND_BOTTOM : Native.HWND_TOP, 0, 0, 0, 0, flags);
+        _frost?.Restack(Hwnd);
     }
 
     /// <summary>
@@ -396,7 +399,24 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         if (changed) ApplyRegion();
         if (wasRaised) ApplyZOrder();
         Native.KillTimer(Hwnd, TIMER_LEASE);
-        if ((changed || forceRequest) && pageAlive) PostToPage(PanelHostMessage.RequestHitTestJson);
+        // The page believes its plates exist; a live one is asked to report again.
+        var hadFrost = _frost is { Count: > 0 };
+        _frost?.Clear();
+        if ((changed || forceRequest || hadFrost) && pageAlive) PostToPage(PanelHostMessage.RequestHitTestJson);
+    }
+
+    // Frost plates exist only for a see-through panel on Windows 11 and only
+    // while the page that asked for them is alive.
+    private void ApplyFrost(FrostPlan plan)
+    {
+        if (_disposed || Hwnd == IntPtr.Zero || !_seeThrough || !FrostLayer.IsSupported) return;
+        if (plan.IsEmpty)
+        {
+            _frost?.Clear();
+            return;
+        }
+        _frost ??= new FrostLayer();
+        _frost.Update(plan, Hwnd, _placed.Left, _placed.Top);
     }
 
     private void CheckLease()
@@ -456,6 +476,9 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             case PanelMessageKind.Raise:
                 ApplyRaise(msg.RaiseValue);
                 break;
+            case PanelMessageKind.Frost:
+                if (msg.Frost is { } frost) ApplyFrost(frost);
+                break;
         }
     }
 
@@ -505,6 +528,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             _monitorGuard = PanelMonitorGuard.Start(Hwnd, _monitor);
         }
         _taskbarGuard?.Retarget(Hwnd);
+        _frost?.Reposition(b.Left, b.Top);
         // The page learns its new offset only from this message; the URL carried the initial one.
         PostToPage(KioskBounds.OriginMessageJson(ToBox(b), ToBox(monitor.Bounds), MonitorDpi(monitor)));
         Log.Info($"panel-kiosk refit monitor={monitor.Index} bounds={b.Left},{b.Top},{b.Width}x{b.Height} hwnd=0x{Hwnd:X}");
@@ -593,7 +617,11 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 return null;
 
             case Native.WM_SHOWWINDOW:
-                if (wParam == IntPtr.Zero) _widgets?.DestroyAll("kiosk hidden");
+                if (wParam == IntPtr.Zero)
+                {
+                    _widgets?.DestroyAll("kiosk hidden");
+                    _frost?.Clear();
+                }
                 return null;
 
             case Native.WM_ACTIVATE:
@@ -994,6 +1022,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         _taskbarGuard = null;
         _monitorGuard?.Dispose();
         _monitorGuard = null;
+        _frost?.Dispose();
+        _frost = null;
         try
         {
             _widgets?.Dispose();

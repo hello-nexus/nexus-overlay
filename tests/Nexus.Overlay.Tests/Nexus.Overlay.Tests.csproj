@@ -31,6 +31,7 @@
     <Compile Include="..\..\src\DisplayIdentity.cs" Link="src\DisplayIdentity.cs" />
     <Compile Include="..\..\src\MonitorKioskPlan.cs" Link="src\MonitorKioskPlan.cs" />
     <Compile Include="..\..\src\PanelHostMessage.cs" Link="src\PanelHostMessage.cs" />
+    <Compile Include="..\..\src\PanelFrost.cs" Link="src\PanelFrost.cs" />
     <Compile Include="..\..\src\PanelInputState.cs" Link="src\PanelInputState.cs" />
     <Compile Include="..\..\src\KioskPolicy.cs" Link="src\KioskPolicy.cs" />
     <Compile Include="..\..\src\MonitorMapPublisher.cs" Link="src\MonitorMapPublisher.cs" />

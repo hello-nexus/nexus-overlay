@@ -83,6 +83,7 @@ internal static unsafe class Native
         public IntPtr lpData;
     }
     public const uint WM_NCHITTEST = 0x0084;
+    public const uint WM_MOUSEACTIVATE = 0x0021;
     public const uint WM_NCACTIVATE = 0x0086;
     public const uint WM_NCMOUSEMOVE = 0x00A0;
     public const uint WM_NCLBUTTONDOWN = 0x00A1;
@@ -381,6 +382,46 @@ internal static unsafe class Native
     // caption bar into the extended frame of a custom-frame window.
     public const int DWMWA_CAPTION_COLOR = 35;
     public const int DWMWA_COLOR_NONE = unchecked((int)0xFFFFFFFE);
+
+    // Rounded-corner preference and border colour of a top-level window.
+    // Windows 11 only; earlier builds return a nonzero HRESULT we ignore.
+    public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+    public const int DWMWCP_DONOTROUND = 1;
+    public const int DWMWA_BORDER_COLOR = 34;
+
+    // Undocumented but stable accent policy giving a window an acrylic
+    // blur-behind. It fills the whole window rect and ignores a region set on
+    // some builds, so each frosted card gets its own small window.
+    public const int WCA_ACCENT_POLICY = 19;
+    public const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct AccentPolicy
+    {
+        public int AccentState;
+        public int AccentFlags;
+        public uint GradientColor;
+        public int AnimationId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WindowCompositionAttributeData
+    {
+        public int Attribute;
+        public IntPtr Data;
+        public int SizeOfData;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WindowCompositionAttributeData data);
+
+    public const uint GW_HWNDNEXT = 2;
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetTopWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
 
     [DllImport("dwmapi.dll")]
     public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, in int pvAttribute, int cbAttribute);

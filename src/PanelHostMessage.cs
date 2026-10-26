@@ -48,9 +48,10 @@ internal enum PanelMessageKind
     Ignored,
     HitTest,
     Raise,
+    Frost,
 }
 
-internal readonly record struct PanelHostMessage(PanelMessageKind Kind, HitRegionPlan? Plan, bool RaiseValue)
+internal readonly record struct PanelHostMessage(PanelMessageKind Kind, HitRegionPlan? Plan, bool RaiseValue, FrostPlan? Frost = null)
 {
     private const string Prefix = "nexus.panel.";
     /// <summary>Posted to the page after the host reset its region or raise state under it.</summary>
@@ -83,6 +84,9 @@ internal readonly record struct PanelHostMessage(PanelMessageKind Kind, HitRegio
             if (type == "nexus.panel.hitTest")
                 return new PanelHostMessage(PanelMessageKind.HitTest, ReadPlan(root, windowWidth, windowHeight), false);
 
+            if (type == "nexus.panel.frost")
+                return new PanelHostMessage(PanelMessageKind.Frost, null, false, ReadFrost(root, windowWidth, windowHeight));
+
             if (type == "nexus.panel.raise"
                 && root.TryGetProperty("value", out var v)
                 && (v.ValueKind == JsonValueKind.True || v.ValueKind == JsonValueKind.False))
@@ -96,26 +100,36 @@ internal readonly record struct PanelHostMessage(PanelMessageKind Kind, HitRegio
         }
     }
 
-    private static HitRegionPlan ReadPlan(JsonElement root, int windowWidth, int windowHeight)
+    private static FrostPlan ReadFrost(JsonElement root, int windowWidth, int windowHeight)
     {
-        var mode = root.TryGetProperty("mode", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : null;
-        if (mode == "full")
-        {
-            var lease = root.TryGetProperty("lease", out var l) && l.ValueKind == JsonValueKind.True;
-            return lease ? HitRegionPlan.FullLease : HitRegionPlan.Full;
-        }
-        if (mode != "region") return HitRegionPlan.Empty;
-        if (windowWidth <= 0 || windowHeight <= 0) return HitRegionPlan.Empty;
-        if (!root.TryGetProperty("dpr", out var d) || d.ValueKind != JsonValueKind.Number
-            || !d.TryGetDouble(out var dpr) || !double.IsFinite(dpr) || dpr <= 0 || dpr > MaxDpr)
-            return HitRegionPlan.Empty;
-        if (!root.TryGetProperty("rects", out var arr) || arr.ValueKind != JsonValueKind.Array)
-            return HitRegionPlan.Empty;
+        var level = root.TryGetProperty("level", out var l) && l.ValueKind == JsonValueKind.String ? l.GetString() : null;
+        var frostLevel = level switch { "light" => FrostLevel.Light, "heavy" => FrostLevel.Heavy, _ => FrostLevel.None };
+        if (frostLevel == FrostLevel.None || windowWidth <= 0 || windowHeight <= 0) return FrostPlan.Empty;
+        if (!TryReadDpr(root, out var dpr)) return FrostPlan.Empty;
+        if (!root.TryGetProperty("rects", out var arr) || arr.ValueKind != JsonValueKind.Array) return FrostPlan.Empty;
+        var rects = ScaleRects(arr, dpr, windowWidth, windowHeight, FrostPolicy.MaxPlates);
+        if (rects.Count == 0) return FrostPlan.Empty;
+        var radius = 0.0;
+        if (root.TryGetProperty("radius", out var r) && r.ValueKind == JsonValueKind.Number
+            && r.TryGetDouble(out var rv) && double.IsFinite(rv) && rv > 0)
+            radius = rv * dpr;
+        return new FrostPlan(frostLevel, FrostPolicy.ClampRadius(radius), rects);
+    }
 
+    private static bool TryReadDpr(JsonElement root, out double dpr)
+    {
+        dpr = 0;
+        return root.TryGetProperty("dpr", out var d) && d.ValueKind == JsonValueKind.Number
+            && d.TryGetDouble(out dpr) && double.IsFinite(dpr) && dpr > 0 && dpr <= MaxDpr;
+    }
+
+    // CSS px rects to window device px: rounded outward, clamped to the window, empties dropped.
+    private static List<RegionLayout.Rect> ScaleRects(JsonElement arr, double dpr, int windowWidth, int windowHeight, int max)
+    {
         var rects = new List<RegionLayout.Rect>();
         foreach (var el in arr.EnumerateArray())
         {
-            if (rects.Count >= MaxRects) break;
+            if (rects.Count >= max) break;
             if (!RegionLayout.TryReadRectF(el, out var x, out var y, out var w, out var h)) continue;
             var left = (int)Math.Floor(Math.Clamp(x * dpr, -CoordLimit, CoordLimit));
             var top = (int)Math.Floor(Math.Clamp(y * dpr, -CoordLimit, CoordLimit));
@@ -128,6 +142,24 @@ internal readonly record struct PanelHostMessage(PanelMessageKind Kind, HitRegio
             if (right <= left || bottom <= top) continue;
             rects.Add(new RegionLayout.Rect(left, top, right - left, bottom - top));
         }
+        return rects;
+    }
+
+    private static HitRegionPlan ReadPlan(JsonElement root, int windowWidth, int windowHeight)
+    {
+        var mode = root.TryGetProperty("mode", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() : null;
+        if (mode == "full")
+        {
+            var lease = root.TryGetProperty("lease", out var l) && l.ValueKind == JsonValueKind.True;
+            return lease ? HitRegionPlan.FullLease : HitRegionPlan.Full;
+        }
+        if (mode != "region") return HitRegionPlan.Empty;
+        if (windowWidth <= 0 || windowHeight <= 0) return HitRegionPlan.Empty;
+        if (!TryReadDpr(root, out var dpr)) return HitRegionPlan.Empty;
+        if (!root.TryGetProperty("rects", out var arr) || arr.ValueKind != JsonValueKind.Array)
+            return HitRegionPlan.Empty;
+
+        var rects = ScaleRects(arr, dpr, windowWidth, windowHeight, MaxRects);
         return rects.Count == 0 ? HitRegionPlan.Empty : new HitRegionPlan(HitMode.Rects, rects);
     }
 }
