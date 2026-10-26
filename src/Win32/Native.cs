@@ -416,6 +416,7 @@ internal static unsafe class Native
     public static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WindowCompositionAttributeData data);
 
     public const uint GW_HWNDNEXT = 2;
+    public const uint GW_HWNDPREV = 3;
 
     [DllImport("user32.dll")]
     public static extern IntPtr GetTopWindow(IntPtr hWnd);
