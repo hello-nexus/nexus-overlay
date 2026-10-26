@@ -49,6 +49,8 @@ internal enum PanelMessageKind
 internal readonly record struct PanelHostMessage(PanelMessageKind Kind, HitRegionPlan? Plan, bool RaiseValue)
 {
     private const string Prefix = "nexus.panel.";
+    /// <summary>Posted to the page after the host reset its region or raise state under it.</summary>
+    internal const string RequestHitTestJson = "{\"type\":\"nexus.panel.requestHitTest\"}";
     // A page reporting more cards than this is broken or hostile; the rest are dropped.
     internal const int MaxRects = 256;
     private const double MaxDpr = 16;

@@ -171,7 +171,7 @@ internal static class Program
         _prefsChangedMsg = Native.RegisterWindowMessageW(PrefsChangedMessageName);
         Log.Info($"registered PrefsChanged msg=0x{_prefsChangedMsg:X}");
 
-        _monitorKiosks = new MonitorKioskManager(ServiceOrigin);
+        _monitorKiosks = new MonitorKioskManager(ServiceOrigin) { PrimaryPromoted = SyncKeepCursorOff };
         _streamHosts = new StreamHostManager(ServiceOrigin);
         Apply(state);
         _ = PostMonitorsAsync();
@@ -648,7 +648,7 @@ internal static class Program
             Apply(state);
             if (recovered)
             {
-                _lastMonitorsSignature = null;
+                MonitorMapPublisher().Invalidate();
                 _ = PostMonitorsAsync();
             }
         }
@@ -659,26 +659,21 @@ internal static class Program
     }
 
     // Index to stable display id map for the service's desktop-widget migration.
-    // Signature-gated so a burst of WM_DISPLAYCHANGE posts once; a failed post
-    // leaves it unset so the next trigger retries.
-    private static string? _lastMonitorsSignature;
+    private static MonitorMapPublisher? _monitorMap;
+
+    private static MonitorMapPublisher MonitorMapPublisher() => _monitorMap ??= new MonitorMapPublisher(
+        () =>
+        {
+            var list = new List<(int, string, bool)>();
+            foreach (var m in Monitors.Enumerate()) list.Add((m.Index, m.DeviceName, m.Primary));
+            return MonitorMap.Build(list, DisplayIdentity.ResolveStableId);
+        },
+        entries => _api is null ? System.Threading.Tasks.Task.FromResult(false) : _api.PostMonitorsAsync(entries));
 
     private static async System.Threading.Tasks.Task PostMonitorsAsync()
     {
-        try
-        {
-            if (_api is null) return;
-            var list = new List<(int, string, bool)>();
-            foreach (var m in Monitors.Enumerate()) list.Add((m.Index, m.DeviceName, m.Primary));
-            var entries = MonitorMap.Build(list, DisplayIdentity.ResolveStableId);
-            var signature = MonitorMap.Signature(entries);
-            if (signature == _lastMonitorsSignature) return;
-            if (await _api.PostMonitorsAsync(entries)) _lastMonitorsSignature = signature;
-        }
-        catch (Exception ex)
-        {
-            Log.Error($"post monitors: {ex.Message}");
-        }
+        try { await MonitorMapPublisher().RequestAsync(); }
+        catch (Exception ex) { Log.Error($"post monitors: {ex.Message}"); }
     }
 
     private static void Apply(OverlayState state)

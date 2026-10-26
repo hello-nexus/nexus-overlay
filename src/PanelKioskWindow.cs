@@ -75,7 +75,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private readonly int _instanceId;
     private readonly bool _seeThrough;
     private readonly bool _compatibilityRendering;
-    private readonly bool _isPrimary;
+    private bool _isPrimary;
+    private bool _touchGuardHeld;
     private readonly PanelInputState _input;
 
     // Y70 compatibility rendering: some AMD drivers scramble a full-screen
@@ -104,6 +105,12 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     public bool Topmost => _input.Topmost;
 
     public bool IsPrimary => _isPrimary;
+
+    /// <summary>
+    /// Fires once when this kiosk's monitor became the primary display while the
+    /// kiosk was open and its guards were dropped in place.
+    /// </summary>
+    public Action? PrimaryPromoted;
 
     /// <summary>
     /// This kiosk is showing nothing usable and only a recreate recovers it:
@@ -183,7 +190,11 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         SnapshotKioskRects();
         // The primary display is the user's working desktop: the touch-cursor
         // guard exists for dedicated panel screens and must never act on it.
-        if (!_isPrimary) TouchCursorGuard.Acquire();
+        if (!_isPrimary)
+        {
+            TouchCursorGuard.Acquire();
+            _touchGuardHeld = true;
+        }
 
         try
         {
@@ -316,17 +327,21 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             return;
         }
         Native.SetWindowPos(Hwnd, Native.HWND_NOTOPMOST, 0, 0, 0, 0, flags);
-        // Raised (a menu or sheet is open) goes above normal windows, never
-        // into the topmost band; otherwise it sinks under them.
-        if (!_input.SinkToBottom) return;
-        Native.SetWindowPos(Hwnd, Native.HWND_BOTTOM, 0, 0, 0, 0, flags);
+        // NOTOPMOST is a no-op on a window already in the normal band, so the
+        // order is set explicitly: raised (a menu or sheet is open) goes to the
+        // top of the normal band, never into the topmost one; otherwise it
+        // sinks under the other windows.
+        Native.SetWindowPos(Hwnd, _input.SinkToBottom ? Native.HWND_BOTTOM : Native.HWND_TOP, 0, 0, 0, 0, flags);
     }
 
     /// <summary>Live click-through toggle; no recreate.</summary>
     public void SetClickThrough(bool clickThrough)
     {
         if (_disposed || Hwnd == IntPtr.Zero) return;
-        if (_input.SetClickThrough(_seeThrough && clickThrough)) ApplyRegion();
+        if (!_input.SetClickThrough(_seeThrough && clickThrough)) return;
+        ApplyRegion();
+        // The region just went empty and the page does not know; it answers with a fresh report.
+        if (_input.ClickThrough) PostToPage(PanelHostMessage.RequestHitTestJson);
     }
 
     private void ApplyRaise(bool raised)
@@ -335,14 +350,17 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         if (_input.SetRaised(raised)) ApplyZOrder();
     }
 
-    // The page navigated, crashed or hung: its last report is no longer
-    // trustworthy, so return to the empty region and the bottom of the stack.
-    private void OnPageLost()
+    // The host reset the region and raise state. When the page is gone
+    // (navigation, renderer exit) its next load reports unprompted; when it is
+    // still alive it never heard about the reset, so it is asked to report again.
+    private void OnPageLost(bool pageAlive)
     {
         if (_disposed || Hwnd == IntPtr.Zero) return;
         var wasRaised = _input.Raised;
-        if (_input.PageLost()) ApplyRegion();
+        var changed = _input.PageLost();
+        if (changed) ApplyRegion();
         if (wasRaised) ApplyZOrder();
+        if (changed && pageAlive) PostToPage(PanelHostMessage.RequestHitTestJson);
     }
 
     private void ApplyRegion()
@@ -364,8 +382,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 }
                 break;
             default:
-                // 1x1 rather than zero-area: same shape OverlayWindow uses for "nothing to hit".
-                region = Native.CreateRectRgn(0, 0, 1, 1);
+                region = Native.CreateRectRgn(0, 0, 0, 0);
                 break;
         }
         // The system owns the region after a successful call. bRedraw=false for
@@ -452,12 +469,31 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             {
                 if (!string.Equals(DisplayIdentity.ResolveStableId(m.DeviceName), _stableDisplayId, StringComparison.Ordinal))
                     continue;
+                // Primary-ness comes from the host's own monitor info, so a promotion
+                // takes effect even while the service is unreachable.
+                if (m.Primary && !_isPrimary) PromoteToPrimary();
                 if (SameBounds(m.Bounds, _monitor.Bounds)) return;
                 Refit(m);
                 return;
             }
         }
         catch (Exception ex) { Log.Error($"panel-kiosk display-change refit: {ex.Message}"); }
+    }
+
+    private void PromoteToPrimary()
+    {
+        _isPrimary = true;
+        SetMonitorGuard(false);
+        _taskbarGuard?.Dispose();
+        _taskbarGuard = null;
+        if (_touchGuardHeld)
+        {
+            _touchGuardHeld = false;
+            TouchCursorGuard.Release();
+        }
+        SnapshotKioskRects();
+        Log.Info($"panel-kiosk monitor became primary; guards dropped hwnd=0x{Hwnd:X}");
+        PrimaryPromoted?.Invoke();
     }
 
     private static bool SameBounds(Native.RECT a, Native.RECT b)
@@ -477,7 +513,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 // until it lands the window still spans its pre-rotation rect,
                 // leaving the uncovered part of the panel showing the desktop.
                 if (_refitOnDisplayChange) RefitToOwnDisplay();
-                if (!_isPrimary) TouchCursorGuard.OnDisplayChange();
+                if (_touchGuardHeld) TouchCursorGuard.OnDisplayChange();
                 return null;
 
             case Native.WM_SIZE:
@@ -686,7 +722,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             else
             {
                 owner._widgets?.DestroyAll("kiosk navigation");
-                owner.OnPageLost();
+                owner.OnPageLost(pageAlive: false);
             }
         }
         catch (Exception ex) { Log.Error($"panel-kiosk NavStarting: {ex.Message}"); }
@@ -706,7 +742,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             Wv2.NavCompletedArgs_get_WebErrorStatus(args, out status);
         }
         Log.Info($"panel-kiosk navigation completed ok={ok} webErr={status}");
-        if (!ok) owner.OnPageLost();
+        if (!ok) owner.OnPageLost(pageAlive: false);
         if (ok)
         {
             owner._navRetries = 0;
@@ -732,8 +768,9 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         }
         Log.Warn($"panel-kiosk process failed kind={kind}");
         owner._widgets?.DestroyAll("kiosk process failed");
-        owner.OnPageLost();
-        if (kind >= 0 && kind <= ProcessFailedKindRenderExited)
+        var pageGone = kind >= 0 && kind <= ProcessFailedKindRenderExited;
+        owner.OnPageLost(pageAlive: !pageGone);
+        if (pageGone)
         {
             owner.Failed = true;
             Native.KillTimer(owner.Hwnd, TIMER_PAINT_POLL);
@@ -822,9 +859,10 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             var json = Wv2.WebMsgArgs_GetJson(args);
             // nexus.panel.* is the SPA talking to this host about its own window;
             // everything else belongs to the widget host.
-            var panelMsg = PanelHostMessage.Parse(json, owner._monitor.Bounds.Width, owner._monitor.Bounds.Height);
-            if (panelMsg.Kind != PanelMessageKind.NotPanel) owner.OnPanelMessage(panelMsg);
-            else owner._widgets?.OnWebMessage(source, json);
+            Native.GetClientRect(owner.Hwnd, out var rc);
+            var panelMsg = PanelHostMessage.Parse(json, rc.Right - rc.Left, rc.Bottom - rc.Top);
+            if (panelMsg.Kind == PanelMessageKind.NotPanel) owner._widgets?.OnWebMessage(source, json);
+            else if (WebViewWidgetProtocol.IsPanelOrigin(source, owner._navigationUrl)) owner.OnPanelMessage(panelMsg);
         }
         catch (Exception ex) { Log.Error($"panel-kiosk WebMessage: {ex.Message}"); }
         return WebView2Native.S_OK;
@@ -879,7 +917,11 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         _disposed = true;
         _instances.TryRemove(_instanceId, out _);
         SnapshotKioskRects();
-        if (!_isPrimary) TouchCursorGuard.Release();
+        if (_touchGuardHeld)
+        {
+            _touchGuardHeld = false;
+            TouchCursorGuard.Release();
+        }
         _taskbarGuard?.Dispose();
         _taskbarGuard = null;
         _monitorGuard?.Dispose();

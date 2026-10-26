@@ -118,4 +118,12 @@ public class PanelHostMessageTests
         Assert.True(a.Equals(b));
         Assert.False(a.Equals(HitRegionPlan.Empty));
     }
+
+    [Fact]
+    public void RequestHitTestJsonIsAPanelMessageTheHostDoesNotReceive()
+    {
+        Assert.Equal("{\"type\":\"nexus.panel.requestHitTest\"}", PanelHostMessage.RequestHitTestJson);
+        // Only the page consumes it; if it ever echoed back it must be dropped, not forwarded to widgets.
+        Assert.Equal(PanelMessageKind.Ignored, Parse(PanelHostMessage.RequestHitTestJson).Kind);
+    }
 }

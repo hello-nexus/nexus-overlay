@@ -31,6 +31,9 @@ internal sealed class MonitorKioskManager
 
     public int Count => _kiosks.Count;
 
+    /// <summary>Raised when a live kiosk's monitor became primary and its guards were dropped in place.</summary>
+    public Action? PrimaryPromoted { get; set; }
+
     /// <summary>Live kiosk windows currently outside the topmost band.</summary>
     public IEnumerable<PanelKioskWindow> NonTopmostWindows()
     {
@@ -153,6 +156,12 @@ internal sealed class MonitorKioskManager
                     PanelDeviceId = entry.PanelDeviceId,
                     Traits = traits,
                 };
+                var spawned = _kiosks[entry.DisplayId];
+                spawned.Window.PrimaryPromoted = () =>
+                {
+                    spawned.Traits = spawned.Traits with { IsPrimary = true, Reserve = false, KeepCursorOff = false };
+                    PrimaryPromoted?.Invoke();
+                };
                 Log.Info($"monitor-kiosk opened display={entry.DisplayId} device={entry.PanelDeviceId} monitor={monitor.Index} guard={traits.Reserve} seeThrough={seeThrough} topmost={traits.Topmost} clickThrough={traits.ClickThrough} primary={traits.IsPrimary}");
             }
             catch (Exception ex)
@@ -189,7 +198,7 @@ internal sealed class MonitorKioskManager
     {
         foreach (var entry in _kiosks.Values)
         {
-            if (entry.Traits.KeepCursorOff && !entry.Traits.IsPrimary && entry.Window.Hwnd != IntPtr.Zero) bounds.Add(entry.Window.MonitorBounds);
+            if (entry.Traits.KeepCursorOff && !entry.Window.IsPrimary && entry.Window.Hwnd != IntPtr.Zero) bounds.Add(entry.Window.MonitorBounds);
         }
     }
 

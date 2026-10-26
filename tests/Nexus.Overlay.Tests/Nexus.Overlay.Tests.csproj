@@ -33,6 +33,7 @@
     <Compile Include="..\..\src\PanelHostMessage.cs" Link="src\PanelHostMessage.cs" />
     <Compile Include="..\..\src\PanelInputState.cs" Link="src\PanelInputState.cs" />
     <Compile Include="..\..\src\KioskPolicy.cs" Link="src\KioskPolicy.cs" />
+    <Compile Include="..\..\src\MonitorMapPublisher.cs" Link="src\MonitorMapPublisher.cs" />
     <Compile Include="..\..\src\PanelKioskUrl.cs" Link="src\PanelKioskUrl.cs" />
     <Compile Include="..\..\src\LogRedact.cs" Link="src\LogRedact.cs" />
     <Compile Include="..\..\src\NexusApi.cs" Link="src\NexusApi.cs" />
