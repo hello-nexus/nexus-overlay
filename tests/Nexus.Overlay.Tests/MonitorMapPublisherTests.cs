@@ -64,4 +64,41 @@ public class MonitorMapPublisherTests
         await p.RequestAsync();
         Assert.Equal(2, posts);
     }
+
+    [Fact]
+    public async Task RequestQueuedDuringAFailingPostIsStillServed()
+    {
+        var gate = new TaskCompletionSource<bool>();
+        var posts = 0;
+        var p = new MonitorMapPublisher(() => Map("a"), _ =>
+        {
+            posts++;
+            return posts == 1 ? gate.Task : Task.FromResult(true);
+        });
+        var run = p.RequestAsync();
+        p.Invalidate();
+        await p.RequestAsync();
+        gate.SetResult(false);
+        await run;
+        Assert.Equal(2, posts);
+    }
+
+    [Fact]
+    public async Task InvalidateDuringASuccessfulPostForcesAnotherPost()
+    {
+        var gate = new TaskCompletionSource<bool>();
+        var posts = 0;
+        var p = new MonitorMapPublisher(() => Map("a"), _ =>
+        {
+            posts++;
+            return posts == 1 ? gate.Task : Task.FromResult(true);
+        });
+        var run = p.RequestAsync();
+        p.Invalidate();
+        gate.SetResult(true);
+        await run;
+        Assert.Equal(2, posts);
+        await p.RequestAsync();
+        Assert.Equal(2, posts);
+    }
 }

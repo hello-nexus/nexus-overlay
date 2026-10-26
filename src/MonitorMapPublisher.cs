@@ -17,6 +17,7 @@ internal sealed class MonitorMapPublisher
     private bool _inFlight;
     private bool _dirty;
     private string? _acknowledged;
+    private int _generation;
 
     public MonitorMapPublisher(Func<List<OverlayMonitorEntry>> build, Func<List<OverlayMonitorEntry>, Task<bool>> post)
     {
@@ -25,7 +26,11 @@ internal sealed class MonitorMapPublisher
     }
 
     /// <summary>Forget what the service holds, e.g. after it may have restarted.</summary>
-    public void Invalidate() => _acknowledged = null;
+    public void Invalidate()
+    {
+        _acknowledged = null;
+        _generation++;
+    }
 
     public async Task RequestAsync()
     {
@@ -40,7 +45,16 @@ internal sealed class MonitorMapPublisher
                 var entries = _build();
                 var signature = MonitorMap.Signature(entries);
                 if (signature == _acknowledged) continue;
-                if (!await _post(entries)) break;
+                var generation = _generation;
+                var ok = await _post(entries);
+                if (!ok)
+                {
+                    // A request that landed during the failed post still gets its pass.
+                    if (_dirty) continue;
+                    break;
+                }
+                // Invalidated mid-post: the service may not hold what was just sent, so go again.
+                if (generation != _generation) { _dirty = true; continue; }
                 _acknowledged = signature;
             }
         }
