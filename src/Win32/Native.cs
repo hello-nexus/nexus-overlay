@@ -92,6 +92,8 @@ internal static unsafe class Native
     public const uint WM_PARENTNOTIFY = 0x0210;
     public const uint WM_POINTERDOWN = 0x0246;
     public const uint WM_DISPLAYCHANGE = 0x007E;
+    public const uint WM_SETTINGCHANGE = 0x001A;
+    public const int SPI_SETWORKAREA = 0x002F;
     public const uint WM_DPICHANGED = 0x02E0;
     public const uint WM_DWMCOLORIZATIONCOLORCHANGED = 0x0320;
     public const uint WM_USER = 0x0400;

@@ -79,6 +79,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private readonly bool _compatibilityRendering;
     private bool _isPrimary;
     private bool _clickThrough;
+    private Native.RECT _placed;
     private bool _touchGuardHeld;
     private readonly PanelInputState _input;
 
@@ -202,7 +203,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
 
         try
         {
-            var b = monitor.Bounds;
+            var b = TargetRect(monitor);
+            _placed = b;
             // WS_EX_NOACTIVATE keeps a touch on this secondary monitor from
             // activating the kiosk and pulling focus off the foreground app.
             // The tap-warps-the-cursor symptom is a separate touch->mouse
@@ -261,6 +263,18 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     /// <summary>Monitor bounds this kiosk was created for (reconcile compares
     /// against fresh enumeration to catch arrangement/resolution changes).</summary>
     public Native.RECT MonitorBounds => _monitor.Bounds;
+
+    /// <summary>The rect the window was last sized to: the work area on the primary display, else the monitor bounds.</summary>
+    public Native.RECT PlacedBounds => _placed;
+
+    /// <summary>The rect this kiosk should occupy on <paramref name="monitor"/> right now.</summary>
+    public Native.RECT TargetRect(MonitorInfo monitor)
+    {
+        var t = KioskBounds.Target(_isPrimary, ToBox(monitor.Bounds), ToBox(monitor.WorkArea));
+        return new Native.RECT { Left = t.Left, Top = t.Top, Right = t.Right, Bottom = t.Bottom };
+    }
+
+    private static KioskBounds.Box ToBox(Native.RECT r) => new(r.Left, r.Top, r.Right, r.Bottom);
 
     /// <summary>
     /// True when a screen point lies on any live kiosk's monitor. The gate
@@ -465,7 +479,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         if (_disposed || Hwnd == IntPtr.Zero) return;
         _monitor = monitor;
         SnapshotKioskRects();
-        var b = monitor.Bounds;
+        var b = TargetRect(monitor);
+        _placed = b;
         Native.SetWindowPos(Hwnd, IntPtr.Zero, b.Left, b.Top, b.Width, b.Height,
             Native.SWP_NOACTIVATE | Native.SWP_NOZORDER);
         // The guard resolved its HMONITOR and bounds from the window's old
@@ -500,7 +515,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 // Primary-ness comes from the host's own monitor info, so a promotion
                 // takes effect even while the service is unreachable.
                 if (m.Primary && !_isPrimary) PromoteToPrimary();
-                if (SameBounds(m.Bounds, _monitor.Bounds)) return;
+                if (SameBounds(TargetRect(m), _placed) && SameBounds(m.Bounds, _monitor.Bounds)) return;
                 Refit(m);
                 return;
             }
@@ -542,6 +557,11 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 // leaving the uncovered part of the panel showing the desktop.
                 if (_refitOnDisplayChange) RefitToOwnDisplay();
                 if (_touchGuardHeld) TouchCursorGuard.OnDisplayChange();
+                return null;
+
+            case Native.WM_SETTINGCHANGE:
+                // Taskbar move, resize or auto-hide changes the work area the primary kiosk fills.
+                if (_refitOnDisplayChange && _isPrimary && (long)wParam == Native.SPI_SETWORKAREA) RefitToOwnDisplay();
                 return null;
 
             case Native.WM_SIZE:

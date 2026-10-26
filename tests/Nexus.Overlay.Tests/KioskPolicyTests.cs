@@ -96,4 +96,36 @@ public class KioskPolicyTests
         var json = System.Text.Json.JsonSerializer.Serialize(new OverlayMonitorsBody { Monitors = a }, ApiJson.Default.OverlayMonitorsBody);
         Assert.Equal("{\"monitors\":[{\"index\":0,\"displayId\":\"x\",\"primary\":true}]}", json);
     }
+
+    private static readonly KioskBounds.Box Mon = new(0, 0, 2560, 1440);
+
+    [Theory]
+    [InlineData(0, 0, 2560, 1400)]
+    [InlineData(0, 40, 2560, 1440)]
+    [InlineData(60, 0, 2560, 1440)]
+    public void PrimaryFillsTheWorkArea(int l, int t, int r, int b)
+    {
+        var work = new KioskBounds.Box(l, t, r, b);
+        Assert.Equal(work, KioskBounds.Target(true, Mon, work));
+    }
+
+    [Fact]
+    public void NonPrimaryCoversTheFullMonitorWhateverTheWorkArea()
+        => Assert.Equal(Mon, KioskBounds.Target(false, Mon, new KioskBounds.Box(0, 0, 2560, 1400)));
+
+    [Theory]
+    [InlineData(0, 0, 0, 0)]
+    [InlineData(100, 100, 100, 200)]
+    [InlineData(-10, 0, 2560, 1400)]
+    [InlineData(0, 0, 2600, 1400)]
+    public void PrimaryFallsBackToMonitorForUnusableWorkArea(int l, int t, int r, int b)
+        => Assert.Equal(Mon, KioskBounds.Target(true, Mon, new KioskBounds.Box(l, t, r, b)));
+
+    [Fact]
+    public void PrimaryOnAnOffsetMonitorKeepsItsOrigin()
+    {
+        var mon = new KioskBounds.Box(-1920, 0, 0, 1080);
+        var work = new KioskBounds.Box(-1920, 0, 0, 1040);
+        Assert.Equal(work, KioskBounds.Target(true, mon, work));
+    }
 }

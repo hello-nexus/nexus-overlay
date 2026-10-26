@@ -46,6 +46,31 @@ internal static class KioskPolicy
 /// The EnumDisplayMonitors index to stable display id map the service needs to
 /// resolve the legacy overlay's monitor index. Pure so it is testable off Windows.
 /// </summary>
+/// <summary>Where a kiosk window sits on its monitor.</summary>
+internal static class KioskBounds
+{
+    public readonly record struct Box(int Left, int Top, int Right, int Bottom)
+    {
+        public int Width => Right - Left;
+        public int Height => Bottom - Top;
+    }
+
+    /// <summary>
+    /// The primary display holds the user's taskbar and working desktop, so a
+    /// kiosk there fills only the work area. Every other display is covered
+    /// edge to edge. A work area that is empty or not inside the monitor
+    /// (a transient mid-change reading) falls back to the full bounds.
+    /// </summary>
+    public static Box Target(bool isPrimary, Box monitor, Box work)
+    {
+        if (!isPrimary) return monitor;
+        if (work.Width <= 0 || work.Height <= 0) return monitor;
+        if (work.Left < monitor.Left || work.Top < monitor.Top
+            || work.Right > monitor.Right || work.Bottom > monitor.Bottom) return monitor;
+        return work;
+    }
+}
+
 internal static class MonitorMap
 {
     public static List<OverlayMonitorEntry> Build(

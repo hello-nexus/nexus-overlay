@@ -99,12 +99,12 @@ internal sealed class MonitorKioskManager
         foreach (var (displayId, entry) in _kiosks)
         {
             if (byDisplayId.TryGetValue(displayId, out var monitor)
-                && !SameBounds(entry.Window.MonitorBounds, monitor.Bounds))
+                && !SameBounds(entry.Window.PlacedBounds, entry.Window.TargetRect(monitor)))
             {
                 try
                 {
                     entry.Window.Refit(monitor);
-                    Log.Info($"monitor-kiosk refit display={displayId} -> {monitor.Bounds.Width}x{monitor.Bounds.Height}");
+                    Log.Info($"monitor-kiosk refit display={displayId} -> {entry.Window.PlacedBounds.Width}x{entry.Window.PlacedBounds.Height}");
                 }
                 catch (Exception ex) { Log.Error($"monitor-kiosk refit {displayId}: {ex.Message}"); }
             }
