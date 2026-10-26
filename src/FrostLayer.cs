@@ -173,6 +173,26 @@ internal sealed class FrostLayer : IDisposable
         LogState(kiosk, _current.Percent);
     }
 
+    /// <summary>
+    /// Sink the plates to the bottom, then seat the kiosk directly above them, so a
+    /// repeat call with nothing changed moves nothing. Returns false when a plate
+    /// is not shown yet and the caller must use the plain sink and <see cref="Restack"/>.
+    /// </summary>
+    public bool SinkWithKiosk(IntPtr kiosk)
+    {
+        if (_plates.Count == 0 || _plates.Exists(p => !p.Shown)) return false;
+        const uint flags = Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE;
+        foreach (var plate in _plates) Native.SetWindowPos(plate.Hwnd, Native.HWND_BOTTOM, 0, 0, 0, 0, flags);
+        foreach (var plate in _plates)
+        {
+            var above = Native.GetWindow(plate.Hwnd, Native.GW_HWNDPREV);
+            if (_plates.Exists(p => p.Hwnd == above)) continue;
+            if (above != kiosk && above != IntPtr.Zero) Native.SetWindowPos(kiosk, above, 0, 0, 0, 0, flags);
+            break;
+        }
+        return true;
+    }
+
     // True when the windows right behind the kiosk are exactly the plates, in the kiosk's band.
     private bool IsStackedBelow(IntPtr kiosk)
     {

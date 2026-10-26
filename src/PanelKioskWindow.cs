@@ -362,6 +362,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         // order is set explicitly: raised (a menu or sheet is open) goes to the
         // top of the normal band, never into the topmost one; otherwise it
         // sinks under the other windows.
+        if (_input.SinkToBottom && _frost is not null && _frost.SinkWithKiosk(Hwnd)) return;
         Native.SetWindowPos(Hwnd, _input.SinkToBottom ? Native.HWND_BOTTOM : Native.HWND_TOP, 0, 0, 0, 0, flags);
         _frost?.Restack(Hwnd);
     }
