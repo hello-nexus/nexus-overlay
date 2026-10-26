@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -41,6 +42,12 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
     private bool _zOrderApplied;
     // Non-topmost panel kiosk sharing this monitor; widgets stay out of the topmost band and above it.
     private IntPtr _panelBelow;
+    // Frosted-glass backdrop: one blur plate per widget card, rebuilt from the
+    // SPA's reported rects. Plates live in their own windows because the
+    // acrylic accent ignores this window's SetWindowRgn.
+    private bool _frost;
+    private readonly List<FrostWindow> _frostPlates = new();
+    private List<RegionLayout.Rect> _frostRects = new();
 
     private IntPtr _env;
     private IntPtr _envCreatedHandler;
@@ -142,6 +149,7 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         // WM_SIZE fires from SetWindowPos and our handler resizes the
         // controller; the SPA's reportLayout webMessage repaints the
         // SetWindowRgn carve-out for the new client area.
+        SyncFrost();
         ApplyZOrder();
         return true;
     }
@@ -374,6 +382,12 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
                 Log.Info($"webMsg setAlwaysOnTop={v}");
                 Program.SetAllAlwaysOnTop(v);
             }
+            else if (type == "setFrost"
+                && root.TryGetProperty("value", out var frostEl)
+                && (frostEl.ValueKind == JsonValueKind.True || frostEl.ValueKind == JsonValueKind.False))
+            {
+                SetFrost(frostEl.GetBoolean());
+            }
             else if (type == "setMonitor"
                 && root.TryGetProperty("value", out var monEl)
                 && monEl.ValueKind == JsonValueKind.Number
@@ -454,6 +468,8 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         // set, which already passes false.
         Native.SetWindowRgn(Hwnd, region, false);
         Log.Info($"overlay {_monitor.Index} region rebuilt rects={rects.Count}");
+        _frostRects = RegionLayout.CollectRects(root, includePopover: false);
+        SyncFrost();
     }
 
     // ===================== Z-order =====================
@@ -493,6 +509,56 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
             Log.Info($"overlay {_monitor.Index} zorder=bottom");
         }
         _zOrderApplied = true;
+        RestackFrost();
+    }
+
+    private void SetFrost(bool on)
+    {
+        if (_frost == on) return;
+        _frost = on;
+        Log.Info($"webMsg setFrost={on} supported={FrostWindow.IsSupported}");
+        SyncFrost();
+    }
+
+    // Reconciles the plate windows with _frostRects (widget cards only, the
+    // popover never frosts). Rects are raw px relative to this window, so the
+    // plate's screen rect is the window origin plus the rect.
+    private void SyncFrost()
+    {
+        var want = _frost && Hwnd != IntPtr.Zero ? _frostRects.Count : 0;
+        while (_frostPlates.Count > want)
+        {
+            _frostPlates[^1].Dispose();
+            _frostPlates.RemoveAt(_frostPlates.Count - 1);
+        }
+        if (want == 0) return;
+        Native.GetWindowRect(Hwnd, out var origin);
+        var created = false;
+        while (_frostPlates.Count < want)
+        {
+            var plate = FrostWindow.TryCreate();
+            if (plate is null)
+            {
+                // Unsupported OS or the accent was refused: stay unfrosted.
+                _frost = false;
+                SyncFrost();
+                return;
+            }
+            _frostPlates.Add(plate);
+            created = true;
+        }
+        for (var i = 0; i < want; i++)
+        {
+            var r = _frostRects[i];
+            _frostPlates[i].Place(origin.Left + r.X, origin.Top + r.Y, r.W, r.H);
+        }
+        if (created) RestackFrost();
+    }
+
+    private void RestackFrost()
+    {
+        if (Hwnd == IntPtr.Zero) return;
+        foreach (var plate in _frostPlates) plate.Restack(Hwnd);
     }
 
     private void SinkPanelBelow()
@@ -507,6 +573,8 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         if (_disposed) return;
         _disposed = true;
         _instances.TryRemove(_instanceId, out _);
+        _frost = false;
+        SyncFrost();
         try
         {
             // Close + release the controller first - this tears the

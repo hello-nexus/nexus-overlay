@@ -88,6 +88,18 @@ public class RegionLayoutTests
     }
 
     [Fact]
+    public void CollectRects_ExcludingPopover_ReturnsWidgetsOnly()
+    {
+        var json = JsonDocument.Parse(@"{
+            ""widgets"": [ { ""x"": 10, ""y"": 20, ""w"": 100, ""h"": 50 } ],
+            ""popover"": { ""x"": 300, ""y"": 400, ""w"": 200, ""h"": 80 }
+        }");
+        var rects = RegionLayout.CollectRects(json.RootElement, includePopover: false);
+        Assert.Single(rects);
+        Assert.Equal(new RegionLayout.Rect(10, 20, 100, 50), rects[0]);
+    }
+
+    [Fact]
     public void CollectRects_SkipsInvalidEntries()
     {
         // Mixed valid/invalid widgets: the invalid one (missing 'h') is

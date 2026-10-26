@@ -50,9 +50,10 @@ internal static class RegionLayout
     /// Collect every rect referenced by the layout payload. Widgets and
     /// (optional) popover get flattened into a single list in the order
     /// they appeared. Invalid rects are silently skipped (mirrors the
-    /// SetWindowRgn loop in OverlayWindow).
+    /// SetWindowRgn loop in OverlayWindow). <paramref name="includePopover"/>
+    /// false returns the widget cards only.
     /// </summary>
-    public static List<Rect> CollectRects(JsonElement root)
+    public static List<Rect> CollectRects(JsonElement root, bool includePopover = true)
     {
         var rects = new List<Rect>();
         if (root.ValueKind != JsonValueKind.Object) return rects;
@@ -63,7 +64,7 @@ internal static class RegionLayout
                 if (TryReadRect(widget, out var r)) rects.Add(r);
             }
         }
-        if (root.TryGetProperty("popover", out var popover) && popover.ValueKind == JsonValueKind.Object)
+        if (includePopover && root.TryGetProperty("popover", out var popover) && popover.ValueKind == JsonValueKind.Object)
         {
             if (TryReadRect(popover, out var r)) rects.Add(r);
         }

@@ -83,6 +83,7 @@ internal static unsafe class Native
         public IntPtr lpData;
     }
     public const uint WM_NCHITTEST = 0x0084;
+    public const uint WM_MOUSEACTIVATE = 0x0021;
     public const uint WM_NCACTIVATE = 0x0086;
     public const uint WM_NCMOUSEMOVE = 0x00A0;
     public const uint WM_NCLBUTTONDOWN = 0x00A1;
@@ -385,6 +386,42 @@ internal static unsafe class Native
     // caption bar into the extended frame of a custom-frame window.
     public const int DWMWA_CAPTION_COLOR = 35;
     public const int DWMWA_COLOR_NONE = unchecked((int)0xFFFFFFFE);
+
+    // Rounded-corner preference for a top-level window (Windows 11 22000+).
+    // DWMWCP_ROUND rounds even a WS_POPUP window; Windows 10 returns a
+    // nonzero HRESULT we ignore.
+    public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+    public const int DWMWCP_ROUND = 2;
+
+    // Undocumented but stable since Windows 10 1803: the accent policy that
+    // gives a window an acrylic blur-behind. Unlike the DWM system backdrop
+    // it blurs live content even on a never-activated window, but it fills
+    // the whole window rect and ignores SetWindowRgn.
+    public const int WCA_ACCENT_POLICY = 19;
+    public const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
+    public const int ACCENT_FLAG_DRAW_ALL_BORDERS = 2;
+    // Acrylic needs Windows 10 1803 (build 17134).
+    public const int AcrylicMinBuild = 17134;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct AccentPolicy
+    {
+        public int AccentState;
+        public int AccentFlags;
+        public uint GradientColor;
+        public int AnimationId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WindowCompositionAttributeData
+    {
+        public int Attribute;
+        public IntPtr Data;
+        public int SizeOfData;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WindowCompositionAttributeData data);
 
     [DllImport("dwmapi.dll")]
     public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, in int pvAttribute, int cbAttribute);
