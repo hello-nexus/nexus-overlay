@@ -8,7 +8,7 @@ public class OverlayStateTests
     public void Parses_the_service_document()
     {
         const string json = """
-            {"autoLaunch":true,"reserveMonitor":false,"y70Backdrop":"desktop","y70CompatibilityRendering":true,"y70KeepCursorOff":true,"overlayEnabled":true,"alwaysOnTop":true,"monitor":1,"pinned":2,
+            {"autoLaunch":true,"reserveMonitor":false,"y70Backdrop":"desktop","y70CompatibilityRendering":true,"y70KeepCursorOff":true,
              "assignments":[{"displayId":"d1","panelDeviceId":"p1","reserveMonitor":true,"backdrop":"wallpaper","keepCursorOff":true,"alwaysOnTop":false}],
              "streams":[{"sessionId":"s1","panelDeviceId":"p2","cssWidth":800,"cssHeight":480,"dpr":1.5,"fps":30,"bitrateKbps":4000,"codec":"h264"}]}
             """;
@@ -18,8 +18,6 @@ public class OverlayStateTests
         Assert.Equal("desktop", state.Y70Backdrop);
         Assert.True(state.Y70CompatibilityRendering);
         Assert.True(state.Y70KeepCursorOff);
-        Assert.Equal(2, state.Pinned);
-        Assert.Equal(1, state.Monitor);
         Assert.Single(state.Assignments);
         Assert.Equal("wallpaper", state.Assignments[0].Backdrop);
         Assert.True(state.Assignments[0].KeepCursorOff);
@@ -38,7 +36,6 @@ public class OverlayStateTests
         Assert.False(state.Y70CompatibilityRendering);
         Assert.False(state.Y70KeepCursorOff);
         Assert.True(state.PanelAlwaysOnTop);
-        Assert.Equal(-1, state.Monitor);
         Assert.Empty(state.Assignments);
         Assert.Empty(state.Streams);
     }

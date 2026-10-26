@@ -135,14 +135,6 @@ internal sealed class OverlayState
     public bool Y70CompatibilityRendering { get; set; }
     [JsonPropertyName("y70KeepCursorOff")]
     public bool Y70KeepCursorOff { get; set; }
-    [JsonPropertyName("overlayEnabled")]
-    public bool OverlayEnabled { get; set; }
-    [JsonPropertyName("alwaysOnTop")]
-    public bool AlwaysOnTop { get; set; }
-    [JsonPropertyName("monitor")]
-    public int Monitor { get; set; } = -1;
-    [JsonPropertyName("pinned")]
-    public int Pinned { get; set; }
     [JsonPropertyName("assignments")]
     public List<DisplayAssignment> Assignments { get; set; } = new();
     [JsonPropertyName("streams")]

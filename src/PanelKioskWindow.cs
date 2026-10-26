@@ -13,8 +13,8 @@ namespace Nexus.Overlay;
 /// Fullscreen WebView2 window for the HYTE Y70/Y80 touch panel. Sized to
 /// a single monitor's bounds, framed as a tool-window so it stays off the
 /// taskbar, pinned topmost. Lives in the same overlay process as the
-/// dashboard + per-monitor widget overlays so the Chromium browser/GPU
-/// process tree is shared across all three.
+/// dashboard and the other kiosks so the Chromium browser/GPU process tree
+/// is shared.
 /// </summary>
 internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
 {
@@ -436,7 +436,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 break;
         }
         // The system owns the region after a successful call. bRedraw=false for
-        // the same reason as OverlayWindow.ApplyHitRegion: DWM re-clips each frame.
+        // DWM re-clips to the region each frame.
         if (Native.SetWindowRgn(Hwnd, region, false) == 0 && region != IntPtr.Zero) Native.DeleteObject(region);
     }
 

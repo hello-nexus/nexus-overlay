@@ -32,7 +32,6 @@ internal static class Program
     private const uint IdleExitDelayMs = 30_000;
     private const long StateUnreachableExitMs = 60_000;
 
-    private static readonly List<OverlayWindow> Overlays = new();
     private static DashboardWindow? _dashboard;
     private static PanelKioskWindow? _panelKiosk;
     // Kiosks for user-promoted monitors, reconciled from /displays/assignments.
@@ -54,32 +53,6 @@ internal static class Program
     private static long _stateUnreachableSinceTick;
     private static int _kioskUnconfirmedRecreates;
     private static bool _idleTimerArmed;
-
-    private static bool ShouldShowOverlays(OverlayState s) => s.OverlayEnabled && s.Pinned > 0;
-
-    public static void SetAllAlwaysOnTop(bool value)
-    {
-        foreach (var overlay in Overlays)
-        {
-            try { overlay.SetAlwaysOnTop(value); } catch { /* best-effort */ }
-        }
-    }
-
-    /// <summary>
-    /// Move the overlay(s) to a new monitor in-place. Triggered by the SPA's
-    /// <c>setMonitor</c> webMessage, bypassing the 5 s prefs poll. Updates the
-    /// poll's last-seen index so the next poll doesn't fire a redundant
-    /// teardown+respawn.
-    /// </summary>
-    public static void MoveAllToMonitor(int value)
-    {
-        if (_state is not null) _state.Monitor = value;
-        foreach (var overlay in Overlays)
-        {
-            try { overlay.MoveToMonitor(value); } catch (Exception ex) { Log.Error($"MoveToMonitor: {ex.Message}"); }
-        }
-        SyncPanelWidgetBand();
-    }
 
     [STAThread]
     private static int Main(string[] args)
@@ -200,8 +173,6 @@ internal static class Program
         _panelKiosk = null;
         _dashboard?.Dispose();
         _dashboard = null;
-        foreach (var o in Overlays) o.Dispose();
-        Overlays.Clear();
         return result;
     }
 
@@ -275,7 +246,6 @@ internal static class Program
             if (_dashboard is not null && _dashboard.Hwnd != IntPtr.Zero)
                 Native.SendMessageW(_dashboard.Hwnd, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
             ClosePanelKiosk();
-            TearDownOverlays();
             _monitorKiosks?.CloseAll();
             _streamHosts?.CloseAll();
             _state = null;
@@ -320,11 +290,9 @@ internal static class Program
         {
             if (ReferenceEquals(_panelKiosk, created)) _panelKiosk = null;
             SyncKeepCursorOff();
-            SyncPanelWidgetBand();
         };
         Log.Info($"panel kiosk opened on monitor={target.Index} guard={reserve} seeThrough={seeThrough} compat={compat} topmost={topmost}");
         SyncKeepCursorOff();
-        SyncPanelWidgetBand();
     }
 
     // Keep-the-mouse-off walls: the Y70 kiosk's monitor (global Y70 setting)
@@ -348,7 +316,6 @@ internal static class Program
         catch (Exception ex) { Log.Error($"panel kiosk dispose: {ex.Message}"); }
         _panelKiosk = null;
         SyncKeepCursorOff();
-        SyncPanelWidgetBand();
         MaybeArmIdleExitTimer();
         Log.Info("panel kiosk closed");
     }
@@ -357,7 +324,6 @@ internal static class Program
     {
         // The runtime prompt has no window of its own to keep the process alive.
         if (WebView2RuntimeInstaller.Busy) return false;
-        if (Overlays.Count > 0) return false;
         if (_dashboard is not null
             && _dashboard.Hwnd != IntPtr.Zero
             && Native.IsWindowVisible(_dashboard.Hwnd))
@@ -394,57 +360,6 @@ internal static class Program
         if (_marshalerHwnd == IntPtr.Zero) return;
         _idleTimerArmed = false;
         Native.KillTimer(_marshalerHwnd, TIMER_IDLE_EXIT);
-    }
-
-    /// <summary>
-    /// Resolves the requested monitor index against the current display
-    /// layout and spawns ONE overlay there. Falls back to the primary
-    /// monitor when the index is the -1 sentinel or out of range.
-    /// </summary>
-    private static void CreateOverlay(int requestedMonitorIndex, bool alwaysOnTop)
-    {
-        var monitors = Monitors.Enumerate();
-        Log.Info($"enumerated monitors count={monitors.Count} requested={requestedMonitorIndex}");
-        if (monitors.Count == 0)
-        {
-            Log.Error("no monitors enumerated; cannot create overlay");
-            return;
-        }
-
-        MonitorInfo target;
-        if (requestedMonitorIndex >= 0 && requestedMonitorIndex < monitors.Count)
-        {
-            target = monitors[requestedMonitorIndex];
-            Log.Info($"using requested monitor {requestedMonitorIndex}");
-        }
-        else
-        {
-            // Prefer the OS-flagged primary; fall back to index 0 if no
-            // monitor advertises primary (rare, only on misconfigured GDI).
-            MonitorInfo? primary = null;
-            foreach (var m in monitors) if (m.Primary) { primary = m; break; }
-            target = primary ?? monitors[0];
-            Log.Info($"using primary fallback monitor {target.Index} (requested {requestedMonitorIndex})");
-        }
-
-        var url = $"{ServiceOrigin}/overlay?monitor={target.Index}&token={Uri.EscapeDataString(_pairedToken)}";
-        var overlay = new OverlayWindow(target, url, alwaysOnTop);
-        Overlays.Add(overlay);
-        Log.Info($"created overlay on monitor={target.Index}");
-    }
-
-    /// <summary>
-    /// Tear down every existing overlay window so a new one can be
-    /// created on a different monitor without leaving stale WebView2
-    /// processes behind. Called from the prefs poll when the user picks
-    /// a different monitor in the popup.
-    /// </summary>
-    private static void TearDownOverlays()
-    {
-        if (Overlays.Count == 0) return;
-        foreach (var o in Overlays) o.Dispose();
-        Overlays.Clear();
-        Log.Info("overlays torn down");
     }
 
     // Marshaler-window owner: handles WM_TIMER for the state poll and
@@ -678,19 +593,11 @@ internal static class Program
 
     private static void Apply(OverlayState state)
     {
-        var previous = _state;
         _state = state;
-        // Widgets first: they and a topmost kiosk share the topmost band, and a
-        // widget pinned to the panel monitor belongs above it. A non-topmost
-        // kiosk is ordered under its widgets by SyncPanelWidgetBand instead.
-        try { ApplyOverlays(previous, state); }
-        catch (Exception ex) { Log.Error($"overlay reconcile: {ex.Message}"); }
         try { ApplyPanelKiosk(state); }
         catch (Exception ex) { Log.Error($"panel kiosk reconcile: {ex.Message}"); }
         try { _monitorKiosks?.Reconcile(state.Assignments, _pairedToken); }
         catch (Exception ex) { Log.Error($"monitor-kiosk reconcile: {ex.Message}"); }
-        try { SyncPanelWidgetBand(); }
-        catch (Exception ex) { Log.Error($"panel widget z-order: {ex.Message}"); }
         SyncKeepCursorOff();
         try { _streamHosts?.Reconcile(state.Streams, _pairedToken); }
         catch (Exception ex) { Log.Error($"stream-host reconcile: {ex.Message}"); }
@@ -749,58 +656,5 @@ internal static class Program
         {
             TouchCursorGuard.Release();
         }
-    }
-
-    // Widgets on a non-topmost kiosk's monitor leave the topmost band too, so
-    // windows moved onto the panel cover them, but stay above the kiosk.
-    private static void SyncPanelWidgetBand()
-    {
-        var sunk = new List<(IntPtr Hwnd, IntPtr Monitor)>();
-        if (_panelKiosk is { } k && k.Hwnd != IntPtr.Zero && !k.Topmost)
-            sunk.Add((k.Hwnd, Native.MonitorFromWindow(k.Hwnd, Native.MONITOR_DEFAULTTONEAREST)));
-        if (_monitorKiosks is not null)
-        {
-            foreach (var w in _monitorKiosks.NonTopmostWindows())
-                sunk.Add((w.Hwnd, Native.MonitorFromWindow(w.Hwnd, Native.MONITOR_DEFAULTTONEAREST)));
-        }
-        foreach (var overlay in Overlays)
-        {
-            var below = IntPtr.Zero;
-            if (overlay.Hwnd != IntPtr.Zero)
-            {
-                var monitor = Native.MonitorFromWindow(overlay.Hwnd, Native.MONITOR_DEFAULTTONEAREST);
-                foreach (var s in sunk)
-                {
-                    if (s.Monitor == monitor)
-                    {
-                        below = s.Hwnd;
-                        break;
-                    }
-                }
-            }
-            overlay.SetPanelBelow(below);
-        }
-    }
-
-    private static void ApplyOverlays(OverlayState? previous, OverlayState state)
-    {
-        var show = ShouldShowOverlays(state);
-        if (previous is null || show != ShouldShowOverlays(previous))
-        {
-            Log.Info($"overlays: show={show} (enabled={state.OverlayEnabled} pinned={state.Pinned})");
-            TearDownOverlays();
-            if (show) CreateOverlay(state.Monitor, state.AlwaysOnTop);
-            return;
-        }
-        if (!show) return;
-        if (state.Monitor != previous.Monitor)
-        {
-            Log.Info($"overlays: monitor {previous.Monitor} -> {state.Monitor}; respawning");
-            TearDownOverlays();
-            CreateOverlay(state.Monitor, state.AlwaysOnTop);
-            return;
-        }
-        if (state.AlwaysOnTop == previous.AlwaysOnTop) return;
-        foreach (var overlay in Overlays) overlay.SetAlwaysOnTop(state.AlwaysOnTop);
     }
 }

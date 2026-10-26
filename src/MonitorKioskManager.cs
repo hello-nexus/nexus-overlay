@@ -34,15 +34,6 @@ internal sealed class MonitorKioskManager
     /// <summary>Raised when a live kiosk's monitor became primary and its guards were dropped in place.</summary>
     public Action? PrimaryPromoted { get; set; }
 
-    /// <summary>Live kiosk windows currently outside the topmost band.</summary>
-    public IEnumerable<PanelKioskWindow> NonTopmostWindows()
-    {
-        foreach (var entry in _kiosks.Values)
-        {
-            if (entry.Window.Hwnd != IntPtr.Zero && !entry.Window.Topmost) yield return entry.Window;
-        }
-    }
-
     public void Reconcile(IReadOnlyList<DisplayAssignment> assignments, string pairedToken)
     {
         List<string>? unhealthy = null;

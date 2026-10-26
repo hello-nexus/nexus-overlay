@@ -1,6 +1,6 @@
 # nexus-overlay
 
-Windows desktop host for the three browser-rendered surfaces that [Nexus](https://hellonexus.com) needs outside the system tray: the main dashboard, the floating per-monitor widget overlays, and the fullscreen HYTE Y70/Y80 touch panel. One process, one Chromium browser tree, shared GPU/network/utility processes - much cheaper than spawning `msedge --app` for each.
+Windows desktop host for the browser-rendered surfaces that [Nexus](https://hellonexus.com) needs outside the system tray: the main dashboard, per-display panels (including the HYTE Y70/Y80 touch panel), and streamed panels. One process, one Chromium browser tree, shared GPU/network/utility processes - much cheaper than spawning `msedge --app` for each.
 
 Native AOT, no Microsoft.Web.WebView2.Core dependency: the WebView2 host calls `WebView2Loader.dll` directly and walks the COM vtables by hand so the binary stays small and AOT-clean.
 
@@ -9,8 +9,7 @@ Native AOT, no Microsoft.Web.WebView2.Core dependency: the WebView2 host calls `
 | Window | Source URL (served by `nexus-service`) | What it is |
 |---|---|---|
 | `DashboardWindow` | `/` | The main Nexus dashboard. Replaces the old `msedge --app` spawn the tray used. Native Windows 11 Mica backdrop behind a transparent WebView2, themed to the in-app theme. Hidden, not destroyed, when the user clicks X so the next open is instant. |
-| `OverlayWindow` (one per monitor) | `/overlay` | Transparent, click-through-where-empty floating widgets. `SetWindowRgn` carves the window down to the widget rectangles reported by the SPA so input outside them falls through to the desktop. |
-| `PanelKioskWindow` | `/panel/:deviceId` | Fullscreen tool-window for the HYTE Y70/Y80 secondary touch display, plus one per monitor the user assigns a panel to (reconciled from the service's monitor-panel assignments). Topmost, sized to its monitor, hidden from the taskbar. With the Y70 compatibility mode setting on, the Y70 kiosk runs in its own `PanelCompatWebView2` environment with DirectComposition disabled. The panel's Web View widget shows real sites in native WebView2 views layered over the kiosk (separate `WidgetWebView2` profile, or `PanelCompatWidgetWebView2` in compatibility mode), driven by `nexus.webview.*` messages from the page. |
+| `PanelKioskWindow` | `/panel/:deviceId` | Fullscreen tool-window for the HYTE Y70/Y80 secondary touch display, plus one per display the user assigns a panel to (reconciled from the service's display assignments), including the primary display. A see-through panel starts with an empty window region and the page's `nexus.panel.hitTest` reports widen it, so empty space clicks through to the desktop; `nexus.panel.raise` lifts a not-on-top panel above other windows. On the primary display the panel fills the work area and runs no window guard, mouse wall or taskbar hiding. Otherwise topmost or bottom of the stack, sized to its monitor, hidden from the taskbar. With the Y70 compatibility mode setting on, the Y70 kiosk runs in its own `PanelCompatWebView2` environment with DirectComposition disabled. The panel's Web View widget shows real sites in native WebView2 views layered over the kiosk (separate `WidgetWebView2` profile, or `PanelCompatWidgetWebView2` in compatibility mode), driven by `nexus.webview.*` messages from the page. |
 | `StreamPanelHost` | `/panel/:deviceId` (off-screen) | Streamed-panel render host: an off-screen WebView2 captured via Windows.Graphics.Capture, hardware-encoded to H.264 (Media Foundation), and pushed to the service's `/panel/streams/{sessionId}/ingest`, which paces it onto a USB display device. Reconciled from `/panel/streams/assignments`; runs in its own `StreamWebView2` environment so its browser arguments never touch the other surfaces. |
 
 All surfaces load the same React app from [`nexus-web`](https://github.com/hello-nexus/nexus-web); the URL path picks which view loads.
@@ -21,9 +20,11 @@ All surfaces load the same React app from [`nexus-web`](https://github.com/hello
 
 - `Nexus.Overlay.ShowDashboard` - show / focus the dashboard window.
 - `Nexus.Overlay.ShowPanelKiosk` / `…HidePanelKiosk` - toggle the Y70/Y80 panel.
-- `Nexus.Overlay.PrefsChanged` - re-read overlay preferences (enabled toggle, always-on-top, monitor selection) from the service.
+- `Nexus.Overlay.PrefsChanged` - re-read the panel and display assignments from the service.
 
-When no surface needs to be visible (overlays disabled, no widgets pinned, dashboard hidden, panel hidden) the process self-terminates after a short grace window. The next "Open Nexus" click re-spawns it.
+At boot, and on every display change, the host posts its EnumDisplayMonitors index to stable display id map to the service's `/overlay/monitors`.
+
+When no surface needs to be visible (no panel assignments, dashboard hidden, panel hidden) the process self-terminates after a short grace window. The next "Open Nexus" click re-spawns it.
 
 ## Source layout
 
@@ -31,7 +32,6 @@ When no surface needs to be visible (overlays disabled, no widgets pinned, dashb
 src/
   Program.cs              # entry, singleton mutex, state reconcile, idle exit
   DashboardWindow.cs      # / dashboard window
-  OverlayWindow.cs        # /overlay per-monitor widget host (transparent, regioned)
   PanelKioskWindow.cs     # /panel/:deviceId fullscreen kiosk (Y70/Y80)
   WebViewWidgetHost.cs    # kiosk Web View widget: native WebView2 child views driven by the panel page's bridge
   WebViewWidgetPlan.cs    # pure bridge protocol, rect mapping and view registry for the Web View widget
@@ -41,7 +41,11 @@ src/
   MonitorKioskPlan.cs     # pure spawn/close reconcile math for the monitor kiosks
   PanelMonitorGuard.cs    # relocates foreign windows off the kiosk's monitor
   PanelGuardGeometry.cs   # pure placement math for evicted windows
-  RegionLayout.cs         # SPA-reported widget rects → SetWindowRgn
+  PanelHostMessage.cs     # pure parser for the page's nexus.panel.* host messages (hit-test rects, raise)
+  PanelInputState.cs      # pure window-region, lease and raise state of a monitor kiosk
+  KioskPolicy.cs          # pure primary-display rules, work-area bounds, monitor map
+  MonitorMapPublisher.cs  # serialized, coalescing post of the monitor map
+  RegionLayout.cs         # hit-test rect reader
   NexusApi.cs             # tiny REST client to nexus-service for /pair + /overlay/state
   Logger.cs               # rolling file logger
   Capture/                # streamed panels: off-screen host + manager + hand-rolled Windows.Graphics.Capture / D3D11 interop

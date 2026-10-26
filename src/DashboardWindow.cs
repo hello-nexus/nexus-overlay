@@ -12,9 +12,8 @@ namespace Nexus.Overlay;
 
 /// <summary>
 /// Top-level WebView2 window hosting the main Nexus dashboard URL. Lives in
-/// the same process as the floating overlay widgets so its renderer shares
-/// the browser / GPU / network / utility process tree already running for
-/// them - the memory win over msedge --app. Singleton per process (the
+/// the same process as the panel kiosks so its renderer shares the browser /
+/// GPU / network / utility process tree already running for them - the memory win over msedge --app. Singleton per process (the
 /// overlay process is itself singleton via the mutex in Program.cs).
 /// </summary>
 internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
@@ -616,7 +615,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
     private void StartWebView2Init()
     {
-        // Same user-data-dir as OverlayWindow so Chromium reuses the existing
+        // Same user-data-dir as the panel kiosks so Chromium reuses the existing
         // browser/GPU/utility processes instead of spawning a second tree.
         var userDataDir = UserDataPaths.DesktopProfile();
         try { Directory.CreateDirectory(userDataDir); } catch { /* best-effort */ }

@@ -1,54 +1,19 @@
-using System;
-using System.Collections.Generic;
 using System.Text.Json;
 
 namespace Nexus.Overlay;
 
 /// <summary>
-/// Parses the SPA's <c>reportLayout</c> webMessage payload. No Win32 region
-/// APIs, so unit-testable on any OS.
-///
-/// Payload shape:
-/// <code>
-/// {
-///   "type": "reportLayout",
-///   "widgets": [ { "x": 100, "y": 200, "w": 240, "h": 120 }, ... ],
-///   "popover": { "x": 300, "y": 50, "w": 200, "h": 80 }   // optional
-/// }
-/// </code>
+/// Reads the rect objects of the panel's <c>nexus.panel.hitTest</c> report.
+/// No Win32 region APIs, so unit-testable on any OS.
 /// </summary>
 internal static class RegionLayout
 {
     public readonly record struct Rect(int X, int Y, int W, int H);
 
     /// <summary>
-    /// Read a single rect object. Returns false if any field is missing,
-    /// non-numeric, or produces a non-positive width/height.
-    /// </summary>
-    public static bool TryReadRect(JsonElement el, out Rect rect)
-    {
-        rect = default;
-        if (el.ValueKind != JsonValueKind.Object) return false;
-        if (!el.TryGetProperty("x", out var xEl) || !el.TryGetProperty("y", out var yEl)) return false;
-        if (!el.TryGetProperty("w", out var wEl) || !el.TryGetProperty("h", out var hEl)) return false;
-        // TryGetDouble throws on non-Number kinds rather than returning
-        // false, so kind-check first to tolerate a malformed payload.
-        if (xEl.ValueKind != JsonValueKind.Number || yEl.ValueKind != JsonValueKind.Number
-            || wEl.ValueKind != JsonValueKind.Number || hEl.ValueKind != JsonValueKind.Number) return false;
-        if (!xEl.TryGetDouble(out var x) || !yEl.TryGetDouble(out var y)
-            || !wEl.TryGetDouble(out var w) || !hEl.TryGetDouble(out var h)) return false;
-        var rx = (int)Math.Round(x);
-        var ry = (int)Math.Round(y);
-        var rw = (int)Math.Round(w);
-        var rh = (int)Math.Round(h);
-        if (rw <= 0 || rh <= 0) return false;
-        rect = new Rect(rx, ry, rw, rh);
-        return true;
-    }
-
-    /// <summary>
-    /// Like <see cref="TryReadRect"/> but keeps the fractional values, for
-    /// callers that scale before rounding. Rejects non-finite numbers.
+    /// Read a rect object, keeping fractional values for callers that scale
+    /// before rounding. Rejects missing or non-numeric fields, non-finite
+    /// numbers and a non-positive width or height.
     /// </summary>
     public static bool TryReadRectF(JsonElement el, out double x, out double y, out double w, out double h)
     {
@@ -64,29 +29,5 @@ internal static class RegionLayout
         value = 0;
         if (!el.TryGetProperty(name, out var p) || p.ValueKind != JsonValueKind.Number) return false;
         return p.TryGetDouble(out value) && double.IsFinite(value);
-    }
-
-    /// <summary>
-    /// Collect every rect referenced by the layout payload. Widgets and
-    /// (optional) popover get flattened into a single list in the order
-    /// they appeared. Invalid rects are silently skipped (mirrors the
-    /// SetWindowRgn loop in OverlayWindow).
-    /// </summary>
-    public static List<Rect> CollectRects(JsonElement root)
-    {
-        var rects = new List<Rect>();
-        if (root.ValueKind != JsonValueKind.Object) return rects;
-        if (root.TryGetProperty("widgets", out var widgets) && widgets.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var widget in widgets.EnumerateArray())
-            {
-                if (TryReadRect(widget, out var r)) rects.Add(r);
-            }
-        }
-        if (root.TryGetProperty("popover", out var popover) && popover.ValueKind == JsonValueKind.Object)
-        {
-            if (TryReadRect(popover, out var r)) rects.Add(r);
-        }
-        return rects;
     }
 }
