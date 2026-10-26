@@ -41,6 +41,8 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
     private bool _zOrderApplied;
     // Non-topmost panel kiosk sharing this monitor; widgets stay out of the topmost band and above it.
     private IntPtr _panelBelow;
+    private bool _activatable;
+    private IntPtr _prevForeground;
 
     private IntPtr _env;
     private IntPtr _envCreatedHandler;
@@ -384,10 +386,44 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
                 // instantly via SetWindowPos.
                 Program.MoveAllToMonitor(monIdx);
             }
+            else if (type == "setActivatable"
+                && root.TryGetProperty("value", out var actEl)
+                && (actEl.ValueKind == JsonValueKind.True || actEl.ValueKind == JsonValueKind.False))
+            {
+                SetActivatable(actEl.GetBoolean());
+            }
         }
         catch (Exception ex)
         {
             Log.Error($"webMessage parse error: {ex.Message}");
+        }
+    }
+
+    // ===================== Activation =====================
+
+    // WS_EX_NOACTIVATE keeps a widget click from taking the foreground (a game
+    // would leave fullscreen), but it also keeps keystrokes out of text fields,
+    // so the SPA drops it while its edit sheet is open.
+    private void SetActivatable(bool value)
+    {
+        if (_activatable == value || Hwnd == IntPtr.Zero) return;
+        _activatable = value;
+        if (value)
+        {
+            var fg = Native.GetForegroundWindow();
+            _prevForeground = fg != Hwnd ? fg : IntPtr.Zero;
+        }
+        var ex = Native.GetWindowLongW(Hwnd, Native.GWL_EXSTYLE);
+        ex = value ? ex & ~Native.WS_EX_NOACTIVATE : ex | Native.WS_EX_NOACTIVATE;
+        Native.SetWindowLongPtrW(Hwnd, Native.GWL_EXSTYLE, (IntPtr)ex);
+        Log.Info($"overlay {_monitor.Index} activatable={value}");
+        if (value) return;
+        var prev = _prevForeground;
+        _prevForeground = IntPtr.Zero;
+        if (Native.GetForegroundWindow() == Hwnd && prev != IntPtr.Zero
+            && Native.IsWindow(prev) && Native.IsWindowVisible(prev) && !Native.IsIconic(prev))
+        {
+            Native.SetForegroundWindow(prev);
         }
     }
 
