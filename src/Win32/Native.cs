@@ -291,12 +291,6 @@ internal static unsafe class Native
         int X, int Y, int cx, int cy, uint uFlags);
 
     [DllImport("user32.dll", SetLastError = true)]
-    public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
-
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern IntPtr GetParent(IntPtr hWnd);
-
-    [DllImport("user32.dll", SetLastError = true)]
     public static extern int GetSystemMetrics(int nIndex);
 
     [DllImport("user32.dll")]
