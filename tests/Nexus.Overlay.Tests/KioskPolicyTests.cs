@@ -128,4 +128,23 @@ public class KioskPolicyTests
         var work = new KioskBounds.Box(-1920, 0, 0, 1040);
         Assert.Equal(work, KioskBounds.Target(true, mon, work));
     }
+
+    [Fact]
+    public void FullBoundsKioskHasZeroOrigin()
+        => Assert.Equal("&originX=0&originY=0", KioskBounds.OriginQuery(Mon, Mon, 144));
+
+    [Theory]
+    [InlineData(96u, "&originX=0&originY=40")]
+    [InlineData(144u, "&originX=0&originY=26.67")]
+    [InlineData(0u, "&originX=0&originY=40")]
+    public void TopTaskbarOffsetIsInCssPx(uint dpi, string expected)
+        => Assert.Equal(expected, KioskBounds.OriginQuery(new KioskBounds.Box(0, 40, 2560, 1440), Mon, dpi));
+
+    [Fact]
+    public void LeftTaskbarOffsetAndOffsetMonitorOriginUseDifferences()
+    {
+        var mon = new KioskBounds.Box(-1920, 0, 0, 1080);
+        var work = new KioskBounds.Box(-1860, 0, 0, 1080);
+        Assert.Equal("&originX=60&originY=0", KioskBounds.OriginQuery(work, mon, 96));
+    }
 }

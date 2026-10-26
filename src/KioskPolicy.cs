@@ -42,10 +42,6 @@ internal static class KioskPolicy
         => live.SeeThrough != wanted.SeeThrough || live.IsPrimary != wanted.IsPrimary;
 }
 
-/// <summary>
-/// The EnumDisplayMonitors index to stable display id map the service needs to
-/// resolve the legacy overlay's monitor index. Pure so it is testable off Windows.
-/// </summary>
 /// <summary>Where a kiosk window sits on its monitor.</summary>
 internal static class KioskBounds
 {
@@ -69,8 +65,30 @@ internal static class KioskBounds
             || work.Right > monitor.Right || work.Bottom > monitor.Bottom) return monitor;
         return work;
     }
+
+    /// <summary>
+    /// Offset of the kiosk window's origin from the monitor's full-bounds origin
+    /// in CSS px (device px over the monitor's DPI scale), so the page can map its
+    /// own coordinates to the monitor. Zero for a full-bounds kiosk.
+    /// </summary>
+    public static (double X, double Y) OriginCssPx(Box target, Box monitor, uint dpi)
+    {
+        var scale = dpi == 0 ? 1.0 : dpi / 96.0;
+        return (Math.Round((target.Left - monitor.Left) / scale, 2), Math.Round((target.Top - monitor.Top) / scale, 2));
+    }
+
+    /// <summary>The <c>&amp;originX=..&amp;originY=..</c> URL suffix for <see cref="OriginCssPx"/>.</summary>
+    public static string OriginQuery(Box target, Box monitor, uint dpi)
+    {
+        var (x, y) = OriginCssPx(target, monitor, dpi);
+        return string.Create(System.Globalization.CultureInfo.InvariantCulture, $"&originX={x}&originY={y}");
+    }
 }
 
+/// <summary>
+/// The EnumDisplayMonitors index to stable display id map the service needs to
+/// resolve the legacy overlay's monitor index. Pure so it is testable off Windows.
+/// </summary>
 internal static class MonitorMap
 {
     public static List<OverlayMonitorEntry> Build(

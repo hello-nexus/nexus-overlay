@@ -148,7 +148,7 @@ internal sealed class MonitorKioskManager
             {
                 if (!traitsById.TryGetValue(entry.DisplayId, out var traits)) continue;
                 var seeThrough = traits.SeeThrough;
-                var url = $"{_serviceOrigin}/panel/{Uri.EscapeDataString(entry.PanelDeviceId)}?token={Uri.EscapeDataString(pairedToken)}{(seeThrough ? "&backdrop=desktop" : "")}";
+                var url = $"{_serviceOrigin}/panel/{Uri.EscapeDataString(entry.PanelDeviceId)}?token={Uri.EscapeDataString(pairedToken)}{(seeThrough ? "&backdrop=desktop" : "")}{OriginSuffix(monitor, traits)}";
                 _kiosks[entry.DisplayId] = new KioskEntry
                 {
                     Window = new PanelKioskWindow(monitor, url, traits.Reserve, refitOnDisplayChange: true, seeThrough: seeThrough,
@@ -211,6 +211,23 @@ internal sealed class MonitorKioskManager
         try { entry.Window.Dispose(); }
         catch (Exception ex) { Log.Error($"monitor-kiosk dispose {displayId}: {ex.Message}"); }
         Log.Info($"monitor-kiosk closed display={displayId} ({reason})");
+    }
+
+    // Only the initial URL carries the window's offset inside the monitor, for the page's import planner.
+    private static string OriginSuffix(MonitorInfo monitor, KioskTraits traits)
+    {
+        var full = new KioskBounds.Box(monitor.Bounds.Left, monitor.Bounds.Top, monitor.Bounds.Right, monitor.Bounds.Bottom);
+        var work = new KioskBounds.Box(monitor.WorkArea.Left, monitor.WorkArea.Top, monitor.WorkArea.Right, monitor.WorkArea.Bottom);
+        var target = KioskBounds.Target(traits.IsPrimary, full, work);
+        uint dpi = 96;
+        try
+        {
+            var rect = monitor.Bounds;
+            var handle = Native.MonitorFromRect(ref rect, Native.MONITOR_DEFAULTTONEAREST);
+            if (handle != IntPtr.Zero && Native.GetDpiForMonitor(handle, Native.MDT_EFFECTIVE_DPI, out var dx, out _) == 0 && dx > 0) dpi = dx;
+        }
+        catch { /* shcore unavailable: 100% scale */ }
+        return KioskBounds.OriginQuery(target, full, dpi);
     }
 
     private static bool SameBounds(Native.RECT a, Native.RECT b)
