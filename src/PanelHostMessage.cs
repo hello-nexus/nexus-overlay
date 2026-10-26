@@ -49,6 +49,7 @@ internal enum PanelMessageKind
     HitTest,
     Raise,
     Frost,
+    Activatable,
 }
 
 internal readonly record struct PanelHostMessage(PanelMessageKind Kind, HitRegionPlan? Plan, bool RaiseValue, FrostPlan? Frost = null)
@@ -83,6 +84,11 @@ internal readonly record struct PanelHostMessage(PanelMessageKind Kind, HitRegio
 
             if (type == "nexus.panel.hitTest")
                 return new PanelHostMessage(PanelMessageKind.HitTest, ReadPlan(root, windowWidth, windowHeight), false);
+
+            if (type == "nexus.panel.activatable"
+                && root.TryGetProperty("value", out var act)
+                && (act.ValueKind == JsonValueKind.True || act.ValueKind == JsonValueKind.False))
+                return new PanelHostMessage(PanelMessageKind.Activatable, null, act.GetBoolean());
 
             if (type == "nexus.panel.frost")
                 return new PanelHostMessage(PanelMessageKind.Frost, null, false, ReadFrost(root, windowWidth, windowHeight));

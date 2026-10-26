@@ -31,9 +31,6 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private static readonly UIntPtr TIMER_LEASE = new(13);
     private const uint LeaseCheckIntervalMs = 1_000;
     private const int WebErrorOperationCanceled = 14;
-    // 0 BROWSER_PROCESS_EXITED, 1 RENDER_PROCESS_EXITED: only a recreate
-    // recovers. 2 UNRESPONSIVE is a busy renderer, which can come back.
-    private const int ProcessFailedKindRenderExited = 1;
     // Watchdog policy shared by both kiosk owners (Program's Y70 branch and
     // MonitorKioskManager): deadline for a navigation to confirm content
     // before the owner recreates the window (the settings-toggle remedy,
@@ -81,6 +78,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private bool _clickThrough;
     private Native.RECT _placed;
     private FrostLayer? _frost;
+    private readonly PanelActivation _activation = new();
     private bool _touchGuardHeld;
     private readonly PanelInputState _input;
 
@@ -399,10 +397,36 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         if (changed) ApplyRegion();
         if (wasRaised) ApplyZOrder();
         Native.KillTimer(Hwnd, TIMER_LEASE);
+        // A page that is gone can no longer clear it.
+        if (!pageAlive) SetActivatable(false);
         // The page believes its plates exist; a live one is asked to report again.
         var hadFrost = _frost is { Count: > 0 };
         _frost?.Clear();
         if ((changed || forceRequest || hadFrost) && pageAlive) PostToPage(PanelHostMessage.RequestHitTestJson);
+    }
+
+    // WS_EX_NOACTIVATE keeps a click on the kiosk from stealing the foreground,
+    // which also keeps keystrokes out of a text field, so the page drops it
+    // while a text-editing surface is open.
+    private void SetActivatable(bool value)
+    {
+        if (_disposed || Hwnd == IntPtr.Zero) return;
+        if (!_activation.Set(value, Native.GetForegroundWindow(), Hwnd)) return;
+        var ex = Native.GetWindowLongW(Hwnd, Native.GWL_EXSTYLE);
+        ex = value ? ex & ~Native.WS_EX_NOACTIVATE : ex | Native.WS_EX_NOACTIVATE;
+        Native.SetWindowLongPtrW(Hwnd, Native.GWL_EXSTYLE, (IntPtr)ex);
+        // NOREDRAW: a repaint of the regioned see-through window blinks the cards.
+        Native.SetWindowPos(Hwnd, IntPtr.Zero, 0, 0, 0, 0,
+            Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE
+            | Native.SWP_FRAMECHANGED | Native.SWP_NOREDRAW);
+        Log.Info($"panel-kiosk activatable={value} hwnd=0x{Hwnd:X}");
+        if (value) return;
+        var prev = _activation.TakeRestoreTarget();
+        if (Native.GetForegroundWindow() == Hwnd && prev != IntPtr.Zero
+            && Native.IsWindow(prev) && Native.IsWindowVisible(prev) && !Native.IsIconic(prev))
+        {
+            Native.SetForegroundWindow(prev);
+        }
     }
 
     // Frost plates exist only for a see-through panel on Windows 11 and only
@@ -475,6 +499,9 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 break;
             case PanelMessageKind.Raise:
                 ApplyRaise(msg.RaiseValue);
+                break;
+            case PanelMessageKind.Activatable:
+                SetActivatable(msg.RaiseValue);
                 break;
             case PanelMessageKind.Frost:
                 if (msg.Frost is { } frost) ApplyFrost(frost);
@@ -630,8 +657,13 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                     _widgets?.OnKioskDeactivated();
                     return null;
                 }
+                _activation.OnActivated(lParam, hwnd);
                 // DefWindowProc would focus the kiosk itself, blurring the text field that asked for activation.
-                return _widgets?.FocusEditingView() == true ? IntPtr.Zero : null;
+                if (_widgets?.FocusEditingView() == true) return IntPtr.Zero;
+                if (!_activation.Activatable) return null;
+                if (_controller != IntPtr.Zero && !Native.IsChild(hwnd, Native.GetFocus()))
+                    Wv2.Ctrl_MoveFocusProgrammatic(_controller);
+                return IntPtr.Zero;
 
             case WebViewWidgetHost.WM_WIDGET_DEFERRED:
                 _widgets?.ProcessDeferred();
@@ -864,7 +896,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         }
         Log.Warn($"panel-kiosk process failed kind={kind}");
         owner._widgets?.DestroyAll("kiosk process failed");
-        var pageGone = kind >= 0 && kind <= ProcessFailedKindRenderExited;
+        var pageGone = PanelActivation.IsFatalProcessFailure(kind);
         owner.OnPageLost(pageAlive: !pageGone);
         if (pageGone)
         {
