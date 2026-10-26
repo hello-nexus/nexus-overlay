@@ -39,6 +39,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     // height and the height of our React-side custom caption buttons +
     // drag strip.
     private const int CustomTitleBarHeightLogical = 32;
+    // Title-bar width that must sit on a work area for saved bounds to be
+    // restored; less than this is not reliably grabbable to drag back.
+    private const int MinReachableCaptionWidthLogical = 200;
     // Resize-grab non-client strip width per edge, logical px at 96 DPI. The
     // default WS_THICKFRAME area is 8px (4 SM_CXFRAME + 4 SM_CXPADDEDBORDER);
     // the WebView2 child covers the client rect, leaving only this edge strip
@@ -1121,6 +1124,21 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             var (dpi, work) = MonitorMetrics(Native.MonitorFromRect(ref rc, Native.MONITOR_DEFAULTTONEAREST));
             var (minW, minH) = MinSize(dpi, work);
             if (doc.W < minW || doc.H < minH) return null;
+            // A rect saved under another monitor layout (e.g. a panel display
+            // briefly made primary) can sit entirely off-screen now, and the
+            // WM_MOVE on create would re-save it forever.
+            var (fx, _) = FrameInsets(dpi);
+            var works = new List<(int, int, int, int)>();
+            foreach (var m in Monitors.Enumerate())
+                works.Add((m.WorkArea.Left, m.WorkArea.Top, m.WorkArea.Right, m.WorkArea.Bottom));
+            int captionH = ScaleForDpi(CustomTitleBarHeightLogical, dpi);
+            if (!DashboardBoundsGeometry.StripReachable(
+                    rc.Left + fx, rc.Top, rc.Right - fx, captionH, works,
+                    ScaleForDpi(MinReachableCaptionWidthLogical, dpi), captionH / 2))
+            {
+                Log.Info($"dashboard saved bounds {doc.X},{doc.Y} {doc.W}x{doc.H} off-screen - using default placement");
+                return null;
+            }
             return (doc.X, doc.Y, doc.W, doc.H);
         }
         catch { return null; }
