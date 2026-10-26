@@ -23,6 +23,7 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
     private const string WindowClassName = "Nexus.Overlay.HostWindow";
     private const int CornerEllipsePx = 20;
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 1;
+    private const uint WM_REMEMBER_FOREGROUND = Native.WM_USER + 2;
 
     // Per-instance dispatch back from static [UnmanagedCallersOnly] callbacks.
     // Each overlay's WebView2 callback handler pointers identify it in the
@@ -49,11 +50,15 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
     private IntPtr _ctrlCreatedHandler;
     private IntPtr _webMsgHandler;
     private IntPtr _navCompletedHandler;
+    private IntPtr _navStartingHandler;
+    private IntPtr _processFailedHandler;
     private IntPtr _controller;          // ICoreWebView2Controller
     private IntPtr _controller2;         // ICoreWebView2Controller2 (for DefaultBackgroundColor)
     private IntPtr _coreWebView2;        // ICoreWebView2
     private long _webMsgToken;
     private long _navCompletedToken;
+    private long _navStartingToken;
+    private long _processFailedToken;
     private bool _disposed;
 
     public OverlayWindow(MonitorInfo monitor, string navigationUrl, bool alwaysOnTop)
@@ -154,6 +159,21 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         {
             case WM_INIT_CONTROLLER:
                 InitController();
+                return IntPtr.Zero;
+            case WM_REMEMBER_FOREGROUND:
+                RememberForeground();
+                return IntPtr.Zero;
+            case Native.WM_ACTIVATE:
+                if (!_activatable) return null;
+                if (((long)wParam & 0xFFFF) == 0)
+                {
+                    // The window taking the foreground is known only once activation settles.
+                    Native.PostMessageW(hwnd, WM_REMEMBER_FOREGROUND, IntPtr.Zero, IntPtr.Zero);
+                    return null;
+                }
+                // DefWindowProc would focus the host HWND, blurring the page's text field.
+                if (_controller != IntPtr.Zero && !Native.IsChild(hwnd, Native.GetFocus()))
+                    Wv2.Ctrl_MoveFocusProgrammatic(_controller);
                 return IntPtr.Zero;
             case Native.WM_SIZE:
                 if (_controller != IntPtr.Zero)
@@ -317,6 +337,12 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         _navCompletedHandler = WebView2Callbacks.CreateNavigationCompletedHandler(&OnNavigationCompletedStatic);
         Wv2.Wv2_add_NavigationCompleted(_coreWebView2, _navCompletedHandler, out _navCompletedToken);
 
+        // A reloaded or crashed page can no longer post setActivatable(false).
+        _navStartingHandler = WebView2Callbacks.CreateNavigationStartingHandler(&OnNavigationStartingStatic);
+        Wv2.Wv2_add_NavigationStarting(_coreWebView2, _navStartingHandler, out _navStartingToken);
+        _processFailedHandler = WebView2Callbacks.CreateProcessFailedHandler(&OnProcessFailedStatic);
+        Wv2.Wv2_add_ProcessFailed(_coreWebView2, _processFailedHandler, out _processFailedToken);
+
         // Navigate.
         var hr = Wv2.Wv2_Navigate(_coreWebView2, _navigationUrl);
         Log.Info($"overlay {_monitor.Index} Navigate hr=0x{hr:X8} url={LogRedact.Url(_navigationUrl)}");
@@ -333,6 +359,23 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         Wv2.NavCompletedArgs_get_IsSuccess(args, out var ok);
         Wv2.NavCompletedArgs_get_WebErrorStatus(args, out var status);
         Log.Info($"overlay {owner._monitor.Index} navigation completed ok={ok} webErr={status}");
+        return WebView2Native.S_OK;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnNavigationStartingStatic(IntPtr self, IntPtr sender, IntPtr args)
+    {
+        FindByNavStartingHandler(self)?.SetActivatable(false);
+        return WebView2Native.S_OK;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnProcessFailedStatic(IntPtr self, IntPtr sender, IntPtr args)
+    {
+        var owner = FindByProcessFailedHandler(self);
+        if (owner is null) return WebView2Native.S_OK;
+        Log.Warn($"overlay {owner._monitor.Index} process failed");
+        owner.SetActivatable(false);
         return WebView2Native.S_OK;
     }
 
@@ -410,12 +453,16 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         _activatable = value;
         if (value)
         {
-            var fg = Native.GetForegroundWindow();
-            _prevForeground = fg != Hwnd ? fg : IntPtr.Zero;
+            _prevForeground = IntPtr.Zero;
+            RememberForeground();
         }
         var ex = Native.GetWindowLongW(Hwnd, Native.GWL_EXSTYLE);
         ex = value ? ex & ~Native.WS_EX_NOACTIVATE : ex | Native.WS_EX_NOACTIVATE;
         Native.SetWindowLongPtrW(Hwnd, Native.GWL_EXSTYLE, (IntPtr)ex);
+        // SWP_NOREDRAW: a repaint of the regioned window blinks every widget card.
+        Native.SetWindowPos(Hwnd, IntPtr.Zero, 0, 0, 0, 0,
+            Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOZORDER | Native.SWP_NOACTIVATE
+            | Native.SWP_FRAMECHANGED | Native.SWP_NOREDRAW);
         Log.Info($"overlay {_monitor.Index} activatable={value}");
         if (value) return;
         var prev = _prevForeground;
@@ -425,6 +472,14 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         {
             Native.SetForegroundWindow(prev);
         }
+    }
+
+    // Last foreground window other than the overlay, so focus can go back when editing ends.
+    private void RememberForeground()
+    {
+        if (!_activatable) return;
+        var fg = Native.GetForegroundWindow();
+        if (fg != IntPtr.Zero && fg != Hwnd) _prevForeground = fg;
     }
 
     // ===================== Handler-to-instance lookup =====================
@@ -447,6 +502,20 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
     {
         foreach (var kv in _instances)
             if (kv.Value._webMsgHandler == handler) return kv.Value;
+        return null;
+    }
+
+    private static OverlayWindow? FindByNavStartingHandler(IntPtr handler)
+    {
+        foreach (var kv in _instances)
+            if (kv.Value._navStartingHandler == handler) return kv.Value;
+        return null;
+    }
+
+    private static OverlayWindow? FindByProcessFailedHandler(IntPtr handler)
+    {
+        foreach (var kv in _instances)
+            if (kv.Value._processFailedHandler == handler) return kv.Value;
         return null;
     }
 
