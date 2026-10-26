@@ -129,12 +129,22 @@ public class WebViewWidgetPlanTests
     [Fact]
     public void Messages_AreJson()
     {
-        Assert.Equal("{\"type\":\"nexus.webview.caps\",\"version\":1,\"supported\":true,\"maxViews\":4,\"interactive\":true}",
+        Assert.Equal("{\"type\":\"nexus.webview.caps\",\"version\":1,\"supported\":true,\"maxViews\":4,\"interactive\":true,\"contextMenu\":true}",
             WebViewWidgetProtocol.BuildCaps(true));
         Assert.Equal("{\"type\":\"nexus.webview.state\",\"id\":\"a\",\"state\":\"error\",\"code\":\"12\",\"canGoBack\":false}",
             WebViewWidgetProtocol.BuildState("a", "error", "12", false));
         Assert.Equal("{\"type\":\"nexus.webview.state\",\"id\":\"a\",\"state\":\"loaded\",\"canGoBack\":true}",
             WebViewWidgetProtocol.BuildState("a", "loaded", null, true));
+        Assert.Equal("{\"type\":\"nexus.webview.contextmenu\",\"id\":\"a\",\"x\":10.5,\"y\":20}",
+            WebViewWidgetProtocol.BuildContextMenu("a", 10.46, 20));
+    }
+
+    [Fact]
+    public void UnmapPoint_InvertsTheViewportScale()
+    {
+        Assert.Equal((100.0, 50.0), WebViewWidgetProtocol.UnmapPoint(150, 75, 1280, 720, 1920, 1080));
+        Assert.Null(WebViewWidgetProtocol.UnmapPoint(1, 1, 0, 720, 1920, 1080));
+        Assert.Null(WebViewWidgetProtocol.UnmapPoint(1, 1, 1280, 720, 0, 1080));
     }
 
     [Fact]

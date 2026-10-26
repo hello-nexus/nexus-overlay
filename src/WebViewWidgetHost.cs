@@ -728,6 +728,11 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             // Windows notifies the container when a touch or click lands on the view's browser window.
             case Native.WM_PARENTNOTIFY:
                 var evt = (uint)((long)wParam & 0xFFFF);
+                if (evt == Native.WM_RBUTTONDOWN)
+                {
+                    OnRightButtonDown(hwnd, lParam);
+                    return null;
+                }
                 if (evt == Native.WM_POINTERDOWN || evt == Native.WM_LBUTTONDOWN)
                 {
                     foreach (var v in _byId.Values)
@@ -743,6 +748,20 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                 return (IntPtr)1;
         }
         return null;
+    }
+
+    // An interactive view takes the mouse, so the page's widget menu opens from the host's report of the right-click.
+    private void OnRightButtonDown(IntPtr container, IntPtr lParam)
+    {
+        NativeView? view = null;
+        foreach (var v in _byId.Values) if (v.Container == container) view = v;
+        if (view is null || !IsLive(view)) return;
+        Native.GetClientRect(_kioskHwnd, out var client);
+        // lParam is the cursor in the container's client area, as signed 16-bit words.
+        var x = view.AppliedRect.Left + (short)((long)lParam & 0xFFFF);
+        var y = view.AppliedRect.Top + (short)(((long)lParam >> 16) & 0xFFFF);
+        if (WebViewWidgetProtocol.UnmapPoint(x, y, _viewportW, _viewportH, client.Width, client.Height) is not { } css) return;
+        Post(WebViewWidgetProtocol.BuildContextMenu(view.Id, css.X, css.Y));
     }
 
     // ===================== Event handlers =====================

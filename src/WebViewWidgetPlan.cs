@@ -209,6 +209,13 @@ internal static class WebViewWidgetProtocol
         return new WidgetPixelRect(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top));
     }
 
+    /// <summary>A kiosk client pixel back to page CSS px, the inverse of <see cref="MapRect"/>'s scale; null without a size.</summary>
+    public static (double X, double Y)? UnmapPoint(int x, int y, double viewportW, double viewportH, int boundsW, int boundsH)
+    {
+        if (!(viewportW > 0) || !(viewportH > 0) || boundsW <= 0 || boundsH <= 0) return null;
+        return (x * viewportW / boundsW, y * viewportH / boundsH);
+    }
+
     /// <summary>Corner radius in pixels per axis, scaled like <see cref="MapRect"/>.</summary>
     public static (int X, int Y) MapRadius(double radius, double viewportW, double viewportH, int boundsW, int boundsH)
     {
@@ -284,6 +291,17 @@ internal static class WebViewWidgetProtocol
             w.WriteBoolean("supported", true);
             w.WriteNumber("maxViews", MaxViews);
             w.WriteBoolean("interactive", interactive);
+            w.WriteBoolean("contextMenu", true);
+        });
+
+    /// <summary>A right-click on an interactive view, at a CSS px point of the page viewport.</summary>
+    public static string BuildContextMenu(string id, double x, double y)
+        => Write(w =>
+        {
+            w.WriteString("type", "nexus.webview.contextmenu");
+            w.WriteString("id", id);
+            w.WriteNumber("x", Math.Round(x, 1));
+            w.WriteNumber("y", Math.Round(y, 1));
         });
 
     public static string BuildState(string id, string state, string? code, bool canGoBack)
