@@ -23,7 +23,8 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
     private const string WindowClassName = "Nexus.Overlay.HostWindow";
     private const int CornerEllipsePx = 20;
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 1;
-    private const uint WM_REMEMBER_FOREGROUND = Native.WM_USER + 2;
+    // COREWEBVIEW2_PROCESS_FAILED_KIND: 0 browser exited, 1 render exited; higher kinds are survivable.
+    private const int ProcessFailedKindRenderExited = 1;
 
     // Per-instance dispatch back from static [UnmanagedCallersOnly] callbacks.
     // Each overlay's WebView2 callback handler pointers identify it in the
@@ -160,17 +161,10 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
             case WM_INIT_CONTROLLER:
                 InitController();
                 return IntPtr.Zero;
-            case WM_REMEMBER_FOREGROUND:
-                RememberForeground();
-                return IntPtr.Zero;
             case Native.WM_ACTIVATE:
-                if (!_activatable) return null;
-                if (((long)wParam & 0xFFFF) == 0)
-                {
-                    // The window taking the foreground is known only once activation settles.
-                    Native.PostMessageW(hwnd, WM_REMEMBER_FOREGROUND, IntPtr.Zero, IntPtr.Zero);
-                    return null;
-                }
+                if (!_activatable || ((long)wParam & 0xFFFF) == 0) return null;
+                // lParam is the window being deactivated: the one to hand the foreground back to.
+                if (lParam != IntPtr.Zero && lParam != hwnd) _prevForeground = lParam;
                 // DefWindowProc would focus the host HWND, blurring the page's text field.
                 if (_controller != IntPtr.Zero && !Native.IsChild(hwnd, Native.GetFocus()))
                     Wv2.Ctrl_MoveFocusProgrammatic(_controller);
@@ -374,8 +368,11 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
     {
         var owner = FindByProcessFailedHandler(self);
         if (owner is null) return WebView2Native.S_OK;
-        Log.Warn($"overlay {owner._monitor.Index} process failed");
-        owner.SetActivatable(false);
+        var kind = -1;
+        if (args != IntPtr.Zero && WebView2Native.Succeeded(Wv2.ProcessFailedArgs_get_Kind(args, out var read)))
+            kind = read;
+        Log.Warn($"overlay {owner._monitor.Index} process failed kind={kind}");
+        if (kind >= 0 && kind <= ProcessFailedKindRenderExited) owner.SetActivatable(false);
         return WebView2Native.S_OK;
     }
 
@@ -453,8 +450,8 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         _activatable = value;
         if (value)
         {
-            _prevForeground = IntPtr.Zero;
-            RememberForeground();
+            var fg = Native.GetForegroundWindow();
+            _prevForeground = fg != Hwnd ? fg : IntPtr.Zero;
         }
         var ex = Native.GetWindowLongW(Hwnd, Native.GWL_EXSTYLE);
         ex = value ? ex & ~Native.WS_EX_NOACTIVATE : ex | Native.WS_EX_NOACTIVATE;
@@ -472,14 +469,6 @@ internal sealed unsafe class OverlayWindow : IWin32WindowOwner, IDisposable
         {
             Native.SetForegroundWindow(prev);
         }
-    }
-
-    // Last foreground window other than the overlay, so focus can go back when editing ends.
-    private void RememberForeground()
-    {
-        if (!_activatable) return;
-        var fg = Native.GetForegroundWindow();
-        if (fg != IntPtr.Zero && fg != Hwnd) _prevForeground = fg;
     }
 
     // ===================== Handler-to-instance lookup =====================
