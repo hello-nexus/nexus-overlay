@@ -730,6 +730,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                 var evt = (uint)((long)wParam & 0xFFFF);
                 if (evt == Native.WM_RBUTTONDOWN)
                 {
+                    // A right-click opens the widget menu, so it never authorizes a text field's focus.
+                    foreach (var v in _byId.Values) v.EditFocus.Disarm();
                     OnRightButtonDown(hwnd, lParam);
                     return null;
                 }
