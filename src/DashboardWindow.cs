@@ -1053,13 +1053,19 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
     private (int x, int y, int w, int h) ResolveInitialBounds()
     {
-        var saved = LoadSavedBounds();
+        var monitors = Monitors.Enumerate();
+        var isPanel = PanelFlags(monitors);
+        var saved = LoadSavedBounds(monitors, isPanel);
         if (saved is not null) return saved.Value;
 
-        // Default: centered in the primary monitor's work area, capped to it.
-        // A zero rect sits at (0,0), the primary monitor's origin.
-        var origin = new Native.RECT();
-        var (dpi, work) = MonitorMetrics(Native.MonitorFromRect(ref origin, Native.MONITOR_DEFAULTTOPRIMARY));
+        // Default: centered in the target monitor's work area, capped to it.
+        // A panel monitor sits under a topmost kiosk, so it is not the target
+        // when another monitor exists. A zero rect sits at the primary's origin.
+        var flags = new List<(bool, bool)>();
+        for (int i = 0; i < monitors.Count; i++) flags.Add((monitors[i].Primary, isPanel[i]));
+        int target = DashboardBoundsGeometry.DefaultMonitor(flags);
+        var targetRect = target >= 0 ? monitors[target].Bounds : new Native.RECT();
+        var (dpi, work) = MonitorMetrics(Native.MonitorFromRect(ref targetRect, Native.MONITOR_DEFAULTTOPRIMARY));
         var (fx, fy) = FrameInsets(dpi);
         var w = Math.Min(ScaleForDpi(DefaultClientWidth, dpi), work.Width);
         var h = Math.Min(ScaleForDpi(DefaultClientHeight, dpi), work.Height);
@@ -1109,7 +1115,26 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         return (dpi, work);
     }
 
-    private static (int x, int y, int w, int h)? LoadSavedBounds()
+    // Per monitor in Monitors.Enumerate() order: true when a live kiosk or a
+    // HYTE panel display sits on it.
+    private static List<bool> PanelFlags(IReadOnlyList<MonitorInfo> monitors)
+    {
+        var panelMonitors = Program.KioskMonitors();
+        if (PanelDisplay.Find() is { } y70)
+        {
+            var b = y70.Bounds;
+            panelMonitors.Add(Native.MonitorFromRect(ref b, Native.MONITOR_DEFAULTTONEAREST));
+        }
+        var flags = new List<bool>();
+        foreach (var m in monitors)
+        {
+            var b = m.Bounds;
+            flags.Add(panelMonitors.Contains(Native.MonitorFromRect(ref b, Native.MONITOR_DEFAULTTONEAREST)));
+        }
+        return flags;
+    }
+
+    private static (int x, int y, int w, int h)? LoadSavedBounds(IReadOnlyList<MonitorInfo> monitors, List<bool> isPanel)
     {
         try
         {
@@ -1125,12 +1150,15 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             var (minW, minH) = MinSize(dpi, work);
             if (doc.W < minW || doc.H < minH) return null;
             // A rect saved under another monitor layout (e.g. a panel display
-            // briefly made primary) can sit entirely off-screen now, and the
-            // WM_MOVE on create would re-save it forever.
+            // briefly made primary) can sit off-screen or under a kiosk now,
+            // and the WM_MOVE on create would re-save it forever.
             var (fx, _) = FrameInsets(dpi);
             var works = new List<(int, int, int, int)>();
-            foreach (var m in Monitors.Enumerate())
-                works.Add((m.WorkArea.Left, m.WorkArea.Top, m.WorkArea.Right, m.WorkArea.Bottom));
+            foreach (var i in DashboardBoundsGeometry.UsableMonitors(isPanel))
+            {
+                var wa = monitors[i].WorkArea;
+                works.Add((wa.Left, wa.Top, wa.Right, wa.Bottom));
+            }
             int captionH = ScaleForDpi(CustomTitleBarHeightLogical, dpi);
             if (!DashboardBoundsGeometry.StripReachable(
                     rc.Left + fx, rc.Top, rc.Right - fx, captionH, works,
@@ -1156,6 +1184,15 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             // a maximized window doesn't restore to a maximized rect that
             // covers the taskbar after a Win32-only restore.
             var rc = wp.rcNormalPosition;
+            // rcNormalPosition is in workspace coordinates for a non-tool
+            // window; CreateWindow and the load check take screen coordinates.
+            var info = new Native.MonitorInfoNative { cbSize = Marshal.SizeOf<Native.MonitorInfoNative>() };
+            if (Native.GetMonitorInfoW(Native.MonitorFromWindow(Hwnd, Native.MONITOR_DEFAULTTONEAREST), ref info))
+            {
+                var (x, y) = DashboardBoundsGeometry.WorkspaceToScreen(rc.Left, rc.Top,
+                    info.rcMonitor.Left, info.rcMonitor.Top, info.rcWork.Left, info.rcWork.Top);
+                rc = new Native.RECT { Left = x, Top = y, Right = x + rc.Width, Bottom = y + rc.Height };
+            }
             var path = BoundsFilePath();
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var data = new SavedBounds

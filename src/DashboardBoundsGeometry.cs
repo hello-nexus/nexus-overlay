@@ -4,8 +4,8 @@ using System.Collections.Generic;
 namespace Nexus.Overlay;
 
 /// <summary>
-/// Reachability check for the dashboard's saved bounds. No Win32 dependency,
-/// so unit-testable on any platform.
+/// Placement math for the dashboard's saved and default bounds. No Win32
+/// dependency, so unit-testable on any platform.
 /// </summary>
 internal static class DashboardBoundsGeometry
 {
@@ -28,4 +28,43 @@ internal static class DashboardBoundsGeometry
         }
         return false;
     }
+
+    /// <summary>
+    /// Indices of the monitors the dashboard may sit on: every non-panel
+    /// monitor, or all of them when every monitor hosts a panel.
+    /// </summary>
+    public static List<int> UsableMonitors(IReadOnlyList<bool> isPanel)
+    {
+        var usable = new List<int>();
+        for (int i = 0; i < isPanel.Count; i++)
+            if (!isPanel[i]) usable.Add(i);
+        if (usable.Count == 0)
+            for (int i = 0; i < isPanel.Count; i++) usable.Add(i);
+        return usable;
+    }
+
+    /// <summary>
+    /// Monitor index for the default placement: the OS primary unless it hosts
+    /// a panel, else the first non-panel monitor, else the primary; -1 if none.
+    /// </summary>
+    public static int DefaultMonitor(IReadOnlyList<(bool Primary, bool Panel)> monitors)
+    {
+        int primary = -1, firstNonPanel = -1;
+        for (int i = 0; i < monitors.Count; i++)
+        {
+            if (monitors[i].Primary && primary < 0) primary = i;
+            if (!monitors[i].Panel && firstNonPanel < 0) firstNonPanel = i;
+        }
+        if (primary >= 0 && !monitors[primary].Panel) return primary;
+        if (firstNonPanel >= 0) return firstNonPanel;
+        return primary >= 0 ? primary : (monitors.Count > 0 ? 0 : -1);
+    }
+
+    /// <summary>
+    /// Converts a <c>WINDOWPLACEMENT</c> point from workspace coordinates
+    /// (relative to the work area's origin) to screen coordinates.
+    /// </summary>
+    public static (int X, int Y) WorkspaceToScreen(
+        int x, int y, int monitorLeft, int monitorTop, int workLeft, int workTop)
+        => (x + workLeft - monitorLeft, y + workTop - monitorTop);
 }

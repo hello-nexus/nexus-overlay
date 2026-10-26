@@ -723,6 +723,20 @@ internal static class Program
         }
     }
 
+    /// <summary>HMONITORs under every live kiosk window (Y70 + monitor kiosks).</summary>
+    internal static List<IntPtr> KioskMonitors()
+    {
+        var monitors = new List<IntPtr>();
+        if (_panelKiosk is { } k && k.Hwnd != IntPtr.Zero)
+            monitors.Add(Native.MonitorFromWindow(k.Hwnd, Native.MONITOR_DEFAULTTONEAREST));
+        if (_monitorKiosks is not null)
+        {
+            foreach (var w in _monitorKiosks.LiveWindows())
+                monitors.Add(Native.MonitorFromWindow(w.Hwnd, Native.MONITOR_DEFAULTTONEAREST));
+        }
+        return monitors;
+    }
+
     // Widgets on a non-topmost kiosk's monitor leave the topmost band too, so
     // windows moved onto the panel cover them, but stay above the kiosk.
     private static void SyncPanelWidgetBand()

@@ -43,6 +43,14 @@ internal sealed class MonitorKioskManager
         }
     }
 
+    public IEnumerable<PanelKioskWindow> LiveWindows()
+    {
+        foreach (var entry in _kiosks.Values)
+        {
+            if (entry.Window.Hwnd != IntPtr.Zero) yield return entry.Window;
+        }
+    }
+
     public void Reconcile(IReadOnlyList<DisplayAssignment> assignments, string pairedToken)
     {
         List<string>? unhealthy = null;
