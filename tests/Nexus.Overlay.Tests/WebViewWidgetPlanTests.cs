@@ -399,10 +399,20 @@ public class WebViewWidgetPlanTests
     public void LongPressGate_DropsRepeatsWithinTheGap()
     {
         var gate = new LongPressGate();
-        Assert.True(gate.Accept(0));
-        Assert.False(gate.Accept(LongPressGate.MinGapMs - 1));
-        Assert.True(gate.Accept(LongPressGate.MinGapMs));
-        Assert.False(gate.Accept(LongPressGate.MinGapMs + 1));
+        Assert.True(gate.Accept(true, true, 0));
+        Assert.False(gate.Accept(true, true, LongPressGate.MinGapMs - 1));
+        Assert.True(gate.Accept(true, true, LongPressGate.MinGapMs));
+        Assert.False(gate.Accept(true, true, LongPressGate.MinGapMs + 1));
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void LongPressGate_RefusesAViewThatIsNotLiveAndInteractive_WithoutStartingTheGap(bool live, bool interactive)
+    {
+        var gate = new LongPressGate();
+        Assert.False(gate.Accept(live, interactive, 0));
+        Assert.True(gate.Accept(true, true, 1));
     }
 
     [Fact]

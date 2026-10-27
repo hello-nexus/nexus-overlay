@@ -515,8 +515,10 @@ internal sealed class LongPressGate
     public const long MinGapMs = 1000;
     private long _last = long.MinValue;
 
-    public bool Accept(long nowMs)
+    /// <summary>Only a live, interactive view may report; a refused report does not start the gap.</summary>
+    public bool Accept(bool live, bool interactive, long nowMs)
     {
+        if (!live || !interactive) return false;
         if (_last != long.MinValue && nowMs - _last < MinGapMs) return false;
         _last = nowMs;
         return true;

@@ -768,8 +768,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     // A touch held in place inside the page opens the same menu as a right-click.
     private void OnLongPress(NativeView view, double fx, double fy)
     {
-        if (view.Destroyed || _disposed || !view.Spec.Interactive || !IsLive(view)) return;
-        if (!view.LongPress.Accept(Environment.TickCount64)) return;
+        if (view.Destroyed || _disposed) return;
+        if (!view.LongPress.Accept(IsLive(view), view.Spec.Interactive, Environment.TickCount64)) return;
         foreach (var v in _byId.Values) v.EditFocus.Disarm();
         ReportMenu(view, (int)Math.Round(fx * view.AppliedRect.Width), (int)Math.Round(fy * view.AppliedRect.Height));
     }
