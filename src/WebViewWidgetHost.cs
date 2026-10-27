@@ -577,7 +577,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         Wv2.Settings_put_IsStatusBarEnabled(settings, false);
         Wv2.Settings_put_IsZoomControlEnabled(settings, false);
         Wv2.Settings_put_AreDefaultScriptDialogsEnabled(settings, false);
-        // Carries only the edit-focus report; OnWebMessageReceivedStatic accepts nothing else.
+        // Carries only the edit-focus and long-press reports; OnWebMessageReceivedStatic accepts nothing else.
         Wv2.Settings_put_IsWebMessageEnabled(settings, true);
         Wv2.Settings_put_AreHostObjectsAllowed(settings, false);
         var settings3 = Wv2.QueryInterface(settings, WebView2Native.IID_ICoreWebView2Settings3);
@@ -623,6 +623,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         Wv2.Wv2_add_WebMessageReceived(v.Core, v.WebMessageHandler, out v.WebMessageToken);
         var scriptHr = Wv2.Wv2_AddScriptToExecuteOnDocumentCreated(v.Core, WebViewWidgetProtocol.EditFocusScript);
         if (WebView2Native.Failed(scriptHr)) Log.Warn($"webview-widget edit-focus script hr=0x{scriptHr:X8}");
+        var pressHr = Wv2.Wv2_AddScriptToExecuteOnDocumentCreated(v.Core, WebViewWidgetProtocol.LongPressScript);
+        if (WebView2Native.Failed(pressHr)) Log.Warn($"webview-widget long-press script hr=0x{pressHr:X8}");
 
         v.Core4 = Wv2.QueryInterface(v.Core, WebView2Native.IID_ICoreWebView2_4);
         if (v.Core4 == IntPtr.Zero)
@@ -758,11 +760,23 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         NativeView? view = null;
         foreach (var v in _byId.Values) if (v.Container == container) view = v;
         if (view is null || !IsLive(view)) return;
-        Native.GetClientRect(_kioskHwnd, out var client);
         // lParam is the cursor in the container's client area, as signed 16-bit words.
-        var x = view.AppliedRect.Left + (short)((long)lParam & 0xFFFF);
-        var y = view.AppliedRect.Top + (short)(((long)lParam >> 16) & 0xFFFF);
-        if (WebViewWidgetProtocol.UnmapPoint(x, y, _viewportW, _viewportH, client.Width, client.Height) is not { } css) return;
+        ReportMenu(view, (short)((long)lParam & 0xFFFF), (short)(((long)lParam >> 16) & 0xFFFF));
+    }
+
+    // A touch held in place inside the page opens the same menu as a right-click.
+    private void OnLongPress(NativeView view, double fx, double fy)
+    {
+        if (view.Destroyed || _disposed || !IsLive(view)) return;
+        foreach (var v in _byId.Values) v.EditFocus.Disarm();
+        ReportMenu(view, (int)Math.Round(fx * view.AppliedRect.Width), (int)Math.Round(fy * view.AppliedRect.Height));
+    }
+
+    // x and y are pixels inside the view's container.
+    private void ReportMenu(NativeView view, int x, int y)
+    {
+        Native.GetClientRect(_kioskHwnd, out var client);
+        if (WebViewWidgetProtocol.UnmapPoint(view.AppliedRect.Left + x, view.AppliedRect.Top + y, _viewportW, _viewportH, client.Width, client.Height) is not { } css) return;
         Post(WebViewWidgetProtocol.BuildContextMenu(view.Id, css.X, css.Y));
     }
 
@@ -827,7 +841,9 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         try
         {
             if (args == IntPtr.Zero || !Views.TryGetValue(WebView2Callbacks.GetUserData(self), out var view)) return WebView2Native.S_OK;
-            if (WebViewWidgetProtocol.ParseEditFocus(Wv2.WebMsgArgs_GetJson(args)) is { } focused) view.Host.OnEditFocus(view, focused);
+            var json = Wv2.WebMsgArgs_GetJson(args);
+            if (WebViewWidgetProtocol.ParseEditFocus(json) is { } focused) view.Host.OnEditFocus(view, focused);
+            else if (WebViewWidgetProtocol.ParseLongPress(json) is { } press) view.Host.OnLongPress(view, press.X, press.Y);
         }
         catch (Exception ex) { Log.Error($"webview-widget WebMessage: {ex.Message}"); }
         return WebView2Native.S_OK;

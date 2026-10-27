@@ -395,6 +395,29 @@ public class WebViewWidgetPlanTests
     public void ParseEditFocus_RejectsEverythingElse(string? json)
         => Assert.Null(WebViewWidgetProtocol.ParseEditFocus(json));
 
+    [Fact]
+    public void ParseLongPress_AcceptsFractions()
+        => Assert.Equal((0.25, 1.0), WebViewWidgetProtocol.ParseLongPress("{\"nexusLongPress\":{\"x\":0.25,\"y\":1}}"));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("{}")]
+    [InlineData("{\"nexusLongPress\":true}")]
+    [InlineData("{\"nexusLongPress\":{\"x\":0.5}}")]
+    [InlineData("{\"nexusLongPress\":{\"x\":1.5,\"y\":0.5}}")]
+    [InlineData("{\"nexusLongPress\":{\"x\":-0.1,\"y\":0.5}}")]
+    [InlineData("{\"nexusLongPress\":{\"x\":\"0.5\",\"y\":0.5}}")]
+    [InlineData("{\"nexusLongPress\":{\"x\":0.5,\"y\":0.5},\"extra\":1}")]
+    [InlineData("{\"nexusEditableFocus\":true}")]
+    [InlineData("not json")]
+    public void ParseLongPress_RejectsEverythingElse(string? json)
+        => Assert.Null(WebViewWidgetProtocol.ParseLongPress(json));
+
+    [Fact]
+    public void ParseEditFocus_RejectsALongPress()
+        => Assert.Null(WebViewWidgetProtocol.ParseEditFocus("{\"nexusLongPress\":{\"x\":0.5,\"y\":0.5}}"));
+
     private static WidgetEditFocus LiveFocus()
     {
         var f = new WidgetEditFocus();

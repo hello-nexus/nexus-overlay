@@ -261,6 +261,63 @@ internal static class WebViewWidgetProtocol
         })();
         """;
 
+    /// <summary>Reports a touch or pen press held in place as <c>{"nexusLongPress":{"x","y"}}</c>, both fractions of the view's viewport. Top frame only.</summary>
+    public const string LongPressScript = """
+        (() => {
+          if (window !== top || !(window.chrome && chrome.webview)) return;
+          const HOLD_MS = 500, SLOP_PX = 10;
+          let timer = null, sx = 0, sy = 0, fired = false;
+          const clear = () => { if (timer) { clearTimeout(timer); timer = null; } };
+          addEventListener('pointerdown', (e) => {
+            clear();
+            fired = false;
+            if (e.pointerType === 'mouse' || !e.isPrimary) return;
+            sx = e.clientX; sy = e.clientY;
+            timer = setTimeout(() => {
+              timer = null;
+              fired = true;
+              chrome.webview.postMessage({ nexusLongPress: { x: sx / innerWidth, y: sy / innerHeight } });
+            }, HOLD_MS);
+          }, true);
+          addEventListener('pointermove', (e) => {
+            if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > SLOP_PX) clear();
+          }, true);
+          addEventListener('pointerup', clear, true);
+          addEventListener('pointercancel', clear, true);
+          // The release after a long-press must not activate what was held.
+          addEventListener('click', (e) => {
+            if (!fired) return;
+            fired = false;
+            e.preventDefault();
+            e.stopPropagation();
+          }, true);
+        })();
+        """;
+
+    /// <summary>Accepts only <c>{"nexusLongPress":{"x":0..1,"y":0..1}}</c> from a hosted view; anything else is null.</summary>
+    public static (double X, double Y)? ParseLongPress(string? json)
+    {
+        if (string.IsNullOrEmpty(json) || json.Length > 256) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            double x = 0, y = 0;
+            var seen = 0;
+            foreach (var prop in root.EnumerateObject())
+            {
+                if (seen++ > 0 || prop.Name != "nexusLongPress" || prop.Value.ValueKind != JsonValueKind.Object) return null;
+                if (!TryFraction(prop.Value, "x", out x) || !TryFraction(prop.Value, "y", out y)) return null;
+            }
+            return seen == 1 ? (x, y) : null;
+        }
+        catch (JsonException) { return null; }
+    }
+
+    private static bool TryFraction(JsonElement obj, string name, out double value)
+        => TryNumber(obj, name, out value) && value >= 0 && value <= 1;
+
     /// <summary>Accepts only <c>{"nexusEditableFocus":bool}</c> from a hosted view; anything else is null.</summary>
     public static bool? ParseEditFocus(string? json)
     {
