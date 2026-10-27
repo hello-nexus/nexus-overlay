@@ -129,7 +129,7 @@ public class WebViewWidgetPlanTests
     [Fact]
     public void Messages_AreJson()
     {
-        Assert.Equal("{\"type\":\"nexus.webview.caps\",\"version\":1,\"supported\":true,\"maxViews\":4,\"interactive\":true,\"contextMenu\":true}",
+        Assert.Equal("{\"type\":\"nexus.webview.caps\",\"version\":1,\"supported\":true,\"maxViews\":4,\"interactive\":true,\"contextMenu\":true,\"longPress\":true}",
             WebViewWidgetProtocol.BuildCaps(true));
         Assert.Equal("{\"type\":\"nexus.webview.state\",\"id\":\"a\",\"state\":\"error\",\"code\":\"12\",\"canGoBack\":false}",
             WebViewWidgetProtocol.BuildState("a", "error", "12", false));
@@ -394,6 +394,16 @@ public class WebViewWidgetPlanTests
     [InlineData("not json")]
     public void ParseEditFocus_RejectsEverythingElse(string? json)
         => Assert.Null(WebViewWidgetProtocol.ParseEditFocus(json));
+
+    [Fact]
+    public void LongPressGate_DropsRepeatsWithinTheGap()
+    {
+        var gate = new LongPressGate();
+        Assert.True(gate.Accept(0));
+        Assert.False(gate.Accept(LongPressGate.MinGapMs - 1));
+        Assert.True(gate.Accept(LongPressGate.MinGapMs));
+        Assert.False(gate.Accept(LongPressGate.MinGapMs + 1));
+    }
 
     [Fact]
     public void ParseLongPress_AcceptsFractions()

@@ -349,6 +349,7 @@ internal static class WebViewWidgetProtocol
             w.WriteNumber("maxViews", MaxViews);
             w.WriteBoolean("interactive", interactive);
             w.WriteBoolean("contextMenu", true);
+            w.WriteBoolean("longPress", true);
         });
 
     /// <summary>A right-click on an interactive view, at a CSS px point of the page viewport.</summary>
@@ -506,6 +507,20 @@ internal sealed class WidgetRegistry
 
     /// <summary>True when views are live and no sync arrived within <see cref="WatchdogMs"/>.</summary>
     public bool WatchdogExpired(long nowMs) => _live.Count > 0 && nowMs - _lastSyncMs >= WatchdogMs;
+}
+
+/// <summary>Lets one long-press report through per window, so a page cannot flood the panel with menu requests.</summary>
+internal sealed class LongPressGate
+{
+    public const long MinGapMs = 1000;
+    private long _last = long.MinValue;
+
+    public bool Accept(long nowMs)
+    {
+        if (_last != long.MinValue && nowMs - _last < MinGapMs) return false;
+        _last = nowMs;
+        return true;
+    }
 }
 
 /// <summary>
