@@ -96,6 +96,8 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     // immersive/Mica theme so it follows the app theme, not the OS theme.
     private bool _appDark;
 
+    private const uint WpfRestoreToMaximized = 0x2;
+
     // Rect for the next WM_DPICHANGED, set only around a move off the panel.
     private (int x, int y, int w, int h)? _dpiOverride;
 
@@ -810,7 +812,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         Log.Info($"dashboard Navigate hr=0x{hr:X8} url={LogRedact.Url(_navigationUrl)}");
 
         // Reveal the window only after the controller is attached so
-        // there's no flash of pre-WebView2 caption-bar-only frame.
+        // there's no flash of pre-WebView2 caption-bar-only frame. The panel
+        // kiosk can appear after the window was created, so check again.
+        MoveOffPanelKiosk();
         Native.ShowWindow(Hwnd, Native.SW_SHOWNORMAL);
         Native.BringWindowToTop(Hwnd);
         Native.SetForegroundWindow(Hwnd);
@@ -1058,9 +1062,10 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
     // A panel kiosk covers its monitor and the foreground guard skips this
     // process's own windows, so a dashboard that would show there moves off it.
-    // Show-time only: never while the window is open or being dragged. Rects
-    // are screen coordinates. Returns null when the window stays.
-    private static (int x, int y, int w, int h)? RelocateOffPanel(int x, int y, int w, int h)
+    // Show-time only (create, first reveal, ShowAndFocus), never while the user
+    // drags it. Rects are screen coordinates. Returns null when the window stays.
+    // srcDpi is the window's DPI, or 0 to take the DPI of the monitor it is on.
+    private static (int x, int y, int w, int h, int index)? RelocateOffPanel(int x, int y, int w, int h, uint srcDpi = 0)
     {
         var panels = PanelKioskWindow.PanelDevices();
         if (panels.Count == 0) return null;
@@ -1075,8 +1080,11 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         var t = DashboardPlacement.PickTarget(monitors, panels, x, y, x + w, y + h);
         if (t < 0) return null;
 
-        var from = new Native.RECT { Left = x, Top = y, Right = x + w, Bottom = y + h };
-        var (srcDpi, _) = MonitorMetrics(Native.MonitorFromRect(ref from, Native.MONITOR_DEFAULTTONEAREST));
+        if (srcDpi == 0)
+        {
+            var from = new Native.RECT { Left = x, Top = y, Right = x + w, Bottom = y + h };
+            (srcDpi, _) = MonitorMetrics(Native.MonitorFromRect(ref from, Native.MONITOR_DEFAULTTONEAREST));
+        }
         var tb = infos[t].Bounds;
         var (dstDpi, _) = MonitorMetrics(Native.MonitorFromRect(ref tb, Native.MONITOR_DEFAULTTONEAREST));
         var work = infos[t].WorkArea;
@@ -1086,43 +1094,77 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         var moved = DashboardPlacement.Center(
             Math.Max((int)((long)w * dstDpi / src), minW), Math.Max((int)((long)h * dstDpi / src), minH), fx, fy,
             work.Left, work.Top, work.Right, work.Bottom);
-        Log.Info($"dashboard moved off panel: {x},{y},{w}x{h} -> {moved.X},{moved.Y},{moved.W}x{moved.H} (monitor index={infos[t].Index})");
-        return moved;
+        return (moved.X, moved.Y, moved.W, moved.H, infos[t].Index);
     }
+
+    private static void LogMovedOffPanel(Native.RECT from, (int x, int y, int w, int h, int index) to)
+        => Log.Info($"dashboard moved off panel: {from.Left},{from.Top},{from.Width}x{from.Height} -> {to.x},{to.y},{to.w}x{to.h} (monitor index={to.index})");
 
     private void MoveOffPanelKiosk()
     {
         try
         {
-            if (PanelKioskWindow.PanelDevices().Count == 0) return;
-            if (Native.IsIconic(Hwnd)) Native.ShowWindow(Hwnd, Native.SW_RESTORE);
+            var iconic = Native.IsIconic(Hwnd);
             var maximized = Native.IsZoomed(Hwnd);
-            if (!Native.GetWindowRect(Hwnd, out var r)) return;
-            // A maximized window fills its monitor, so that rect decides whether
-            // it is on the panel; its restore rect is what gets moved.
-            if (maximized)
+            Native.RECT r;
+            if (iconic)
             {
-                if (RelocateOffPanel(r.Left, r.Top, r.Width, r.Height) is null) return;
-                Native.ShowWindow(Hwnd, Native.SW_RESTORE);
-                if (!Native.GetWindowRect(Hwnd, out r)) return;
+                // A minimized window has no position: decide from its restore rect,
+                // which is in workspace coordinates (origin at the primary work area).
+                var wp = new Native.WINDOWPLACEMENT();
+                wp.length = (uint)sizeof(Native.WINDOWPLACEMENT);
+                if (!Native.GetWindowPlacement(Hwnd, ref wp)) return;
+                var origin = new Native.RECT();
+                var (_, primaryWork) = MonitorMetrics(Native.MonitorFromRect(ref origin, Native.MONITOR_DEFAULTTOPRIMARY));
+                r = wp.rcNormalPosition;
+                r = new Native.RECT
+                {
+                    Left = r.Left + primaryWork.Left, Top = r.Top + primaryWork.Top,
+                    Right = r.Right + primaryWork.Left, Bottom = r.Bottom + primaryWork.Top,
+                };
+                maximized = (wp.flags & WpfRestoreToMaximized) != 0;
             }
-            if (RelocateOffPanel(r.Left, r.Top, r.Width, r.Height) is { } m)
+            else if (!Native.GetWindowRect(Hwnd, out r))
+            {
+                return;
+            }
+            // A maximized window fills its monitor, so its own rect decides.
+            if (RelocateOffPanel(r.Left, r.Top, r.Width, r.Height, Native.GetDpiForWindow(Hwnd)) is null) return;
+
+            if (iconic) Native.ShowWindow(Hwnd, Native.SW_RESTORE);
+            if (Native.IsZoomed(Hwnd)) Native.ShowWindow(Hwnd, Native.SW_RESTORE);
+            if (!Native.GetWindowRect(Hwnd, out r)) return;
+            if (RelocateOffPanel(r.Left, r.Top, r.Width, r.Height, Native.GetDpiForWindow(Hwnd)) is { } m)
             {
                 // Crossing to another DPI runs WM_DPICHANGED inside the call; it
                 // applies this rect instead of the unclamped one Windows suggests.
-                _dpiOverride = m;
-                Native.SetWindowPos(Hwnd, IntPtr.Zero, m.x, m.y, m.w, m.h, Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
-                _dpiOverride = null;
+                _dpiOverride = (m.x, m.y, m.w, m.h);
+                try
+                {
+                    Native.SetWindowPos(Hwnd, IntPtr.Zero, m.x, m.y, m.w, m.h, Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
+                }
+                finally
+                {
+                    _dpiOverride = null;
+                }
+                LogMovedOffPanel(r, m);
             }
             if (maximized) Native.ShowWindow(Hwnd, Native.SW_SHOWMAXIMIZED);
         }
         catch (Exception ex) { Log.Error($"dashboard move off panel: {ex.Message}"); }
     }
 
+    private static (int x, int y, int w, int h) InitialOffPanel((int x, int y, int w, int h) r)
+    {
+        if (RelocateOffPanel(r.x, r.y, r.w, r.h) is not { } m) return r;
+        LogMovedOffPanel(new Native.RECT { Left = r.x, Top = r.y, Right = r.x + r.w, Bottom = r.y + r.h }, m);
+        return (m.x, m.y, m.w, m.h);
+    }
+
     private (int x, int y, int w, int h) ResolveInitialBounds()
     {
         var saved = LoadSavedBounds();
-        if (saved is { } s) return RelocateOffPanel(s.x, s.y, s.w, s.h) ?? s;
+        if (saved is { } s) return InitialOffPanel(s);
 
         // Default: centered in the primary monitor's work area, capped to it.
         // A zero rect sits at (0,0), the primary monitor's origin.
@@ -1132,7 +1174,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         var w = Math.Min(ScaleForDpi(DefaultClientWidth, dpi), work.Width);
         var h = Math.Min(ScaleForDpi(DefaultClientHeight, dpi), work.Height);
         var centered = (work.Left + (work.Width - w) / 2 - fx, work.Top + (work.Height - h) / 2, w + 2 * fx, h + fy);
-        return RelocateOffPanel(centered.Item1, centered.Item2, centered.Item3, centered.Item4) ?? centered;
+        return InitialOffPanel(centered);
     }
 
     // Rounds up: a custom scale that rounds down leaves the client a

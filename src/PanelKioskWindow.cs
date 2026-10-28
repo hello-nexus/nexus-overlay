@@ -305,7 +305,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
 
     /// <summary>
     /// Device names of the displays under every live kiosk on a non-primary
-    /// display, whatever its guard, topmost or backdrop settings.
+    /// display, whatever its guard, topmost or backdrop settings. Read from the
+    /// window now: the kiosk's cached monitor can predate a renumbering.
     /// </summary>
     public static HashSet<string> PanelDevices()
     {
@@ -313,7 +314,12 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         foreach (var kv in _instances)
         {
             var k = kv.Value;
-            if (!k._disposed && !k._isPrimary && k._monitor is { } m) devices.Add(m.DeviceName);
+            if (k._disposed || k._isPrimary || k.Hwnd == IntPtr.Zero) continue;
+            var info = new Native.MonitorInfoNative { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<Native.MonitorInfoNative>() };
+            if (Native.GetMonitorInfoW(Native.MonitorFromWindow(k.Hwnd, Native.MONITOR_DEFAULTTONEAREST), ref info))
+            {
+                devices.Add(info.szDevice);
+            }
         }
         return devices;
     }
