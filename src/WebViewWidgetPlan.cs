@@ -264,6 +264,7 @@ internal static class WebViewWidgetProtocol
     /// <summary>Reports a touch or pen press held in place as <c>{"nexusLongPress":{"x","y"}}</c>, both fractions of the view's viewport. Top frame only.</summary>
     public const string LongPressScript = """
         (() => {
+          'use strict';
           if (window !== top || !(window.chrome && chrome.webview)) return;
           const HOLD_MS = 500, SLOP_PX = 10;
           let timer = null, sx = 0, sy = 0, fired = false;
@@ -298,36 +299,44 @@ internal static class WebViewWidgetProtocol
     /// <summary>
     /// Reports a rightward touch swipe as <c>{"nexusBack":true}</c>. The browser's own swipe navigation is
     /// off, so this is the only history-back gesture. Skipped when the page consumed the move, the touch began
-    /// in a horizontal scroller or a range input, or a second finger joined. Top frame only.
+    /// in a horizontal scroller or a range input, a second finger joined, or it did not start at the left edge. Top frame only.
     /// </summary>
     public const string BackSwipeScript = """
         (() => {
+          'use strict';
           if (window !== top || !(window.chrome && chrome.webview)) return;
+          // Styles go through CSSOM only: a strict style-src blocks style elements and style attributes, not property writes.
+          const css = (el, props) => { for (const k in props) el.style.setProperty(k, props[k], 'important'); };
           // No horizontal overscroll or browser history swipe; scroll chaining only, inner scrollers are unaffected.
-          const addStyle = () => {
-            const st = document.createElement('style');
-            st.textContent = 'html,body{overscroll-behavior-x:none !important}';
-            (document.head || document.documentElement).appendChild(st);
+          const noOverscroll = () => {
+            if (document.documentElement) css(document.documentElement, { 'overscroll-behavior-x': 'none' });
+            if (document.body) css(document.body, { 'overscroll-behavior-x': 'none' });
           };
-          if (document.documentElement) addStyle();
-          else new MutationObserver((_, o) => { if (document.documentElement) { o.disconnect(); addStyle(); } }).observe(document, { childList: true });
+          noOverscroll();
+          if (!document.documentElement) new MutationObserver((_, o) => { if (document.documentElement) { o.disconnect(); noOverscroll(); } }).observe(document, { childList: true });
+          document.addEventListener('DOMContentLoaded', noOverscroll);
           // Back/home disc the host asks for while the view is away from its page; closed shadow root so page CSS cannot reach it.
           let nav = null;
           const post = (m) => chrome.webview.postMessage(m);
           const makeNav = () => {
             const host = document.createElement('div');
             host.setAttribute('data-nexus-nav', '');
-            host.style.cssText = 'all:initial;position:fixed;left:8px;bottom:8px;width:40px;height:40px;z-index:2147483647;display:none;touch-action:none;';
+            css(host, { all: 'initial', position: 'fixed', left: '8px', bottom: '8px', width: '40px', height: '40px', 'z-index': '2147483647', display: 'none', 'touch-action': 'none' });
             const root = host.attachShadow({ mode: 'closed' });
             const b = document.createElement('div');
-            b.style.cssText = 'all:initial;display:flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:50%;background:rgba(20,20,24,0.7);box-shadow:0 2px 8px rgba(0,0,0,0.4);cursor:pointer;';
-            b.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>';
+            css(b, { all: 'initial', display: 'flex', 'align-items': 'center', 'justify-content': 'center', width: '40px', height: '40px', 'border-radius': '50%', background: 'rgba(20,20,24,0.7)', 'box-shadow': '0 2px 8px rgba(0,0,0,0.4)', cursor: 'pointer' });
+            const ns = 'http://www.w3.org/2000/svg';
+            const svg = document.createElementNS(ns, 'svg');
+            for (const [k, v] of [['width', '22'], ['height', '22'], ['viewBox', '0 0 24 24'], ['fill', 'none'], ['stroke', '#fff'], ['stroke-width', '2.5'], ['stroke-linecap', 'round'], ['stroke-linejoin', 'round']]) svg.setAttribute(k, v);
+            const path = document.createElementNS(ns, 'path');
+            path.setAttribute('d', 'M15 5l-7 7 7 7');
+            svg.appendChild(path);
+            b.appendChild(svg);
             root.appendChild(b);
-            let timer = null, held = false;
+            let timer = null;
             b.addEventListener('pointerdown', (e) => {
               e.stopPropagation();
-              held = false;
-              timer = setTimeout(() => { timer = null; held = true; post({ nexusHome: true }); }, 700);
+              timer = setTimeout(() => { timer = null; post({ nexusHome: true }); }, 700);
             });
             const end = (e) => {
               e.stopPropagation();
@@ -342,9 +351,10 @@ internal static class WebViewWidgetProtocol
           chrome.webview.addEventListener('message', (e) => {
             if (!e.data || typeof e.data.nexusNav !== 'boolean') return;
             if (!nav && e.data.nexusNav) nav = makeNav();
-            if (nav) nav.style.display = e.data.nexusNav ? 'block' : 'none';
+            if (nav) css(nav, { display: e.data.nexusNav ? 'block' : 'none' });
           });
-          const ENGAGE_PX = DOMINANCE = 1.3, COMMIT_FRACTION = 0.25, COMMIT_PX_PER_MS = 0.4;
+          const ENGAGE_PX = 16, DOMINANCE = 1.3, COMMIT_FRACTION = 0.25, COMMIT_PX_PER_MS = 0.4;
+          const EDGE_MIN_PX = 24, EDGE_FRACTION = 0.08;
           let g = null;
           const scrolls = (el) => {
             for (; el && el.nodeType === 1; el = el.parentElement) {
@@ -353,10 +363,11 @@ internal static class WebViewWidgetProtocol
             }
             return false;
           };
+          // Edge swipe only: a swipe from mid-page belongs to the page (carousels that never call preventDefault).
           addEventListener('touchstart', (e) => {
             const t = e.touches[0];
-            const blocked = e.touches.length !== 1 || !t || scrolls(e.target)
-              || !!(e.target.closest && e.target.closest('input[type=range]'));
+            const blocked = e.touches.length !== 1 || !t || t.clientX > Math.max(EDGE_MIN_PX, innerWidth * EDGE_FRACTION)
+              || scrolls(e.target) || !!(e.target.closest && e.target.closest('input[type=range]'));
             g = blocked ? null : { x: t.clientX, y: t.clientY, lx: t.clientX, lt: e.timeStamp, v: 0 };
           }, { capture: true, passive: true });
           addEventListener('touchmove', (e) => {
@@ -373,7 +384,7 @@ internal static class WebViewWidgetProtocol
             if (!t) return;
             const dx = t.clientX - s.x, dy = t.clientY - s.y;
             if (dx <= ENGAGE_PX || dx <= Math.abs(dy) * DOMINANCE) return;
-            if (dx > innerWidth * COMMIT_FRACTION || s.v > COMMIT_PX_PER_MS) chrome.webview.postMessage({ nexusBack: true });
+            if (dx > innerWidth * COMMIT_FRACTION || s.v > COMMIT_PX_PER_MS) post({ nexusBack: true });
           }, { capture: true, passive: true });
           addEventListener('touchcancel', () => { g = null; }, true);
         })();
@@ -798,6 +809,9 @@ internal sealed class WidgetHomeTracker
         _expecting = true;
         _home = null;
     }
+
+    /// <summary>The navigation to the configured url failed for real: a later load elsewhere must not become home.</summary>
+    public void OnFailed() => _expecting = false;
 
     public void OnCompleted(string? source)
     {

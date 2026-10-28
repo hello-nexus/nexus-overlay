@@ -431,6 +431,16 @@ public class WebViewWidgetPlanTests
     }
 
     [Fact]
+    public void HomeTracker_AFailedHomeNavigationDoesNotMakeTheNextLoadHome()
+    {
+        var h = new WidgetHomeTracker();
+        h.Expect();
+        h.OnFailed();
+        h.OnCompleted("https://elsewhere.test/");
+        Assert.False(h.IsAway("https://other.test/"));
+    }
+
+    [Fact]
     public void IsHomeRequest_AcceptsOnlyTheExactMessage()
     {
         Assert.True(WebViewWidgetProtocol.IsHomeRequest("{\"nexusHome\":true}"));

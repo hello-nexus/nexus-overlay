@@ -913,6 +913,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             else
             {
                 // A blocked download leaves the page unchanged; its notice can trail this completion, so an unexplained failure waits briefly.
+                view.Home.OnFailed();
                 var verdict = view.Nav.OnNavigationFailed(status.ToString());
                 if (verdict == NavFailureAction.Defer) Native.SetTimer(view.Host._kioskHwnd, TimerNavError, NavErrorGraceMs, IntPtr.Zero);
                 else view.Host.ApplyNavFailure(view, verdict);
