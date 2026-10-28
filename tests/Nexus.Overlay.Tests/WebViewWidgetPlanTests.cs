@@ -109,10 +109,25 @@ public class WebViewWidgetPlanTests
     }
 
     [Fact]
-    public void MapRect_ClampsToBounds()
+    public void MapRect_PartlyOutside_KeepsSizeAndPosition()
     {
-        var px = WebViewWidgetProtocol.MapRect(new WidgetRect(-50, 450, 2000, 200), 1000, 500, 1000, 500);
-        Assert.Equal(new WidgetPixelRect(0, 450, 1000, 50), px);
+        var px = WebViewWidgetProtocol.MapRect(new WidgetRect(-150, 300, 400, 300), 1000, 500, 1000, 500);
+        Assert.Equal(new WidgetPixelRect(-150, 300, 400, 300), px);
+    }
+
+    [Theory]
+    [InlineData(-400, 0)]
+    [InlineData(1000, 0)]
+    [InlineData(0, 500)]
+    [InlineData(0, -300)]
+    public void MapRect_WhollyOutside_IsEmpty(double x, double y)
+        => Assert.True(WebViewWidgetProtocol.MapRect(new WidgetRect(x, y, 400, 300), 1000, 500, 1000, 500).IsEmpty);
+
+    [Fact]
+    public void MapRect_HugeRect_StaysInIntRange()
+    {
+        var px = WebViewWidgetProtocol.MapRect(new WidgetRect(-1e12, -1e12, 2e12, 2e12), 1000, 500, 1000, 500);
+        Assert.Equal(new WidgetPixelRect(-1000, -500, 3000, 1500), px);
     }
 
     [Theory]

@@ -191,8 +191,11 @@ internal static class WebViewWidgetProtocol
 
     /// <summary>
     /// Maps a CSS rect to kiosk client pixels with an independent scale per
-    /// axis (native bounds over page viewport), clamped to the bounds. An
-    /// unusable viewport or rect yields an empty rect.
+    /// axis (native bounds over page viewport). A rect partly outside the
+    /// bounds keeps its size and position, so a tile sliding with a page swipe
+    /// moves instead of shrinking; the container is a child window, which the
+    /// kiosk client area clips. A rect wholly outside the bounds, or an
+    /// unusable viewport or rect, yields an empty rect.
     /// </summary>
     public static WidgetPixelRect MapRect(WidgetRect rect, double viewportW, double viewportH, int boundsW, int boundsH)
     {
@@ -202,12 +205,16 @@ internal static class WebViewWidgetProtocol
 
         var sx = boundsW / viewportW;
         var sy = boundsH / viewportH;
-        var left = Math.Clamp((int)Math.Round(rect.X * sx), 0, boundsW);
-        var top = Math.Clamp((int)Math.Round(rect.Y * sy), 0, boundsH);
-        var right = Math.Clamp((int)Math.Round((rect.X + rect.W) * sx), 0, boundsW);
-        var bottom = Math.Clamp((int)Math.Round((rect.Y + rect.H) * sy), 0, boundsH);
-        return new WidgetPixelRect(left, top, Math.Max(0, right - left), Math.Max(0, bottom - top));
+        // Edges stay within one bounds-length past either side, which keeps any tile that overlaps the bounds whole and the casts in int range.
+        var left = Edge(rect.X * sx, boundsW);
+        var top = Edge(rect.Y * sy, boundsH);
+        var right = Edge((rect.X + rect.W) * sx, boundsW);
+        var bottom = Edge((rect.Y + rect.H) * sy, boundsH);
+        if (right <= 0 || bottom <= 0 || left >= boundsW || top >= boundsH || right <= left || bottom <= top) return default;
+        return new WidgetPixelRect(left, top, right - left, bottom - top);
     }
+
+    private static int Edge(double v, int bound) => (int)Math.Round(Math.Clamp(v, -bound, 2.0 * bound));
 
     /// <summary>A kiosk client pixel back to page CSS px, the inverse of <see cref="MapRect"/>'s scale; null without a size.</summary>
     public static (double X, double Y)? UnmapPoint(int x, int y, double viewportW, double viewportH, int boundsW, int boundsH)
