@@ -6,9 +6,10 @@ namespace Nexus.Overlay.Tests;
 public class WebViewWidgetPlanTests
 {
     private static string View(string id, string url = "https://example.com/", double x = 10, double y = 20,
-        double w = 100, double h = 50, bool interactive = false, bool visible = true)
+        double w = 100, double h = 50, bool interactive = false, bool visible = true, bool immersive = false)
         => $"{{\"id\":\"{id}\",\"url\":\"{url}\",\"rect\":{{\"x\":{x},\"y\":{y},\"w\":{w},\"h\":{h}}},"
-           + $"\"interactive\":{(interactive ? "true" : "false")},\"visible\":{(visible ? "true" : "false")}}}";
+           + $"\"interactive\":{(interactive ? "true" : "false")},\"visible\":{(visible ? "true" : "false")}"
+           + (immersive ? ",\"immersive\":true" : "") + "}";
 
     private static WidgetMessage Sync(long seq, params string[] views)
         => WebViewWidgetProtocol.Parse(
@@ -173,6 +174,17 @@ public class WebViewWidgetPlanTests
         var a = Assert.Single(actions);
         Assert.Equal(WidgetActionKind.Layout, a.Kind);
         Assert.True(a.Spec!.Interactive);
+    }
+
+    [Fact]
+    public void Registry_ImmersiveFlagIsParsedAndChangesLayoutOnly()
+    {
+        var reg = new WidgetRegistry();
+        var first = Assert.Single(reg.Apply(Sync(1, View("a")), 0));
+        Assert.False(first.Spec!.Immersive);
+        var a = Assert.Single(reg.Apply(Sync(2, View("a", immersive: true)), 10));
+        Assert.Equal(WidgetActionKind.Layout, a.Kind);
+        Assert.True(a.Spec!.Immersive);
     }
 
     [Fact]
@@ -457,6 +469,7 @@ public class WebViewWidgetPlanTests
             WebViewWidgetProtocol.BuildState("a", "loaded", null, true, false, true));
         Assert.Equal("forward", WebViewWidgetProtocol.Parse("{\"type\":\"nexus.webview.command\",\"id\":\"a\",\"command\":\"forward\"}").Command);
         Assert.Equal("{\"nexusNav\":true}", WebViewWidgetProtocol.BuildNavHint(true));
+        Assert.Equal("{\"nexusNav\":false}", WebViewWidgetProtocol.BuildNavHint(true, immersive: true));
         Assert.Equal("home", WebViewWidgetProtocol.Parse("{\"type\":\"nexus.webview.command\",\"id\":\"a\",\"command\":\"home\"}").Command);
     }
 

@@ -10,7 +10,7 @@ namespace Nexus.Overlay;
 internal readonly record struct WidgetRect(double X, double Y, double W, double H);
 
 /// <summary>One entry of the panel page's desired widget set.</summary>
-internal sealed record WidgetViewSpec(string Id, string Url, WidgetRect Rect, bool Interactive, bool Visible, double Radius = 0, double Zoom = 1);
+internal sealed record WidgetViewSpec(string Id, string Url, WidgetRect Rect, bool Interactive, bool Visible, double Radius = 0, double Zoom = 1, bool Immersive = false);
 
 /// <summary>A pixel rect inside the kiosk client area.</summary>
 internal readonly record struct WidgetPixelRect(int Left, int Top, int Width, int Height)
@@ -117,7 +117,7 @@ internal static class WebViewWidgetProtocol
             }
 
             views.Add(new WidgetViewSpec(id, url!, new WidgetRect(x, y, w, h),
-                Interactive: ReadBool(el, "interactive"), Visible: ReadBool(el, "visible"), Radius: ReadRadius(el), Zoom: ReadZoom(el)));
+                Interactive: ReadBool(el, "interactive"), Visible: ReadBool(el, "visible"), Radius: ReadRadius(el), Zoom: ReadZoom(el), Immersive: ReadBool(el, "immersive")));
         }
 
         return new WidgetMessage
@@ -396,8 +396,8 @@ internal static class WebViewWidgetProtocol
     /// <summary>True only for exactly <c>{"nexusHome":true}</c>.</summary>
     public static bool IsHomeRequest(string? json) => IsFlag(json, "nexusHome");
 
-    /// <summary>Tells the page whether to show its back disc.</summary>
-    public static string BuildNavHint(bool show) => show ? "{\"nexusNav\":true}" : "{\"nexusNav\":false}";
+    /// <summary>Tells the page whether to show its back disc; an immersive view has its own controls, so never.</summary>
+    public static string BuildNavHint(bool show, bool immersive = false) => show && !immersive ? "{\"nexusNav\":true}" : "{\"nexusNav\":false}";
 
     private static bool IsFlag(string? json, string name)
     {
@@ -590,7 +590,7 @@ internal sealed class WidgetRegistry
                     entry.ConfiguredUrl = spec.Url;
                     actions.Add(new WidgetAction(WidgetActionKind.Navigate, spec.Id, spec));
                 }
-                if (entry.Spec.Rect != spec.Rect || entry.Spec.Radius != spec.Radius || entry.Spec.Zoom != spec.Zoom || entry.Spec.Interactive != spec.Interactive || entry.Spec.Visible != spec.Visible)
+                if (entry.Spec.Rect != spec.Rect || entry.Spec.Radius != spec.Radius || entry.Spec.Zoom != spec.Zoom || entry.Spec.Interactive != spec.Interactive || entry.Spec.Immersive != spec.Immersive || entry.Spec.Visible != spec.Visible)
                 {
                     actions.Add(new WidgetAction(WidgetActionKind.Layout, spec.Id, spec));
                 }

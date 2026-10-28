@@ -80,6 +80,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         public WidgetPixelRect AppliedRect;
         public bool AppliedShown;
         public bool AppliedInteractive;
+        public bool AppliedImmersive;
+        public bool NavWanted;
         public double AppliedZoom;
         public int AppliedRadiusX;
         public int AppliedRadiusY;
@@ -216,7 +218,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         var canGoForward = live && Wv2.Wv2_get_CanGoForward(view.Core);
         Post(WebViewWidgetProtocol.BuildState(view.Id, state, code, canGoBack, away, canGoForward));
         // A page in error runs no scripts, so only a loaded page can draw the disc.
-        if (live && state == "loaded") Wv2.Wv2_PostWebMessageAsJson(view.Core, WebViewWidgetProtocol.BuildNavHint(canGoBack || away));
+        view.NavWanted = canGoBack || away;
+        if (live && state == "loaded") Wv2.Wv2_PostWebMessageAsJson(view.Core, WebViewWidgetProtocol.BuildNavHint(view.NavWanted, view.Spec.Immersive));
     }
 
     // ===================== Lifecycle =====================
@@ -711,6 +714,13 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         Native.GetClientRect(_kioskHwnd, out var client);
         var px = WebViewWidgetProtocol.MapRect(view.Spec.Rect, _viewportW, _viewportH, client.Width, client.Height);
         var show = view.Spec.Visible && !px.IsEmpty;
+
+        if (view.AppliedImmersive != view.Spec.Immersive)
+        {
+            view.AppliedImmersive = view.Spec.Immersive;
+            // The page only hears the hint on a state change, so a tile/immersive switch re-posts it.
+            if (view.Nav.SettledState == "loaded") Wv2.Wv2_PostWebMessageAsJson(view.Core, WebViewWidgetProtocol.BuildNavHint(view.NavWanted, view.Spec.Immersive));
+        }
 
         if (view.AppliedZoom != view.Spec.Zoom)
         {
