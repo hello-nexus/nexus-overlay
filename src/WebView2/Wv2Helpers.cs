@@ -187,6 +187,16 @@ internal static unsafe class Wv2
         return fn(wv2);
     }
 
+    public static string? Wv2_get_Source(IntPtr wv2)
+    {
+        IntPtr p;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(wv2, WebView2Vtable.Wv2_get_Source);
+        if (WebView2Native.Failed(fn(wv2, &p)) || p == IntPtr.Zero) return null;
+        var s = Marshal.PtrToStringUni(p);
+        Marshal.FreeCoTaskMem(p);
+        return s;
+    }
+
     public static bool Wv2_get_CanGoBack(IntPtr wv2)
     {
         int v = 0;

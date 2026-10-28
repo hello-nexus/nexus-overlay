@@ -138,7 +138,7 @@ internal static class WebViewWidgetProtocol
         if (!root.TryGetProperty("command", out var cmdEl) || cmdEl.ValueKind != JsonValueKind.String) return null;
         var id = idEl.GetString();
         var cmd = cmdEl.GetString();
-        if (string.IsNullOrEmpty(id) || (cmd != "back" && cmd != "reload")) return null;
+        if (string.IsNullOrEmpty(id) || (cmd != "back" && cmd != "reload" && cmd != "home")) return null;
         return new WidgetMessage { Kind = WidgetMessageKind.Command, CommandId = id, Command = cmd };
     }
 
@@ -272,6 +272,7 @@ internal static class WebViewWidgetProtocol
             clear();
             fired = false;
             if (e.pointerType === 'mouse' || !e.isPrimary) return;
+            if (e.target && e.target.hasAttribute && e.target.hasAttribute('data-nexus-nav')) return;
             sx = e.clientX; sy = e.clientY;
             timer = setTimeout(() => {
               timer = null;
@@ -302,7 +303,48 @@ internal static class WebViewWidgetProtocol
     public const string BackSwipeScript = """
         (() => {
           if (window !== top || !(window.chrome && chrome.webview)) return;
-          const ENGAGE_PX = 16, DOMINANCE = 1.3, COMMIT_FRACTION = 0.25, COMMIT_PX_PER_MS = 0.4;
+          // No horizontal overscroll or browser history swipe; scroll chaining only, inner scrollers are unaffected.
+          const addStyle = () => {
+            const st = document.createElement('style');
+            st.textContent = 'html,body{overscroll-behavior-x:none !important}';
+            (document.head || document.documentElement).appendChild(st);
+          };
+          if (document.documentElement) addStyle();
+          else new MutationObserver((_, o) => { if (document.documentElement) { o.disconnect(); addStyle(); } }).observe(document, { childList: true });
+          // Back/home disc the host asks for while the view is away from its page; closed shadow root so page CSS cannot reach it.
+          let nav = null;
+          const post = (m) => chrome.webview.postMessage(m);
+          const makeNav = () => {
+            const host = document.createElement('div');
+            host.setAttribute('data-nexus-nav', '');
+            host.style.cssText = 'all:initial;position:fixed;left:8px;bottom:8px;width:40px;height:40px;z-index:2147483647;display:none;touch-action:none;';
+            const root = host.attachShadow({ mode: 'closed' });
+            const b = document.createElement('div');
+            b.style.cssText = 'all:initial;display:flex;align-items:center;justify-content:center;width:40px;height:40px;border-radius:50%;background:rgba(20,20,24,0.7);box-shadow:0 2px 8px rgba(0,0,0,0.4);cursor:pointer;';
+            b.innerHTML = '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>';
+            root.appendChild(b);
+            let timer = null, held = false;
+            b.addEventListener('pointerdown', (e) => {
+              e.stopPropagation();
+              held = false;
+              timer = setTimeout(() => { timer = null; held = true; post({ nexusHome: true }); }, 700);
+            });
+            const end = (e) => {
+              e.stopPropagation();
+              if (timer) { clearTimeout(timer); timer = null; if (e.type === 'pointerup') post({ nexusBack: true }); }
+            };
+            b.addEventListener('pointerup', end);
+            b.addEventListener('pointercancel', end);
+            b.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); });
+            (document.documentElement || document).appendChild(host);
+            return host;
+          };
+          chrome.webview.addEventListener('message', (e) => {
+            if (!e.data || typeof e.data.nexusNav !== 'boolean') return;
+            if (!nav && e.data.nexusNav) nav = makeNav();
+            if (nav) nav.style.display = e.data.nexusNav ? 'block' : 'none';
+          });
+          const ENGAGE_PX = DOMINANCE = 1.3, COMMIT_FRACTION = 0.25, COMMIT_PX_PER_MS = 0.4;
           let g = null;
           const scrolls = (el) => {
             for (; el && el.nodeType === 1; el = el.parentElement) {
@@ -338,7 +380,15 @@ internal static class WebViewWidgetProtocol
         """;
 
     /// <summary>True only for exactly <c>{"nexusBack":true}</c>.</summary>
-    public static bool IsBackSwipe(string? json)
+    public static bool IsBackSwipe(string? json) => IsFlag(json, "nexusBack");
+
+    /// <summary>True only for exactly <c>{"nexusHome":true}</c>.</summary>
+    public static bool IsHomeRequest(string? json) => IsFlag(json, "nexusHome");
+
+    /// <summary>Tells the page whether to show its back disc.</summary>
+    public static string BuildNavHint(bool show) => show ? "{\"nexusNav\":true}" : "{\"nexusNav\":false}";
+
+    private static bool IsFlag(string? json, string name)
     {
         if (string.IsNullOrEmpty(json) || json.Length > 64) return false;
         try
@@ -349,7 +399,7 @@ internal static class WebViewWidgetProtocol
             var seen = 0;
             foreach (var prop in root.EnumerateObject())
             {
-                if (seen++ > 0 || prop.Name != "nexusBack" || prop.Value.ValueKind != JsonValueKind.True) return false;
+                if (seen++ > 0 || prop.Name != name || prop.Value.ValueKind != JsonValueKind.True) return false;
             }
             return seen == 1;
         }
@@ -412,6 +462,7 @@ internal static class WebViewWidgetProtocol
             w.WriteBoolean("interactive", interactive);
             w.WriteBoolean("contextMenu", true);
             w.WriteBoolean("longPress", true);
+            w.WriteBoolean("navControls", true);
         });
 
     /// <summary>A right-click on an interactive view, at a CSS px point of the page viewport.</summary>
@@ -424,7 +475,7 @@ internal static class WebViewWidgetProtocol
             w.WriteNumber("y", Math.Round(y, 1));
         });
 
-    public static string BuildState(string id, string state, string? code, bool canGoBack)
+    public static string BuildState(string id, string state, string? code, bool canGoBack, bool away = false)
         => Write(w =>
         {
             w.WriteString("type", "nexus.webview.state");
@@ -432,6 +483,7 @@ internal static class WebViewWidgetProtocol
             w.WriteString("state", state);
             if (code is not null) w.WriteString("code", code);
             w.WriteBoolean("canGoBack", canGoBack);
+            if (away) w.WriteBoolean("away", true);
         });
 
     private static string Write(Action<Utf8JsonWriter> body)
@@ -673,14 +725,23 @@ internal sealed class WidgetEditFocus
 }
 
 /// <summary>Per-view navigation bookkeeping: remembers the settled state and swallows the failure that follows a blocked download.</summary>
+internal enum NavFailureAction { None, Restore, Report, Defer }
+
 internal sealed class WidgetNavState
 {
     private bool _downloadCancelled;
+    private bool _pending;
 
     public string? SettledState { get; private set; }
     public string? SettledCode { get; private set; }
+    /// <summary>The web error status of the failure a Report or Defer concerns.</summary>
+    public string? FailureCode { get; private set; }
 
-    public void OnNavigationStarting() => _downloadCancelled = false;
+    public void OnNavigationStarting()
+    {
+        _downloadCancelled = false;
+        _pending = false;
+    }
 
     public void OnDownloadCancelled() => _downloadCancelled = true;
 
@@ -692,12 +753,65 @@ internal sealed class WidgetNavState
         return was;
     }
 
+    /// <summary>
+    /// A navigation failed. A download that already announced itself leaves the page unchanged, so the prior state is
+    /// restored; otherwise the verdict waits for <see cref="ResolvePending"/>, because the download notice can trail
+    /// the completion.
+    /// </summary>
+    public NavFailureAction OnNavigationFailed(string code)
+    {
+        FailureCode = code;
+        if (TryConsumeDownloadFailure()) return Settle();
+        _pending = true;
+        return NavFailureAction.Defer;
+    }
+
+    /// <summary>Called after the grace delay of a deferred failure.</summary>
+    public NavFailureAction ResolvePending()
+    {
+        if (!_pending) return NavFailureAction.None;
+        _pending = false;
+        return TryConsumeDownloadFailure() ? Settle() : NavFailureAction.Report;
+    }
+
+    // With nothing settled yet there is no page to fall back to, so the failure stands.
+    private NavFailureAction Settle() => SettledState is null ? NavFailureAction.Report : NavFailureAction.Restore;
+
     public void OnState(string state, string? code)
     {
         if (state == "loading") return;
+        if (state == "loaded") _pending = false;
         SettledState = state;
         SettledCode = code;
     }
+}
+
+/// <summary>Tracks where a view's configured page really ends up (redirects included) so the host can tell when the user has navigated away.</summary>
+internal sealed class WidgetHomeTracker
+{
+    private bool _expecting;
+    private string? _home;
+
+    /// <summary>The host is navigating to the configured url: the next successful completion defines home.</summary>
+    public void Expect()
+    {
+        _expecting = true;
+        _home = null;
+    }
+
+    public void OnCompleted(string? source)
+    {
+        if (!_expecting || string.IsNullOrEmpty(source)) return;
+        _expecting = false;
+        _home = Normalize(source);
+    }
+
+    /// <summary>True once home is known and the view is somewhere else.</summary>
+    public bool IsAway(string? source)
+        => _home is not null && !string.IsNullOrEmpty(source) && Normalize(source) != _home;
+
+    private static string Normalize(string url)
+        => Uri.TryCreate(url, UriKind.Absolute, out var u) ? u.GetLeftPart(UriPartial.Path).TrimEnd('/') + u.Query : url;
 }
 
 /// <summary>Rate limit for the cursor display-count restore driven by mouse moves.</summary>

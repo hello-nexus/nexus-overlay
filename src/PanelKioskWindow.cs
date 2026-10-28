@@ -699,8 +699,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                 return IntPtr.Zero;
 
             case Native.WM_TIMER:
-                if (wParam == (IntPtr)(long)WebViewWidgetHost.TimerWatchdog.ToUInt64()
-                    || wParam == (IntPtr)(long)WebViewWidgetHost.TimerBlurGrace.ToUInt64())
+                if (WebViewWidgetHost.OwnsTimer(wParam))
                 {
                     _widgets?.OnTimer(wParam);
                     return IntPtr.Zero;

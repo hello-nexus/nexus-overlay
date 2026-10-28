@@ -129,7 +129,7 @@ public class WebViewWidgetPlanTests
     [Fact]
     public void Messages_AreJson()
     {
-        Assert.Equal("{\"type\":\"nexus.webview.caps\",\"version\":1,\"supported\":true,\"maxViews\":4,\"interactive\":true,\"contextMenu\":true,\"longPress\":true}",
+        Assert.Equal("{\"type\":\"nexus.webview.caps\",\"version\":1,\"supported\":true,\"maxViews\":4,\"interactive\":true,\"contextMenu\":true,\"longPress\":true,\"navControls\":true}",
             WebViewWidgetProtocol.BuildCaps(true));
         Assert.Equal("{\"type\":\"nexus.webview.state\",\"id\":\"a\",\"state\":\"error\",\"code\":\"12\",\"canGoBack\":false}",
             WebViewWidgetProtocol.BuildState("a", "error", "12", false));
@@ -358,6 +358,93 @@ public class WebViewWidgetPlanTests
         n.OnDownloadCancelled();
         n.OnNavigationStarting();
         Assert.False(n.TryConsumeDownloadFailure());
+    }
+
+    [Fact]
+    public void NavState_FailureWithDownloadNoticeFirstRestores()
+    {
+        var n = new WidgetNavState();
+        n.OnState("loaded", null);
+        n.OnNavigationStarting();
+        n.OnDownloadCancelled();
+        Assert.Equal(NavFailureAction.Restore, n.OnNavigationFailed("9"));
+    }
+
+    [Fact]
+    public void NavState_FailureWithLateDownloadNoticeRestoresAfterTheGrace()
+    {
+        var n = new WidgetNavState();
+        n.OnState("loaded", null);
+        n.OnNavigationStarting();
+        Assert.Equal(NavFailureAction.Defer, n.OnNavigationFailed("9"));
+        n.OnDownloadCancelled();
+        Assert.Equal(NavFailureAction.Restore, n.ResolvePending());
+        Assert.Equal(NavFailureAction.None, n.ResolvePending());
+    }
+
+    [Fact]
+    public void NavState_UnexplainedFailureIsReportedAfterTheGrace()
+    {
+        var n = new WidgetNavState();
+        n.OnState("loaded", null);
+        n.OnNavigationStarting();
+        n.OnNavigationFailed("12");
+        Assert.Equal(NavFailureAction.Report, n.ResolvePending());
+        Assert.Equal("12", n.FailureCode);
+    }
+
+    [Fact]
+    public void NavState_PendingFailureDiesWithANewNavigationOrALoad()
+    {
+        var n = new WidgetNavState();
+        n.OnNavigationFailed("12");
+        n.OnNavigationStarting();
+        Assert.Equal(NavFailureAction.None, n.ResolvePending());
+        n.OnNavigationFailed("12");
+        n.OnState("loaded", null);
+        Assert.Equal(NavFailureAction.None, n.ResolvePending());
+    }
+
+    [Fact]
+    public void NavState_DownloadWithNothingSettledStillReports()
+    {
+        var n = new WidgetNavState();
+        n.OnDownloadCancelled();
+        Assert.Equal(NavFailureAction.Report, n.OnNavigationFailed("9"));
+    }
+
+    [Fact]
+    public void HomeTracker_AwayOnlyAfterHomeIsKnownAndLeft()
+    {
+        var h = new WidgetHomeTracker();
+        Assert.False(h.IsAway("https://a.test/x"));
+        h.Expect();
+        Assert.False(h.IsAway("https://a.test/x"));
+        h.OnCompleted("https://www.a.test/home/");
+        Assert.False(h.IsAway("https://www.a.test/home"));
+        Assert.True(h.IsAway("https://www.a.test/other"));
+        h.OnCompleted("https://elsewhere.test/");
+        Assert.True(h.IsAway("https://elsewhere.test/"));
+        h.Expect();
+        h.OnCompleted("https://b.test/");
+        Assert.False(h.IsAway("https://b.test"));
+    }
+
+    [Fact]
+    public void IsHomeRequest_AcceptsOnlyTheExactMessage()
+    {
+        Assert.True(WebViewWidgetProtocol.IsHomeRequest("{\"nexusHome\":true}"));
+        Assert.False(WebViewWidgetProtocol.IsHomeRequest("{\"nexusBack\":true}"));
+        Assert.False(WebViewWidgetProtocol.IsBackSwipe("{\"nexusHome\":true}"));
+    }
+
+    [Fact]
+    public void Messages_CarryAwayAndHintAndParseHome()
+    {
+        Assert.Equal("{\"type\":\"nexus.webview.state\",\"id\":\"a\",\"state\":\"loaded\",\"canGoBack\":false,\"away\":true}",
+            WebViewWidgetProtocol.BuildState("a", "loaded", null, false, true));
+        Assert.Equal("{\"nexusNav\":true}", WebViewWidgetProtocol.BuildNavHint(true));
+        Assert.Equal("home", WebViewWidgetProtocol.Parse("{\"type\":\"nexus.webview.command\",\"id\":\"a\",\"command\":\"home\"}").Command);
     }
 
     [Fact]

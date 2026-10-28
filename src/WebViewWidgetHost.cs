@@ -22,6 +22,15 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     internal const uint WM_WIDGET_DEFERRED = Native.WM_USER + 4;
     internal static readonly UIntPtr TimerWatchdog = new(13);
     internal static readonly UIntPtr TimerBlurGrace = new(14);
+    internal static readonly UIntPtr TimerBackSwipe = new(15);
+    internal static readonly UIntPtr TimerNavError = new(16);
+    private const uint BackDeferMs = 150;
+    private const uint NavErrorGraceMs = 300;
+
+    /// <summary>True for the timer ids this host owns.</summary>
+    internal static bool OwnsTimer(IntPtr id)
+        => id == (IntPtr)(long)TimerWatchdog.ToUInt64() || id == (IntPtr)(long)TimerBlurGrace.ToUInt64()
+           || id == (IntPtr)(long)TimerBackSwipe.ToUInt64() || id == (IntPtr)(long)TimerNavError.ToUInt64();
     private const uint WatchdogPollMs = 500;
     private const uint WS_DISABLED = 0x08000000u;
     private const int PermissionStateDeny = 2;
@@ -75,6 +84,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         public int AppliedRadiusX;
         public int AppliedRadiusY;
         public readonly WidgetNavState Nav = new();
+        public readonly WidgetHomeTracker Home = new();
         public readonly WidgetEditFocus EditFocus = new();
     }
 
@@ -86,6 +96,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private readonly WidgetRegistry _registry = new();
     private readonly Dictionary<string, NativeView> _byId = new(StringComparer.Ordinal);
     private readonly List<NativeView> _deferredDestroy = new();
+    private readonly List<NativeView> _pendingBack = new();
     private IntPtr _env;
     private IntPtr _envOptions;
     private IntPtr _envHandler;
@@ -156,6 +167,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                 case WidgetActionKind.Navigate:
                     if (_byId.TryGetValue(action.Id, out var nav) && nav.Ready)
                     {
+                        nav.Home.Expect();
                         Wv2.Wv2_Navigate(nav.Core, action.Spec!.Url);
                     }
                     break;
@@ -184,6 +196,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     {
         if (!_byId.TryGetValue(msg.CommandId, out var view) || !view.Ready) return;
         if (msg.Command == "reload") Wv2.Wv2_Reload(view.Core);
+        else if (msg.Command == "home") NavigateHome(view);
         else if (Wv2.Wv2_get_CanGoBack(view.Core)) Wv2.Wv2_GoBack(view.Core);
     }
 
@@ -196,8 +209,12 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private void PostState(NativeView view, string state, string? code = null)
     {
         view.Nav.OnState(state, code);
-        var canGoBack = view.Ready && !view.Destroyed && Wv2.Wv2_get_CanGoBack(view.Core);
-        Post(WebViewWidgetProtocol.BuildState(view.Id, state, code, canGoBack));
+        var live = view.Ready && !view.Destroyed;
+        var canGoBack = live && Wv2.Wv2_get_CanGoBack(view.Core);
+        var away = live && view.Home.IsAway(Wv2.Wv2_get_Source(view.Core));
+        Post(WebViewWidgetProtocol.BuildState(view.Id, state, code, canGoBack, away));
+        // A page in error runs no scripts, so only a loaded page can draw the disc.
+        if (live && state == "loaded") Wv2.Wv2_PostWebMessageAsJson(view.Core, WebViewWidgetProtocol.BuildNavHint(canGoBack || away));
     }
 
     // ===================== Lifecycle =====================
@@ -361,6 +378,26 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             foreach (var v in _byId.Values) expired |= v.EditFocus.ExpireBlur(now);
             ArmBlurTimer();
             if (expired) UpdateActivation();
+            return;
+        }
+        if (timerId == (IntPtr)(long)TimerBackSwipe.ToUInt64())
+        {
+            Native.KillTimer(_kioskHwnd, TimerBackSwipe);
+            var due = _pendingBack.ToArray();
+            _pendingBack.Clear();
+            foreach (var v in due)
+            {
+                if (!v.Destroyed && v.Ready && Wv2.Wv2_get_CanGoBack(v.Core)) Wv2.Wv2_GoBack(v.Core);
+            }
+            return;
+        }
+        if (timerId == (IntPtr)(long)TimerNavError.ToUInt64())
+        {
+            Native.KillTimer(_kioskHwnd, TimerNavError);
+            foreach (var v in new List<NativeView>(_byId.Values))
+            {
+                if (!v.Destroyed) ApplyNavFailure(v, v.Nav.ResolvePending());
+            }
             return;
         }
         if (timerId != (IntPtr)(long)TimerWatchdog.ToUInt64()) return;
@@ -568,6 +605,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         view.Ready = true;
         ApplyLayout(view);
         var url = _registry.ConfiguredUrl(view.Id) ?? view.Spec.Url;
+        view.Home.Expect();
         var hr = Wv2.Wv2_Navigate(view.Core, url);
         Log.Info($"webview-widget view ready navigate hr=0x{hr:X8} url={LogRedact.Url(url)}");
     }
@@ -593,9 +631,11 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         var settings6 = Wv2.QueryInterface(settings, WebView2Native.IID_ICoreWebView2Settings6);
         if (settings6 != IntPtr.Zero)
         {
-            Wv2.Settings6_put_IsSwipeNavigationEnabled(settings6, false);
+            var swipeHr = Wv2.Settings6_put_IsSwipeNavigationEnabled(settings6, false);
+            Log.Info($"webview-widget swipe navigation off hr=0x{swipeHr:X8}");
             Wv2.Release(settings6);
         }
+        else Log.Warn("webview-widget Settings6 unavailable: browser swipe navigation stays on");
         var settings4 = Wv2.QueryInterface(settings, WebView2Native.IID_ICoreWebView2Settings4);
         if (settings4 != IntPtr.Zero)
         {
@@ -781,7 +821,31 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     {
         if (view.Destroyed || _disposed || !view.Ready) return;
         if (!view.BackSwipe.Accept(IsLive(view), view.Spec.Interactive, Environment.TickCount64)) return;
-        if (Wv2.Wv2_get_CanGoBack(view.Core)) Wv2.Wv2_GoBack(view.Core);
+        if (!Wv2.Wv2_get_CanGoBack(view.Core) || _pendingBack.Contains(view)) return;
+        // One short tick lets any residual overscroll animation end before the document swaps.
+        _pendingBack.Add(view);
+        Native.SetTimer(_kioskHwnd, TimerBackSwipe, BackDeferMs, IntPtr.Zero);
+    }
+
+    // The page's home button: back to the configured address, wherever the history stands.
+    private void OnHomeRequest(NativeView view)
+    {
+        if (view.Destroyed || _disposed || !view.Ready) return;
+        if (!view.BackSwipe.Accept(IsLive(view), view.Spec.Interactive, Environment.TickCount64)) return;
+        NavigateHome(view);
+    }
+
+    private void NavigateHome(NativeView view)
+    {
+        var url = _registry.ConfiguredUrl(view.Id) ?? view.Spec.Url;
+        view.Home.Expect();
+        Wv2.Wv2_Navigate(view.Core, url);
+    }
+
+    private void ApplyNavFailure(NativeView view, NavFailureAction action)
+    {
+        if (action == NavFailureAction.Restore && view.Nav.SettledState is { } prev) PostState(view, prev, view.Nav.SettledCode);
+        else if (action == NavFailureAction.Report) PostState(view, "error", view.Nav.FailureCode);
     }
 
     // A touch held in place inside the page opens the same menu as a right-click.
@@ -842,15 +906,17 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             {
                 // Navigation can reset the page zoom; re-assert the configured one.
                 Wv2.Ctrl_put_ZoomFactor(view.Controller, view.Spec.Zoom);
+                view.Home.OnCompleted(Wv2.Wv2_get_Source(view.Core));
                 view.Host.PostState(view, "loaded");
             }
             else if (status == WebErrorOperationCanceled) return WebView2Native.S_OK;
-            else if (view.Nav.TryConsumeDownloadFailure())
+            else
             {
-                // The page is unchanged after a blocked download; restore the state the loading event replaced.
-                if (view.Nav.SettledState is { } prev) view.Host.PostState(view, prev, view.Nav.SettledCode);
+                // A blocked download leaves the page unchanged; its notice can trail this completion, so an unexplained failure waits briefly.
+                var verdict = view.Nav.OnNavigationFailed(status.ToString());
+                if (verdict == NavFailureAction.Defer) Native.SetTimer(view.Host._kioskHwnd, TimerNavError, NavErrorGraceMs, IntPtr.Zero);
+                else view.Host.ApplyNavFailure(view, verdict);
             }
-            else view.Host.PostState(view, "error", status.ToString());
         }
         catch (Exception ex) { Log.Error($"webview-widget NavCompleted: {ex.Message}"); }
         return WebView2Native.S_OK;
@@ -865,6 +931,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             var json = Wv2.WebMsgArgs_GetJson(args);
             if (WebViewWidgetProtocol.ParseEditFocus(json) is { } focused) view.Host.OnEditFocus(view, focused);
             else if (WebViewWidgetProtocol.IsBackSwipe(json)) view.Host.OnBackSwipe(view);
+            else if (WebViewWidgetProtocol.IsHomeRequest(json)) view.Host.OnHomeRequest(view);
             else if (WebViewWidgetProtocol.ParseLongPress(json) is { } press) view.Host.OnLongPress(view, press.X, press.Y);
         }
         catch (Exception ex) { Log.Error($"webview-widget WebMessage: {ex.Message}"); }
@@ -1016,6 +1083,9 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             _timerRunning = false;
         }
         Native.KillTimer(_kioskHwnd, TimerBlurGrace);
+        Native.KillTimer(_kioskHwnd, TimerBackSwipe);
+        Native.KillTimer(_kioskHwnd, TimerNavError);
+        _pendingBack.Clear();
         _deferredDestroy.Clear();
         Hosts.TryRemove(_key, out _);
         if (_envPending) Log.Info("webview-widget disposed with environment creation pending");
