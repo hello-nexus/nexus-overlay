@@ -1069,7 +1069,6 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             var current = Native.IsZoomed(Hwnd)
                 ? Native.MonitorFromWindow(Hwnd, Native.MONITOR_DEFAULTTONEAREST)
                 : Native.MonitorFromRect(ref rc, Native.MONITOR_DEFAULTTONEAREST);
-            var (srcDpi, _) = MonitorMetrics(current);
 
             var monitors = Monitors.Enumerate();
             var hidden = new bool[monitors.Count];
@@ -1079,7 +1078,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             {
                 var b = monitors[i].Bounds;
                 foreach (var hb in hiding)
+                {
                     if (hb.Left == b.Left && hb.Top == b.Top && hb.Right == b.Right && hb.Bottom == b.Bottom) hidden[i] = true;
+                }
                 primary[i] = monitors[i].Primary;
                 if (hidden[i] && Native.MonitorFromRect(ref b, Native.MONITOR_DEFAULTTONEAREST) == current) onPanel = true;
             }
@@ -1088,18 +1089,24 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             var t = DashboardPlacement.PickTarget(hidden, primary);
             if (t < 0) return;
             var work = monitors[t].WorkArea;
-            var b2 = monitors[t].Bounds;
-            var (dstDpi, _) = MonitorMetrics(Native.MonitorFromRect(ref b2, Native.MONITOR_DEFAULTTONEAREST));
+            var before = $"{rc.Left},{rc.Top},{rc.Width}x{rc.Height}";
 
-            // Same logical size on the target monitor's scale.
-            var src = srcDpi == 0 ? BaseDpi : (int)srcDpi;
-            var (fx, fy) = FrameInsets(dstDpi);
-            var (x, y, w, h) = DashboardPlacement.Center(
-                (int)((long)rc.Width * dstDpi / src), (int)((long)rc.Height * dstDpi / src), fx, fy,
-                work.Left, work.Top, work.Right, work.Bottom);
-            wp.rcNormalPosition = new Native.RECT { Left = x, Top = y, Right = x + w, Bottom = y + h };
+            // The move across monitors changes the DPI, and WM_DPICHANGED
+            // rescales the window; center only once that has settled.
+            wp.rcNormalPosition = new Native.RECT
+            {
+                Left = work.Left, Top = work.Top, Right = work.Left + rc.Width, Bottom = work.Top + rc.Height,
+            };
             if (!Native.SetWindowPlacement(Hwnd, ref wp)) return;
-            Log.Info($"dashboard moved off panel: {rc.Left},{rc.Top},{rc.Width}x{rc.Height} -> {x},{y},{w}x{h} (monitor index={monitors[t].Index})");
+            if (!Native.IsZoomed(Hwnd) && !Native.IsIconic(Hwnd) && Native.GetWindowRect(Hwnd, out var now))
+            {
+                var (fx, fy) = FrameInsets(Native.GetDpiForWindow(Hwnd));
+                var (x, y, w, h) = DashboardPlacement.Center(
+                    now.Width, now.Height, fx, fy, work.Left, work.Top, work.Right, work.Bottom);
+                Native.SetWindowPos(Hwnd, IntPtr.Zero, x, y, w, h, Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
+            }
+            Native.GetWindowRect(Hwnd, out var after);
+            Log.Info($"dashboard moved off panel: {before} -> {after.Left},{after.Top},{after.Width}x{after.Height} (monitor index={monitors[t].Index})");
         }
         catch (Exception ex) { Log.Error($"dashboard move off panel: {ex.Message}"); }
     }
