@@ -1098,8 +1098,10 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 Left = work.Left, Top = work.Top, Right = work.Left + rc.Width, Bottom = work.Top + rc.Height,
             };
             if (!Native.SetWindowPlacement(Hwnd, ref wp)) return;
-            if (!Native.IsZoomed(Hwnd) && !Native.IsIconic(Hwnd) && Native.GetWindowRect(Hwnd, out var now))
+            // The rescale can land after the first pass, so measure and center twice.
+            for (int pass = 0; pass < 2 && !Native.IsZoomed(Hwnd) && !Native.IsIconic(Hwnd); pass++)
             {
+                if (!Native.GetWindowRect(Hwnd, out var now)) break;
                 var (fx, fy) = FrameInsets(Native.GetDpiForWindow(Hwnd));
                 var (x, y, w, h) = DashboardPlacement.Center(
                     now.Width, now.Height, fx, fy, work.Left, work.Top, work.Right, work.Bottom);
