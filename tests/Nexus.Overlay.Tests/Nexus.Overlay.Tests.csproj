@@ -24,6 +24,7 @@
          Windows-only and the test runner needs to load on Mac too. -->
     <Compile Include="..\..\src\RegionLayout.cs" Link="src\RegionLayout.cs" />
     <Compile Include="..\..\src\PanelGuardGeometry.cs" Link="src\PanelGuardGeometry.cs" />
+    <Compile Include="..\..\src\DashboardPlacement.cs" Link="src\DashboardPlacement.cs" />
     <Compile Include="..\..\src\CursorGuardGeometry.cs" Link="src\CursorGuardGeometry.cs" />
     <Compile Include="..\..\src\CursorGuardMachine.cs" Link="src\CursorGuardMachine.cs" />
     <!-- DisplayIdentity's DllImport compiles anywhere; only ExtractStableId
