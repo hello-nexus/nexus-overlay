@@ -197,6 +197,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         if (!_byId.TryGetValue(msg.CommandId, out var view) || !view.Ready) return;
         if (msg.Command == "reload") Wv2.Wv2_Reload(view.Core);
         else if (msg.Command == "home") NavigateHome(view);
+        else if (msg.Command == "forward") { if (Wv2.Wv2_get_CanGoForward(view.Core)) Wv2.Wv2_GoForward(view.Core); }
         else if (Wv2.Wv2_get_CanGoBack(view.Core)) Wv2.Wv2_GoBack(view.Core);
     }
 
@@ -212,7 +213,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         var live = view.Ready && !view.Destroyed;
         var canGoBack = live && Wv2.Wv2_get_CanGoBack(view.Core);
         var away = live && view.Home.IsAway(Wv2.Wv2_get_Source(view.Core));
-        Post(WebViewWidgetProtocol.BuildState(view.Id, state, code, canGoBack, away));
+        var canGoForward = live && Wv2.Wv2_get_CanGoForward(view.Core);
+        Post(WebViewWidgetProtocol.BuildState(view.Id, state, code, canGoBack, away, canGoForward));
         // A page in error runs no scripts, so only a loaded page can draw the disc.
         if (live && state == "loaded") Wv2.Wv2_PostWebMessageAsJson(view.Core, WebViewWidgetProtocol.BuildNavHint(canGoBack || away));
     }

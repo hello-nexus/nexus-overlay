@@ -204,6 +204,19 @@ internal static unsafe class Wv2
         return WebView2Native.Succeeded(fn(wv2, &v)) && v != 0;
     }
 
+    public static bool Wv2_get_CanGoForward(IntPtr wv2)
+    {
+        int v = 0;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int*, int>)Slot(wv2, WebView2Vtable.Wv2_get_CanGoForward);
+        return WebView2Native.Succeeded(fn(wv2, &v)) && v != 0;
+    }
+
+    public static int Wv2_GoForward(IntPtr wv2)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int>)Slot(wv2, WebView2Vtable.Wv2_GoForward);
+        return fn(wv2);
+    }
+
     public static int Wv2_get_Settings(IntPtr wv2, out IntPtr settings)
     {
         IntPtr s;

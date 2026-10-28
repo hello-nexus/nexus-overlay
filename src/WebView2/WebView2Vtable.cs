@@ -85,7 +85,9 @@ internal static class WebView2Vtable
     public const int Wv2_add_WebMessageReceived = 34;
     public const int Wv2_remove_WebMessageReceived = 35;
     public const int Wv2_get_CanGoBack = 38;
+    public const int Wv2_get_CanGoForward = 39;
     public const int Wv2_GoBack = 40;
+    public const int Wv2_GoForward = 41;
     // 36..43 otherwise skipped (CallDevToolsProtocolMethod, BrowserProcessId, forward, Stop)
     public const int Wv2_add_NewWindowRequested = 44;
     public const int Wv2_remove_NewWindowRequested = 45;

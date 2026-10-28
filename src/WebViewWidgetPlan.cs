@@ -138,7 +138,7 @@ internal static class WebViewWidgetProtocol
         if (!root.TryGetProperty("command", out var cmdEl) || cmdEl.ValueKind != JsonValueKind.String) return null;
         var id = idEl.GetString();
         var cmd = cmdEl.GetString();
-        if (string.IsNullOrEmpty(id) || (cmd != "back" && cmd != "reload" && cmd != "home")) return null;
+        if (string.IsNullOrEmpty(id) || (cmd != "back" && cmd != "forward" && cmd != "reload" && cmd != "home")) return null;
         return new WidgetMessage { Kind = WidgetMessageKind.Command, CommandId = id, Command = cmd };
     }
 
@@ -486,7 +486,7 @@ internal static class WebViewWidgetProtocol
             w.WriteNumber("y", Math.Round(y, 1));
         });
 
-    public static string BuildState(string id, string state, string? code, bool canGoBack, bool away = false)
+    public static string BuildState(string id, string state, string? code, bool canGoBack, bool away = false, bool canGoForward = false)
         => Write(w =>
         {
             w.WriteString("type", "nexus.webview.state");
@@ -495,6 +495,7 @@ internal static class WebViewWidgetProtocol
             if (code is not null) w.WriteString("code", code);
             w.WriteBoolean("canGoBack", canGoBack);
             if (away) w.WriteBoolean("away", true);
+            if (canGoForward) w.WriteBoolean("canGoForward", true);
         });
 
     private static string Write(Action<Utf8JsonWriter> body)

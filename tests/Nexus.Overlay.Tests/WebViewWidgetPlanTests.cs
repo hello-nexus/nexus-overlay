@@ -453,6 +453,9 @@ public class WebViewWidgetPlanTests
     {
         Assert.Equal("{\"type\":\"nexus.webview.state\",\"id\":\"a\",\"state\":\"loaded\",\"canGoBack\":false,\"away\":true}",
             WebViewWidgetProtocol.BuildState("a", "loaded", null, false, true));
+        Assert.Equal("{\"type\":\"nexus.webview.state\",\"id\":\"a\",\"state\":\"loaded\",\"canGoBack\":true,\"canGoForward\":true}",
+            WebViewWidgetProtocol.BuildState("a", "loaded", null, true, false, true));
+        Assert.Equal("forward", WebViewWidgetProtocol.Parse("{\"type\":\"nexus.webview.command\",\"id\":\"a\",\"command\":\"forward\"}").Command);
         Assert.Equal("{\"nexusNav\":true}", WebViewWidgetProtocol.BuildNavHint(true));
         Assert.Equal("home", WebViewWidgetProtocol.Parse("{\"type\":\"nexus.webview.command\",\"id\":\"a\",\"command\":\"home\"}").Command);
     }
