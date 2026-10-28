@@ -1075,8 +1075,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         var work = infos[t].WorkArea;
         var src = srcDpi == 0 ? BaseDpi : (int)srcDpi;
         var (fx, fy) = FrameInsets(dstDpi);
+        var (minW, minH) = MinSize(dstDpi, work);
         var moved = DashboardPlacement.Center(
-            (int)((long)w * dstDpi / src), (int)((long)h * dstDpi / src), fx, fy,
+            Math.Max((int)((long)w * dstDpi / src), minW), Math.Max((int)((long)h * dstDpi / src), minH), fx, fy,
             work.Left, work.Top, work.Right, work.Bottom);
         Log.Info($"dashboard moved off panel: {x},{y},{w}x{h} -> {moved.X},{moved.Y},{moved.W}x{moved.H} (monitor index={infos[t].Index})");
         return moved;
@@ -1100,7 +1101,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             }
             if (RelocateOffPanel(r.Left, r.Top, r.Width, r.Height) is { } m)
             {
-                Native.SetWindowPos(Hwnd, IntPtr.Zero, m.x, m.y, m.w, m.h, Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
+                // Keep the old pixel size: crossing to another DPI makes WM_DPICHANGED
+                // rescale it, so a size already scaled would be scaled twice.
+                Native.SetWindowPos(Hwnd, IntPtr.Zero, m.x, m.y, r.Width, r.Height, Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
             }
             if (maximized) Native.ShowWindow(Hwnd, Native.SW_SHOWMAXIMIZED);
         }
