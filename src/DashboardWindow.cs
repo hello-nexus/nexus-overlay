@@ -1050,14 +1050,15 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "Nexus", "dashboard-bounds.json");
 
-    // A topmost or guarded panel kiosk would hide the dashboard, and the guard
-    // skips this process's own windows, so move it off the panel here.
+    // A panel kiosk covers its monitor and the foreground guard skips this
+    // process's own windows, so a dashboard that would show there moves off it.
+    // Show-time only: never while the window is open or being dragged.
     private void MoveOffPanelKiosk()
     {
         try
         {
-            var hiding = PanelKioskWindow.WindowHidingBounds();
-            if (hiding.Count == 0) return;
+            var panels = PanelKioskWindow.PanelBounds();
+            if (panels.Count == 0) return;
 
             var wp = new Native.WINDOWPLACEMENT();
             wp.length = (uint)sizeof(Native.WINDOWPLACEMENT);
@@ -1071,22 +1072,22 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 : Native.MonitorFromRect(ref rc, Native.MONITOR_DEFAULTTONEAREST);
 
             var monitors = Monitors.Enumerate();
-            var hidden = new bool[monitors.Count];
+            var isPanel = new bool[monitors.Count];
             var primary = new bool[monitors.Count];
             var onPanel = false;
             for (int i = 0; i < monitors.Count; i++)
             {
                 var b = monitors[i].Bounds;
-                foreach (var hb in hiding)
+                foreach (var hb in panels)
                 {
-                    if (hb.Left == b.Left && hb.Top == b.Top && hb.Right == b.Right && hb.Bottom == b.Bottom) hidden[i] = true;
+                    if (hb.Left == b.Left && hb.Top == b.Top && hb.Right == b.Right && hb.Bottom == b.Bottom) isPanel[i] = true;
                 }
                 primary[i] = monitors[i].Primary;
-                if (hidden[i] && Native.MonitorFromRect(ref b, Native.MONITOR_DEFAULTTONEAREST) == current) onPanel = true;
+                if (isPanel[i] && Native.MonitorFromRect(ref b, Native.MONITOR_DEFAULTTONEAREST) == current) onPanel = true;
             }
             if (!onPanel) return;
 
-            var t = DashboardPlacement.PickTarget(hidden, primary);
+            var t = DashboardPlacement.PickTarget(isPanel, primary);
             if (t < 0) return;
             var work = monitors[t].WorkArea;
             var before = $"{rc.Left},{rc.Top},{rc.Width}x{rc.Height}";

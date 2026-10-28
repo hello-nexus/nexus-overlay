@@ -9,15 +9,15 @@ namespace Nexus.Overlay;
 internal static class DashboardPlacement
 {
     /// <summary>
-    /// Index of the monitor to move onto: the primary when it is not a hidden
-    /// monitor, else the first one that is not. -1 when every monitor is hidden.
+    /// Index of the monitor to move onto: the primary when it is not a panel
+    /// monitor, else the first one that is not. -1 when every monitor is a panel.
     /// </summary>
-    public static int PickTarget(bool[] hidden, bool[] primary)
+    public static int PickTarget(bool[] panel, bool[] primary)
     {
-        for (int i = 0; i < hidden.Length; i++)
-            if (primary[i] && !hidden[i]) return i;
-        for (int i = 0; i < hidden.Length; i++)
-            if (!hidden[i]) return i;
+        for (int i = 0; i < panel.Length; i++)
+            if (primary[i] && !panel[i]) return i;
+        for (int i = 0; i < panel.Length; i++)
+            if (!panel[i]) return i;
         return -1;
     }
 

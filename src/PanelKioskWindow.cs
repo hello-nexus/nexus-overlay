@@ -304,18 +304,16 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     }
 
     /// <summary>
-    /// Monitor bounds of every live non-primary kiosk that hides other windows
-    /// there: its foreign-window guard is on, or it is topmost and opaque (a
-    /// see-through kiosk leaves the windows under it visible and usable).
+    /// Monitor bounds of every live kiosk on a non-primary display, regardless
+    /// of its guard, topmost or backdrop settings.
     /// </summary>
-    public static List<Native.RECT> WindowHidingBounds()
+    public static List<Native.RECT> PanelBounds()
     {
         var rects = new List<Native.RECT>();
         foreach (var kv in _instances)
         {
             var k = kv.Value;
-            if (k._disposed || k._isPrimary || k._monitor is not { } m) continue;
-            if (k._monitorGuard is not null || (k._input.Topmost && !k._seeThrough)) rects.Add(m.Bounds);
+            if (!k._disposed && !k._isPrimary && k._monitor is { } m) rects.Add(m.Bounds);
         }
         return rects;
     }
