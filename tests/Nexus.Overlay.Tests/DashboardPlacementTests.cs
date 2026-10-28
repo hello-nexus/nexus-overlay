@@ -5,31 +5,51 @@ namespace Nexus.Overlay.Tests;
 
 public class DashboardPlacementTests
 {
+    private static readonly PlacementMonitor Main = new("MAIN", true, 0, 0, 1920, 1200);
+    private static readonly PlacementMonitor Panel = new("PANEL", false, 1920, 22, 2653, 2582);
+    private static readonly PlacementMonitor Third = new("THIRD", false, -1920, 0, 0, 1080);
+
     [Fact]
-    public void PickTarget_PrimaryNotHidden_ChoosesPrimary()
+    public void PickTarget_WindowOnPanel_ChoosesPrimary()
     {
-        Assert.Equal(1, DashboardPlacement.PickTarget(
-            new[] { true, false, false }, new[] { false, true, false }));
+        Assert.Equal(0, DashboardPlacement.PickTarget(
+            new[] { Main, Panel }, new[] { "PANEL" }, 1700, 200, 2900, 1700));
     }
 
     [Fact]
-    public void PickTarget_PrimaryHidden_ChoosesFirstOtherMonitor()
-    {
-        Assert.Equal(1, DashboardPlacement.PickTarget(
-            new[] { true, false, false }, new[] { true, false, false }));
-    }
-
-    [Fact]
-    public void PickTarget_EveryMonitorHidden_ReturnsNone()
+    public void PickTarget_WindowOnNonPanelMonitor_Stays()
     {
         Assert.Equal(-1, DashboardPlacement.PickTarget(
-            new[] { true, true }, new[] { true, false }));
+            new[] { Main, Panel }, new[] { "PANEL" }, 300, 200, 1600, 1000));
+    }
+
+    [Fact]
+    public void PickTarget_PanelIsPrimary_ChoosesFirstOtherMonitor()
+    {
+        var primaryPanel = new PlacementMonitor("PANEL", true, 0, 0, 733, 2560);
+        var other = new PlacementMonitor("MAIN", false, 733, 0, 2653, 1200);
+        Assert.Equal(1, DashboardPlacement.PickTarget(
+            new[] { primaryPanel, other, Third }, new[] { "PANEL" }, 100, 100, 700, 900));
+    }
+
+    [Fact]
+    public void PickTarget_EveryMonitorIsPanel_Stays()
+    {
+        Assert.Equal(-1, DashboardPlacement.PickTarget(
+            new[] { Main, Panel }, new[] { "MAIN", "PANEL" }, 1700, 200, 2900, 1700));
+    }
+
+    [Fact]
+    public void PickTarget_NoOverlap_UsesNearestMonitor()
+    {
+        Assert.Equal(0, DashboardPlacement.PickTarget(
+            new[] { Main, Panel }, new[] { "PANEL" }, 3000, 3000, 3400, 3400));
     }
 
     [Fact]
     public void Center_FitsWorkArea_CentersVisiblePart()
     {
-        // 1000x700 window with 8px side and 8px bottom frame in a 1920x1040 work area.
+        // The frame is added outside the centered visible part.
         var (x, y, w, h) = DashboardPlacement.Center(1000, 700, 8, 8, 0, 0, 1920, 1040);
         Assert.Equal((1920 - 984) / 2 - 8, x);
         Assert.Equal((1040 - 692) / 2, y);

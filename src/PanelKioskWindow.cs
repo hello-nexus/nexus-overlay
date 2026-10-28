@@ -304,18 +304,18 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     }
 
     /// <summary>
-    /// Monitor bounds of every live kiosk on a non-primary display, regardless
-    /// of its guard, topmost or backdrop settings.
+    /// Device names of the displays under every live kiosk on a non-primary
+    /// display, whatever its guard, topmost or backdrop settings.
     /// </summary>
-    public static List<Native.RECT> PanelBounds()
+    public static HashSet<string> PanelDevices()
     {
-        var rects = new List<Native.RECT>();
+        var devices = new HashSet<string>();
         foreach (var kv in _instances)
         {
             var k = kv.Value;
-            if (!k._disposed && !k._isPrimary && k._monitor is { } m) rects.Add(m.Bounds);
+            if (!k._disposed && !k._isPrimary && k._monitor is { } m) devices.Add(m.DeviceName);
         }
-        return rects;
+        return devices;
     }
 
     private static void SnapshotKioskRects()

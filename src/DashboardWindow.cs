@@ -804,7 +804,6 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
         // Reveal the window only after the controller is attached so
         // there's no flash of pre-WebView2 caption-bar-only frame.
-        MoveOffPanelKiosk();
         Native.ShowWindow(Hwnd, Native.SW_SHOWNORMAL);
         Native.BringWindowToTop(Hwnd);
         Native.SetForegroundWindow(Hwnd);
@@ -1052,64 +1051,58 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
     // A panel kiosk covers its monitor and the foreground guard skips this
     // process's own windows, so a dashboard that would show there moves off it.
-    // Show-time only: never while the window is open or being dragged.
+    // Show-time only: never while the window is open or being dragged. Rects
+    // are screen coordinates. Returns null when the window stays.
+    private static (int x, int y, int w, int h)? RelocateOffPanel(int x, int y, int w, int h)
+    {
+        var panels = PanelKioskWindow.PanelDevices();
+        if (panels.Count == 0) return null;
+
+        var infos = Monitors.Enumerate();
+        var monitors = new PlacementMonitor[infos.Count];
+        for (int i = 0; i < monitors.Length; i++)
+        {
+            var b = infos[i].Bounds;
+            monitors[i] = new PlacementMonitor(infos[i].DeviceName, infos[i].Primary, b.Left, b.Top, b.Right, b.Bottom);
+        }
+        var t = DashboardPlacement.PickTarget(monitors, panels, x, y, x + w, y + h);
+        if (t < 0) return null;
+
+        var from = new Native.RECT { Left = x, Top = y, Right = x + w, Bottom = y + h };
+        var (srcDpi, _) = MonitorMetrics(Native.MonitorFromRect(ref from, Native.MONITOR_DEFAULTTONEAREST));
+        var tb = infos[t].Bounds;
+        var (dstDpi, _) = MonitorMetrics(Native.MonitorFromRect(ref tb, Native.MONITOR_DEFAULTTONEAREST));
+        var work = infos[t].WorkArea;
+        var src = srcDpi == 0 ? BaseDpi : (int)srcDpi;
+        var (fx, fy) = FrameInsets(dstDpi);
+        var moved = DashboardPlacement.Center(
+            (int)((long)w * dstDpi / src), (int)((long)h * dstDpi / src), fx, fy,
+            work.Left, work.Top, work.Right, work.Bottom);
+        Log.Info($"dashboard moved off panel: {x},{y},{w}x{h} -> {moved.X},{moved.Y},{moved.W}x{moved.H} (monitor index={infos[t].Index})");
+        return moved;
+    }
+
     private void MoveOffPanelKiosk()
     {
         try
         {
-            var panels = PanelKioskWindow.PanelBounds();
-            if (panels.Count == 0) return;
-
-            var wp = new Native.WINDOWPLACEMENT();
-            wp.length = (uint)sizeof(Native.WINDOWPLACEMENT);
-            if (!Native.GetWindowPlacement(Hwnd, ref wp)) return;
-
-            // A maximized window's monitor is where it is; otherwise the
-            // restore rect decides (a minimized window has no useful position).
-            var rc = wp.rcNormalPosition;
-            var current = Native.IsZoomed(Hwnd)
-                ? Native.MonitorFromWindow(Hwnd, Native.MONITOR_DEFAULTTONEAREST)
-                : Native.MonitorFromRect(ref rc, Native.MONITOR_DEFAULTTONEAREST);
-
-            var monitors = Monitors.Enumerate();
-            var isPanel = new bool[monitors.Count];
-            var primary = new bool[monitors.Count];
-            var onPanel = false;
-            for (int i = 0; i < monitors.Count; i++)
+            if (PanelKioskWindow.PanelDevices().Count == 0) return;
+            if (Native.IsIconic(Hwnd)) Native.ShowWindow(Hwnd, Native.SW_RESTORE);
+            var maximized = Native.IsZoomed(Hwnd);
+            if (!Native.GetWindowRect(Hwnd, out var r)) return;
+            // A maximized window fills its monitor, so that rect decides whether
+            // it is on the panel; its restore rect is what gets moved.
+            if (maximized)
             {
-                var b = monitors[i].Bounds;
-                foreach (var hb in panels)
-                {
-                    if (hb.Left == b.Left && hb.Top == b.Top && hb.Right == b.Right && hb.Bottom == b.Bottom) isPanel[i] = true;
-                }
-                primary[i] = monitors[i].Primary;
-                if (isPanel[i] && Native.MonitorFromRect(ref b, Native.MONITOR_DEFAULTTONEAREST) == current) onPanel = true;
+                if (RelocateOffPanel(r.Left, r.Top, r.Width, r.Height) is null) return;
+                Native.ShowWindow(Hwnd, Native.SW_RESTORE);
+                if (!Native.GetWindowRect(Hwnd, out r)) return;
             }
-            if (!onPanel) return;
-
-            var t = DashboardPlacement.PickTarget(isPanel, primary);
-            if (t < 0) return;
-            var work = monitors[t].WorkArea;
-            var before = $"{rc.Left},{rc.Top},{rc.Width}x{rc.Height}";
-
-            // The move across monitors changes the DPI, and WM_DPICHANGED
-            // rescales the window; center only once that has settled.
-            wp.rcNormalPosition = new Native.RECT
+            if (RelocateOffPanel(r.Left, r.Top, r.Width, r.Height) is { } m)
             {
-                Left = work.Left, Top = work.Top, Right = work.Left + rc.Width, Bottom = work.Top + rc.Height,
-            };
-            if (!Native.SetWindowPlacement(Hwnd, ref wp)) return;
-            // The rescale can land after the first pass, so measure and center twice.
-            for (int pass = 0; pass < 2 && !Native.IsZoomed(Hwnd) && !Native.IsIconic(Hwnd); pass++)
-            {
-                if (!Native.GetWindowRect(Hwnd, out var now)) break;
-                var (fx, fy) = FrameInsets(Native.GetDpiForWindow(Hwnd));
-                var (x, y, w, h) = DashboardPlacement.Center(
-                    now.Width, now.Height, fx, fy, work.Left, work.Top, work.Right, work.Bottom);
-                Native.SetWindowPos(Hwnd, IntPtr.Zero, x, y, w, h, Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
+                Native.SetWindowPos(Hwnd, IntPtr.Zero, m.x, m.y, m.w, m.h, Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
             }
-            Native.GetWindowRect(Hwnd, out var after);
-            Log.Info($"dashboard moved off panel: {before} -> {after.Left},{after.Top},{after.Width}x{after.Height} (monitor index={monitors[t].Index})");
+            if (maximized) Native.ShowWindow(Hwnd, Native.SW_SHOWMAXIMIZED);
         }
         catch (Exception ex) { Log.Error($"dashboard move off panel: {ex.Message}"); }
     }
@@ -1117,7 +1110,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     private (int x, int y, int w, int h) ResolveInitialBounds()
     {
         var saved = LoadSavedBounds();
-        if (saved is not null) return saved.Value;
+        if (saved is { } s) return RelocateOffPanel(s.x, s.y, s.w, s.h) ?? s;
 
         // Default: centered in the primary monitor's work area, capped to it.
         // A zero rect sits at (0,0), the primary monitor's origin.
@@ -1126,7 +1119,8 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         var (fx, fy) = FrameInsets(dpi);
         var w = Math.Min(ScaleForDpi(DefaultClientWidth, dpi), work.Width);
         var h = Math.Min(ScaleForDpi(DefaultClientHeight, dpi), work.Height);
-        return (work.Left + (work.Width - w) / 2 - fx, work.Top + (work.Height - h) / 2, w + 2 * fx, h + fy);
+        var centered = (work.Left + (work.Width - w) / 2 - fx, work.Top + (work.Height - h) / 2, w + 2 * fx, h + fy);
+        return RelocateOffPanel(centered.Item1, centered.Item2, centered.Item3, centered.Item4) ?? centered;
     }
 
     // Rounds up: a custom scale that rounds down leaves the client a
