@@ -1078,8 +1078,8 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             for (int i = 0; i < monitors.Count; i++)
             {
                 var b = monitors[i].Bounds;
-                foreach (var h in hiding)
-                    if (h.Left == b.Left && h.Top == b.Top && h.Right == b.Right && h.Bottom == b.Bottom) hidden[i] = true;
+                foreach (var hb in hiding)
+                    if (hb.Left == b.Left && hb.Top == b.Top && hb.Right == b.Right && hb.Bottom == b.Bottom) hidden[i] = true;
                 primary[i] = monitors[i].Primary;
                 if (hidden[i] && Native.MonitorFromRect(ref b, Native.MONITOR_DEFAULTTONEAREST) == current) onPanel = true;
             }
