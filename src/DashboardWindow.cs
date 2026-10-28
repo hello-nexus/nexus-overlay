@@ -96,6 +96,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     // immersive/Mica theme so it follows the app theme, not the OS theme.
     private bool _appDark;
 
+    // Rect for the next WM_DPICHANGED, set only around a move off the panel.
+    private (int x, int y, int w, int h)? _dpiOverride;
+
     public DashboardWindow(string navigationUrl)
     {
         _instanceId = Interlocked.Increment(ref _nextInstanceId);
@@ -453,6 +456,10 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 if (lParam != IntPtr.Zero)
                 {
                     var sug = *(Native.RECT*)lParam;
+                    if (_dpiOverride is { } o)
+                    {
+                        sug = new Native.RECT { Left = o.x, Top = o.y, Right = o.x + o.w, Bottom = o.y + o.h };
+                    }
                     Native.SetWindowPos(hwnd, IntPtr.Zero,
                         sug.Left, sug.Top, sug.Width, sug.Height,
                         Native.SWP_NOACTIVATE | Native.SWP_NOZORDER);
@@ -1101,9 +1108,11 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             }
             if (RelocateOffPanel(r.Left, r.Top, r.Width, r.Height) is { } m)
             {
-                // Keep the old pixel size: crossing to another DPI makes WM_DPICHANGED
-                // rescale it, so a size already scaled would be scaled twice.
-                Native.SetWindowPos(Hwnd, IntPtr.Zero, m.x, m.y, r.Width, r.Height, Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
+                // Crossing to another DPI runs WM_DPICHANGED inside the call; it
+                // applies this rect instead of the unclamped one Windows suggests.
+                _dpiOverride = m;
+                Native.SetWindowPos(Hwnd, IntPtr.Zero, m.x, m.y, m.w, m.h, Native.SWP_NOZORDER | Native.SWP_NOACTIVATE);
+                _dpiOverride = null;
             }
             if (maximized) Native.ShowWindow(Hwnd, Native.SW_SHOWMAXIMIZED);
         }
