@@ -303,6 +303,22 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         return false;
     }
 
+    /// <summary>
+    /// Monitor bounds of every live non-primary kiosk that hides other windows
+    /// there: its foreign-window guard is on, or it sits in the topmost band.
+    /// </summary>
+    public static List<Native.RECT> WindowHidingBounds()
+    {
+        var rects = new List<Native.RECT>();
+        foreach (var kv in _instances)
+        {
+            var k = kv.Value;
+            if (k._disposed || k._isPrimary || k._monitor is not { } m) continue;
+            if (k._monitorGuard is not null || k._input.Topmost) rects.Add(m.Bounds);
+        }
+        return rects;
+    }
+
     private static void SnapshotKioskRects()
     {
         var rects = new List<Native.RECT>();
