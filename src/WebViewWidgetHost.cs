@@ -32,6 +32,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private const uint DefaultBgOpaqueWhite = 0xFFFFFFFFu;
     private const int MaxCursorShows = 64;
     private const long CursorRestoreIntervalMs = 250;
+    private const long BackSwipeGapMs = 400;
 
     private static readonly ConcurrentDictionary<long, WebViewWidgetHost> Hosts = new();
     private static readonly ConcurrentDictionary<long, NativeView> Views = new();
@@ -44,6 +45,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         public required WebViewWidgetHost Host;
         public required WidgetViewSpec Spec;
         public readonly LongPressGate LongPress = new();
+        public readonly LongPressGate BackSwipe = new(BackSwipeGapMs);
         public IntPtr Container;
         public IntPtr Controller;
         public IntPtr Controller2;
@@ -578,7 +580,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         Wv2.Settings_put_IsStatusBarEnabled(settings, false);
         Wv2.Settings_put_IsZoomControlEnabled(settings, false);
         Wv2.Settings_put_AreDefaultScriptDialogsEnabled(settings, false);
-        // Carries only the edit-focus and long-press reports; OnWebMessageReceivedStatic accepts nothing else.
+        // Carries only the edit-focus, long-press and back-swipe reports; OnWebMessageReceivedStatic accepts nothing else.
         Wv2.Settings_put_IsWebMessageEnabled(settings, true);
         Wv2.Settings_put_AreHostObjectsAllowed(settings, false);
         var settings3 = Wv2.QueryInterface(settings, WebView2Native.IID_ICoreWebView2Settings3);
@@ -586,6 +588,13 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         {
             Wv2.Settings3_put_AreBrowserAcceleratorKeysEnabled(settings3, false);
             Wv2.Release(settings3);
+        }
+        // The browser's overscroll navigation showed its arrow without going back here; BackSwipeScript replaces it.
+        var settings6 = Wv2.QueryInterface(settings, WebView2Native.IID_ICoreWebView2Settings6);
+        if (settings6 != IntPtr.Zero)
+        {
+            Wv2.Settings6_put_IsSwipeNavigationEnabled(settings6, false);
+            Wv2.Release(settings6);
         }
         var settings4 = Wv2.QueryInterface(settings, WebView2Native.IID_ICoreWebView2Settings4);
         if (settings4 != IntPtr.Zero)
@@ -624,6 +633,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         Wv2.Wv2_add_WebMessageReceived(v.Core, v.WebMessageHandler, out v.WebMessageToken);
         var scriptHr = Wv2.Wv2_AddScriptToExecuteOnDocumentCreated(v.Core, WebViewWidgetProtocol.EditFocusScript);
         if (WebView2Native.Failed(scriptHr)) Log.Warn($"webview-widget edit-focus script hr=0x{scriptHr:X8}");
+        var backHr = Wv2.Wv2_AddScriptToExecuteOnDocumentCreated(v.Core, WebViewWidgetProtocol.BackSwipeScript);
+        if (WebView2Native.Failed(backHr)) Log.Warn($"webview-widget back-swipe script hr=0x{backHr:X8}");
         var pressHr = Wv2.Wv2_AddScriptToExecuteOnDocumentCreated(v.Core, WebViewWidgetProtocol.LongPressScript);
         if (WebView2Native.Failed(pressHr)) Log.Warn($"webview-widget long-press script hr=0x{pressHr:X8}");
 
@@ -765,6 +776,14 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         ReportMenu(view, (short)((long)lParam & 0xFFFF), (short)(((long)lParam >> 16) & 0xFFFF));
     }
 
+    // The page reported a rightward swipe: step back in its history, doing nothing when there is none.
+    private void OnBackSwipe(NativeView view)
+    {
+        if (view.Destroyed || _disposed || !view.Ready) return;
+        if (!view.BackSwipe.Accept(IsLive(view), view.Spec.Interactive, Environment.TickCount64)) return;
+        if (Wv2.Wv2_get_CanGoBack(view.Core)) Wv2.Wv2_GoBack(view.Core);
+    }
+
     // A touch held in place inside the page opens the same menu as a right-click.
     private void OnLongPress(NativeView view, double fx, double fy)
     {
@@ -845,6 +864,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             if (args == IntPtr.Zero || !Views.TryGetValue(WebView2Callbacks.GetUserData(self), out var view)) return WebView2Native.S_OK;
             var json = Wv2.WebMsgArgs_GetJson(args);
             if (WebViewWidgetProtocol.ParseEditFocus(json) is { } focused) view.Host.OnEditFocus(view, focused);
+            else if (WebViewWidgetProtocol.IsBackSwipe(json)) view.Host.OnBackSwipe(view);
             else if (WebViewWidgetProtocol.ParseLongPress(json) is { } press) view.Host.OnLongPress(view, press.X, press.Y);
         }
         catch (Exception ex) { Log.Error($"webview-widget WebMessage: {ex.Message}"); }

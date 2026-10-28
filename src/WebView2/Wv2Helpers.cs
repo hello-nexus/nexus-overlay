@@ -379,6 +379,9 @@ internal static unsafe class Wv2
     public static int Settings4_put_IsGeneralAutofillEnabled(IntPtr settings4, bool v) =>
         SettingsPutBool(settings4, WebView2Vtable.Settings4_put_IsGeneralAutofillEnabled, v);
 
+    public static int Settings6_put_IsSwipeNavigationEnabled(IntPtr settings6, bool v) =>
+        SettingsPutBool(settings6, WebView2Vtable.Settings6_put_IsSwipeNavigationEnabled, v);
+
     // ===================== ICoreWebView2Settings9 =====================
 
     public static int Settings9_put_IsNonClientRegionSupportEnabled(IntPtr settings9, bool v) =>

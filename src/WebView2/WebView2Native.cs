@@ -56,6 +56,9 @@ internal static unsafe class WebView2Native
     public static readonly Guid IID_ICoreWebView2Settings4 =
         new("cb56846c-4168-4d53-b04f-03b6d6796ff2");
 
+    public static readonly Guid IID_ICoreWebView2Settings6 =
+        new("11cb3acd-9bc8-43b8-83bf-f40753714f87");
+
     // ICoreWebView2Settings9 (extends Settings8). Adds
     // IsNonClientRegionSupportEnabled: CSS `app-region: drag` regions in the
     // page forward mouse events to the host's WM_NCHITTEST, enabling a custom

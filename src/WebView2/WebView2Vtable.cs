@@ -126,6 +126,10 @@ internal static class WebView2Vtable
     public const int Settings4_get_IsGeneralAutofillEnabled = 27;
     public const int Settings4_put_IsGeneralAutofillEnabled = 28;
 
+    // ICoreWebView2Settings6 (extends Settings5). QI separately for IID_ICoreWebView2Settings6.
+    public const int Settings6_get_IsSwipeNavigationEnabled = 31;
+    public const int Settings6_put_IsSwipeNavigationEnabled = 32;
+
     // ICoreWebView2Settings9 (extends Settings8). Slots are 0-based from the
     // first IUnknown method; Settings adds 2 methods per property bumped
     // through 8 prior versions. IsNonClientRegionSupportEnabled is added at

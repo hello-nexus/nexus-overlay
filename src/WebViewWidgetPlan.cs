@@ -294,6 +294,68 @@ internal static class WebViewWidgetProtocol
         })();
         """;
 
+    /// <summary>
+    /// Reports a rightward touch swipe as <c>{"nexusBack":true}</c>. The browser's own swipe navigation is
+    /// off, so this is the only history-back gesture. Skipped when the page consumed the move, the touch began
+    /// in a horizontal scroller or a range input, or a second finger joined. Top frame only.
+    /// </summary>
+    public const string BackSwipeScript = """
+        (() => {
+          if (window !== top || !(window.chrome && chrome.webview)) return;
+          const ENGAGE_PX = 16, DOMINANCE = 1.3, COMMIT_FRACTION = 0.25, COMMIT_PX_PER_MS = 0.4;
+          let g = null;
+          const scrolls = (el) => {
+            for (; el && el.nodeType === 1; el = el.parentElement) {
+              const o = getComputedStyle(el).overflowX;
+              if ((o === 'auto' || o === 'scroll') && el.scrollWidth > el.clientWidth) return true;
+            }
+            return false;
+          };
+          addEventListener('touchstart', (e) => {
+            const t = e.touches[0];
+            const blocked = e.touches.length !== 1 || !t || scrolls(e.target)
+              || !!(e.target.closest && e.target.closest('input[type=range]'));
+            g = blocked ? null : { x: t.clientX, y: t.clientY, lx: t.clientX, lt: e.timeStamp, v: 0 };
+          }, { capture: true, passive: true });
+          addEventListener('touchmove', (e) => {
+            if (!g) return;
+            if (e.defaultPrevented || e.touches.length !== 1) { g = null; return; }
+            const t = e.touches[0], dt = e.timeStamp - g.lt;
+            if (dt > 0) g.v = (t.clientX - g.lx) / dt;
+            g.lx = t.clientX; g.lt = e.timeStamp;
+          }, { passive: true });
+          addEventListener('touchend', (e) => {
+            const s = g; g = null;
+            if (!s || e.defaultPrevented) return;
+            const t = e.changedTouches[0];
+            if (!t) return;
+            const dx = t.clientX - s.x, dy = t.clientY - s.y;
+            if (dx <= ENGAGE_PX || dx <= Math.abs(dy) * DOMINANCE) return;
+            if (dx > innerWidth * COMMIT_FRACTION || s.v > COMMIT_PX_PER_MS) chrome.webview.postMessage({ nexusBack: true });
+          }, { capture: true, passive: true });
+          addEventListener('touchcancel', () => { g = null; }, true);
+        })();
+        """;
+
+    /// <summary>True only for exactly <c>{"nexusBack":true}</c>.</summary>
+    public static bool IsBackSwipe(string? json)
+    {
+        if (string.IsNullOrEmpty(json) || json.Length > 64) return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return false;
+            var seen = 0;
+            foreach (var prop in root.EnumerateObject())
+            {
+                if (seen++ > 0 || prop.Name != "nexusBack" || prop.Value.ValueKind != JsonValueKind.True) return false;
+            }
+            return seen == 1;
+        }
+        catch (JsonException) { return false; }
+    }
+
     /// <summary>Accepts only <c>{"nexusLongPress":{"x":0..1,"y":0..1}}</c> from a hosted view; anything else is null.</summary>
     public static (double X, double Y)? ParseLongPress(string? json)
     {
@@ -513,13 +575,16 @@ internal sealed class WidgetRegistry
 internal sealed class LongPressGate
 {
     public const long MinGapMs = 1000;
+    private readonly long _minGapMs;
     private long _last = long.MinValue;
+
+    public LongPressGate(long minGapMs = MinGapMs) => _minGapMs = minGapMs;
 
     /// <summary>Only a live, interactive view may report; a refused report does not start the gap.</summary>
     public bool Accept(bool live, bool interactive, long nowMs)
     {
         if (!live || !interactive) return false;
-        if (_last != long.MinValue && nowMs - _last < MinGapMs) return false;
+        if (_last != long.MinValue && nowMs - _last < _minGapMs) return false;
         _last = nowMs;
         return true;
     }

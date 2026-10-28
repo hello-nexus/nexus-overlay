@@ -416,6 +416,26 @@ public class WebViewWidgetPlanTests
     }
 
     [Fact]
+    public void IsBackSwipe_AcceptsOnlyTheExactMessage()
+    {
+        Assert.True(WebViewWidgetProtocol.IsBackSwipe("{\"nexusBack\":true}"));
+        Assert.False(WebViewWidgetProtocol.IsBackSwipe("{\"nexusBack\":false}"));
+        Assert.False(WebViewWidgetProtocol.IsBackSwipe("{\"nexusBack\":true,\"x\":1}"));
+        Assert.False(WebViewWidgetProtocol.IsBackSwipe("{\"nexusLongPress\":{\"x\":0.5,\"y\":0.5}}"));
+        Assert.False(WebViewWidgetProtocol.IsBackSwipe("true"));
+        Assert.False(WebViewWidgetProtocol.IsBackSwipe(null));
+    }
+
+    [Fact]
+    public void LongPressGate_HonorsAGivenGap()
+    {
+        var gate = new LongPressGate(300);
+        Assert.True(gate.Accept(true, true, 0));
+        Assert.False(gate.Accept(true, true, 299));
+        Assert.True(gate.Accept(true, true, 300));
+    }
+
+    [Fact]
     public void ParseLongPress_AcceptsFractions()
         => Assert.Equal((0.25, 1.0), WebViewWidgetProtocol.ParseLongPress("{\"nexusLongPress\":{\"x\":0.25,\"y\":1}}"));
 
