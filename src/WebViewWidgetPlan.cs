@@ -189,14 +189,7 @@ internal static class WebViewWidgetProtocol
             && s.Port == p.Port;
     }
 
-    /// <summary>
-    /// Maps a CSS rect to kiosk client pixels with an independent scale per
-    /// axis (native bounds over page viewport). A rect partly outside the
-    /// bounds keeps its size and position, so a tile sliding with a page swipe
-    /// moves instead of shrinking; the container is a child window, which the
-    /// kiosk client area clips. A rect wholly outside the bounds, or an
-    /// unusable viewport or rect, yields an empty rect.
-    /// </summary>
+    /// <summary>Maps a CSS rect to kiosk client pixels per axis, unclamped so a sliding tile keeps its size; empty when wholly outside or unusable.</summary>
     public static WidgetPixelRect MapRect(WidgetRect rect, double viewportW, double viewportH, int boundsW, int boundsH)
     {
         if (!(viewportW > 0) || !(viewportH > 0) || boundsW <= 0 || boundsH <= 0) return default;
@@ -205,16 +198,19 @@ internal static class WebViewWidgetProtocol
 
         var sx = boundsW / viewportW;
         var sy = boundsH / viewportH;
-        // Edges stay within one bounds-length past either side, which keeps any tile that overlaps the bounds whole and the casts in int range.
+        // Size is rounded once, apart from position, so a moving tile never changes size by a rounding pixel.
+        var width = Span(rect.W * sx, boundsW);
+        var height = Span(rect.H * sy, boundsH);
         var left = Edge(rect.X * sx, boundsW);
         var top = Edge(rect.Y * sy, boundsH);
-        var right = Edge((rect.X + rect.W) * sx, boundsW);
-        var bottom = Edge((rect.Y + rect.H) * sy, boundsH);
-        if (right <= 0 || bottom <= 0 || left >= boundsW || top >= boundsH || right <= left || bottom <= top) return default;
-        return new WidgetPixelRect(left, top, right - left, bottom - top);
+        if (width <= 0 || height <= 0 || left + width <= 0 || top + height <= 0 || left >= boundsW || top >= boundsH) return default;
+        return new WidgetPixelRect(left, top, width, height);
     }
 
-    private static int Edge(double v, int bound) => (int)Math.Round(Math.Clamp(v, -bound, 2.0 * bound));
+    // Caps keep the int casts in range; only a tile several screens wide is affected.
+    private static int Edge(double v, int bound) => (int)Math.Round(Math.Clamp(v, -4.0 * bound, 4.0 * bound));
+
+    private static int Span(double v, int bound) => (int)Math.Round(Math.Min(v, 8.0 * bound));
 
     /// <summary>A kiosk client pixel back to page CSS px, the inverse of <see cref="MapRect"/>'s scale; null without a size.</summary>
     public static (double X, double Y)? UnmapPoint(int x, int y, double viewportW, double viewportH, int boundsW, int boundsH)

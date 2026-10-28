@@ -746,11 +746,12 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         }
 
         var rectChanged = !view.AppliedShown || view.AppliedRect != px;
+        var sizeChanged = !view.AppliedShown || view.AppliedRect.Width != px.Width || view.AppliedRect.Height != px.Height;
         if (rectChanged)
         {
             var flags = Native.SWP_NOACTIVATE | Native.SWP_SHOWWINDOW | (view.AppliedShown ? Native.SWP_NOZORDER : 0u);
             Native.SetWindowPos(view.Container, Native.HWND_TOP, px.Left, px.Top, px.Width, px.Height, flags);
-            if (!view.AppliedShown || view.AppliedRect.Width != px.Width || view.AppliedRect.Height != px.Height)
+            if (sizeChanged)
             {
                 Wv2.Ctrl_put_Bounds(view.Controller, new Native.RECT { Left = 0, Top = 0, Right = px.Width, Bottom = px.Height });
             }
@@ -758,8 +759,9 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             Wv2.Ctrl_NotifyParentWindowPositionChanged(view.Controller);
         }
 
+        // The region is window-relative, so a move alone keeps it.
         var (rx, ry) = WebViewWidgetProtocol.MapRadius(view.Spec.Radius, _viewportW, _viewportH, client.Width, client.Height);
-        if (rectChanged || rx != view.AppliedRadiusX || ry != view.AppliedRadiusY)
+        if (sizeChanged || rx != view.AppliedRadiusX || ry != view.AppliedRadiusY)
         {
             ApplyRegion(view, px, rx, ry);
             view.AppliedRadiusX = rx;

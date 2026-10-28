@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Nexus.Overlay;
 using Xunit;
 
@@ -127,7 +128,20 @@ public class WebViewWidgetPlanTests
     public void MapRect_HugeRect_StaysInIntRange()
     {
         var px = WebViewWidgetProtocol.MapRect(new WidgetRect(-1e12, -1e12, 2e12, 2e12), 1000, 500, 1000, 500);
-        Assert.Equal(new WidgetPixelRect(-1000, -500, 3000, 1500), px);
+        Assert.Equal(new WidgetPixelRect(-4000, -2000, 8000, 4000), px);
+    }
+
+    [Fact]
+    public void MapRect_ScaledFractionalMove_KeepsSize()
+    {
+        var sizes = new HashSet<(int, int)>();
+        for (var x = -300.0; x < 900; x += 0.37)
+        {
+            var px = WebViewWidgetProtocol.MapRect(new WidgetRect(x, 10.25, 333.3, 222.2), 1280, 400, 1920, 480);
+            Assert.False(px.IsEmpty);
+            sizes.Add((px.Width, px.Height));
+        }
+        Assert.Equal((500, 267), Assert.Single(sizes));
     }
 
     [Theory]
