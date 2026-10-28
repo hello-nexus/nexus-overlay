@@ -26,7 +26,7 @@ public class WebViewWidgetPlanTests
     [InlineData("{\"type\":5}")]
     [InlineData("{\"type\":\"other\"}")]
     [InlineData("{\"type\":\"nexus.webview.sync\"}")]
-    [InlineData("{\"type\":\"nexus.webview.command\",\"id\":\"a\",\"command\":\"forward\"}")]
+    [InlineData("{\"type\":\"nexus.webview.command\",\"id\":\"a\",\"command\":\"sideways\"}")]
     public void Parse_Malformed_IsUnknown(string? json)
         => Assert.Equal(WidgetMessageKind.Unknown, WebViewWidgetProtocol.Parse(json).Kind);
 
