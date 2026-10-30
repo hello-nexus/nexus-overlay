@@ -34,6 +34,7 @@ internal sealed unsafe class SharedFrameWriter : IDisposable
     }
 
     public const int ErrorMagic = -1;
+    private const int ErrorInvalidParameter = 87;
 
     /// <summary>
     /// Null when the section or its event cannot be opened; <paramref name="error"/> then holds the Win32
@@ -45,7 +46,7 @@ internal sealed unsafe class SharedFrameWriter : IDisposable
         error = 0;
         if (string.IsNullOrEmpty(sectionName) || frameBytes <= 0)
         {
-            error = 87;
+            error = ErrorInvalidParameter;
             return null;
         }
         var mapping = OpenFileMappingW(FileMapWrite, 0, sectionName);

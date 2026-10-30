@@ -17,7 +17,7 @@ public class WgcVtableTests
     [Fact]
     public void Capture_interval_is_below_the_shortest_display_tick_the_stream_rates_use()
     {
-        // 100 ns ticks; a 240 Hz grid ticks every ~41667.
+        // 100 ns ticks; the bound is the shortest display tick the stream rates use.
         Assert.InRange(WgcVtable.CaptureMinUpdateIntervalTicks, 1, 41_000);
     }
 }

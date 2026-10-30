@@ -57,9 +57,8 @@ internal static class WgcVtable
     public const int Session2_get_IsCursorCaptureEnabled = 6;
     public const int Session2_put_IsCursorCaptureEnabled = 7;
 
-    // IGraphicsCaptureSession5 (Windows 11 24H2+, Windows.Graphics.Capture): MinUpdateInterval is a TimeSpan,
-    // 100 ns ticks. The compositor default is 16 ms, which drops a page frame that lands 3 ticks of a 144 Hz grid
-    // after the last one (a 44 fps page delivers 41); 1 ms leaves every presented frame to the pump's own budget.
+    // IGraphicsCaptureSession5: MinUpdateInterval is a TimeSpan in 100 ns ticks. The compositor default interval
+    // decimates frames that land off its grid, so the pump sets it low and does its own pacing.
     public static readonly Guid IID_IGraphicsCaptureSession5 =
         new("67C0EA62-1F85-5061-925A-239BE0AC09CB");
     public const int Session5_get_MinUpdateInterval = 6;
