@@ -42,6 +42,7 @@
     <Compile Include="..\..\src\WebViewErrorPage.cs" Link="src\WebViewErrorPage.cs" />
     <Compile Include="..\..\src\WebViewWidgetPlan.cs" Link="src\WebViewWidgetPlan.cs" />
     <Compile Include="..\..\src\Media\AnnexB.cs" Link="src\Media\AnnexB.cs" />
+    <Compile Include="..\..\src\Media\SharedFrameLiveness.cs" Link="src\Media\SharedFrameLiveness.cs" />
     <Compile Include="..\..\src\Media\EncoderSelect.cs" Link="src\Media\EncoderSelect.cs" />
     <Compile Include="..\..\src\Media\FrameFraming.cs" Link="src\Media\FrameFraming.cs" />
     <Compile Include="..\..\src\Capture\StreamHostPlan.cs" Link="src\Capture\StreamHostPlan.cs" />

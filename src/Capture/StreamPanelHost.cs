@@ -71,7 +71,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private WgcCapture? _capture;
     private IFrameSink? _encoder;
     private IngestClient? _ingest;
-    private SharedFrameWriter? _shared;
+    private SharedFrameLink? _shared;
     private Thread? _pumpThread;
     private volatile bool _pumpStop;
     private long _framesPumped;
@@ -316,7 +316,8 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         var bitrateKbps = Math.Clamp(_assignment.BitrateKbps, 250, 50_000);
         _d3d = D3DDevice.Create();
         _capture = CreateCapture(_d3d);
-        var ingest = new IngestClient(_serviceOrigin, SessionId, _pairedToken);
+        var writerNonce = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8)).ToLowerInvariant();
+        var ingest = new IngestClient(_serviceOrigin, SessionId, _pairedToken, writerNonce);
         ingest.Faulted = PostFault;
         _ingest = ingest;
         // Raw frames go to glass that takes a framebuffer (the Kraken LCD); everything
@@ -326,7 +327,10 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         if (raw)
         {
             RawFrameSink? sink = null;
-            _shared = SharedFrameWriter.TryOpen(_assignment.FrameSection ?? "", _assignment.FrameSectionBytes);
+            if (!string.IsNullOrEmpty(_assignment.FrameSection) && _assignment.FrameSectionBytes > 0)
+            {
+                _shared = new SharedFrameLink($"{_assignment.FrameSection}-{writerNonce}", _assignment.FrameSectionBytes, PostFault, $"stream-host {SessionId}");
+            }
             Log.Info($"stream-host {SessionId}: frame handoff={(_shared is null ? "http" : "shared section")}");
             sink = new RawFrameSink(_d3d, _pixelWidth, _pixelHeight,
                 (frame, key) => _ingest?.Send(frame, key, sink!.Return), SessionId, _shared);

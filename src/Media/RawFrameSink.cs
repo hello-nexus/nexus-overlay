@@ -32,13 +32,13 @@ internal sealed unsafe class RawFrameSink : IFrameSink
     private const int MaxSpareFrames = 4;
     private readonly ConcurrentQueue<byte[]> _spare = new();
 
-    private readonly SharedFrameWriter? _shared;
+    private readonly SharedFrameLink? _shared;
     private IntPtr _staging;
     private bool _disposed;
 
     /// <param name="shared">When set, a mapped frame is written straight into the shared section and
     /// <paramref name="onFrame"/> only sees frames the section could not take.</param>
-    public RawFrameSink(D3DDevice device, int width, int height, Action<byte[], bool> onFrame, string logTag, SharedFrameWriter? shared = null)
+    public RawFrameSink(D3DDevice device, int width, int height, Action<byte[], bool> onFrame, string logTag, SharedFrameLink? shared = null)
     {
         _shared = shared;
         _width = width;

@@ -33,7 +33,7 @@ internal sealed class IngestClient : IDisposable
     /// any reason. The host tears down and lets reconcile respawn.</summary>
     public Action? Faulted;
 
-    public IngestClient(string serviceOrigin, string sessionId, string token)
+    public IngestClient(string serviceOrigin, string sessionId, string token, string? writerNonce = null)
     {
         _sessionId = sessionId;
         // Wait mode makes TryWrite return false when full instead of silently
@@ -51,6 +51,8 @@ internal sealed class IngestClient : IDisposable
             Content = new FrameStreamContent(this),
         };
         request.Headers.TryAddWithoutValidation("Authorization", $"Bearer {token}");
+        if (!string.IsNullOrEmpty(writerNonce))
+            request.Headers.TryAddWithoutValidation("X-Nexus-Frame-Writer", writerNonce);
 
         _lastSendTicks = Environment.TickCount64;
         _ = RunAsync(request);
@@ -108,7 +110,11 @@ internal sealed class IngestClient : IDisposable
                 if (Environment.TickCount64 - Volatile.Read(ref _lastSendTicks)
                     >= (long)KeepaliveInterval.TotalMilliseconds)
                 {
-                    _channel.Writer.TryWrite((Array.Empty<byte>(), FrameFraming.FlagControl, null));
+                    if (!_channel.Writer.TryWrite((Array.Empty<byte>(), FrameFraming.FlagControl, null)))
+                    {
+                        Log.Warn($"ingest {_sessionId}: keepalive queue full, faulting");
+                        Fault();
+                    }
                 }
             }
         }

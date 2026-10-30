@@ -7,12 +7,14 @@ namespace Nexus.Overlay.Media;
 /// <summary>
 /// Writes raw BGRA frames into the service-owned shared section for one stream session, in place
 /// of a copy plus an HTTP body write. The layout mirrors the service reader (nexus-service
-/// src/Panel/Streams/StreamFrameSection.cs): a 64 byte header then one frame, guarded by a
-/// seqlock the writer makes odd while copying. The two must stay layout-compatible.
+/// src/Panel/Streams/StreamFrameSection.cs): <see cref="HeaderBytes"/> of header then one frame,
+/// guarded by a seqlock the writer makes odd while copying; the reader publishes the last sequence
+/// it consumed in the header. The two must stay layout-compatible.
 /// </summary>
 internal sealed unsafe class SharedFrameWriter : IDisposable
 {
     private const int HeaderBytes = 64;
+    private const int ConsumedOffset = 32;
     private const int Magic = 0x4653584E;
     private const uint FileMapWrite = 0x0002;
     private const uint EventModifyState = 0x0002;
@@ -52,6 +54,13 @@ internal sealed unsafe class SharedFrameWriter : IDisposable
             CloseHandle(mapping);
             return null;
         }
+        if (*(int*)view != Magic)
+        {
+            Log.Warn("shared frames: section header magic mismatch; staying on HTTP ingest");
+            UnmapViewOfFile(view);
+            CloseHandle(mapping);
+            return null;
+        }
         var ready = OpenEventW(EventModifyState, 0, sectionName + "-Ready");
         if (ready == IntPtr.Zero)
         {
@@ -62,6 +71,12 @@ internal sealed unsafe class SharedFrameWriter : IDisposable
         }
         return new SharedFrameWriter(mapping, (byte*)view, ready, capacity);
     }
+
+    /// <summary>Sequence of the last frame this writer published.</summary>
+    public long WrittenSequence => Volatile.Read(ref *(long*)(_view + 8));
+
+    /// <summary>Sequence of the last frame the service reader consumed.</summary>
+    public long ConsumedSequence => Volatile.Read(ref *(long*)(_view + ConsumedOffset));
 
     /// <summary>
     /// Copies <paramref name="height"/> rows of <paramref name="rowBytes"/> from a mapped texture
