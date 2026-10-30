@@ -184,6 +184,17 @@ internal sealed unsafe class WgcCapture : IDisposable
             Wv2.Release(session2);
         }
 
+        // Best effort: absent before Windows 11 24H2, where the compositor default interval applies.
+        var session5 = Wv2.QueryInterface(_session, WgcVtable.IID_IGraphicsCaptureSession5);
+        if (session5 != IntPtr.Zero)
+        {
+            var putMinUpdate = (delegate* unmanaged[Stdcall]<IntPtr, long, int>)
+                Wv2.Slot(session5, WgcVtable.Session5_put_MinUpdateInterval);
+            var minHr = putMinUpdate(session5, WgcVtable.CaptureMinUpdateIntervalTicks);
+            Wv2.Release(session5);
+            if (minHr < 0) Log.Warn($"stream-capture: MinUpdateInterval refused 0x{minHr:X8}");
+        }
+
         var start = (delegate* unmanaged[Stdcall]<IntPtr, int>)Wv2.Slot(_session, WgcVtable.Session_StartCapture);
         var startHr = start(_session);
         if (startHr < 0)
