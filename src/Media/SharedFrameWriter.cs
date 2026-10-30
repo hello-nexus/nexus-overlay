@@ -33,30 +33,38 @@ internal sealed unsafe class SharedFrameWriter : IDisposable
         _capacity = capacity;
     }
 
-    /// <summary>Null when the section or its event cannot be opened; the caller stays on HTTP ingest.</summary>
-    public static SharedFrameWriter? TryOpen(string sectionName, int frameBytes)
+    public const int ErrorMagic = -1;
+
+    /// <summary>
+    /// Null when the section or its event cannot be opened; <paramref name="error"/> then holds the Win32
+    /// error, or <see cref="ErrorMagic"/> for a section the service has not initialised yet. Logs nothing:
+    /// the caller retries across the window in which the service is still creating it.
+    /// </summary>
+    public static SharedFrameWriter? TryOpen(string sectionName, int frameBytes, out int error)
     {
+        error = 0;
         if (string.IsNullOrEmpty(sectionName) || frameBytes <= 0)
         {
+            error = 87;
             return null;
         }
         var mapping = OpenFileMappingW(FileMapWrite, 0, sectionName);
         if (mapping == IntPtr.Zero)
         {
-            Log.Warn($"shared frames: OpenFileMapping failed: {Marshal.GetLastWin32Error()}");
+            error = Marshal.GetLastWin32Error();
             return null;
         }
         var capacity = HeaderBytes + (long)frameBytes;
         var view = MapViewOfFile(mapping, FileMapWrite, 0, 0, (UIntPtr)capacity);
         if (view == IntPtr.Zero)
         {
-            Log.Warn($"shared frames: MapViewOfFile failed: {Marshal.GetLastWin32Error()}");
+            error = Marshal.GetLastWin32Error();
             CloseHandle(mapping);
             return null;
         }
         if (*(int*)view != Magic)
         {
-            Log.Warn("shared frames: section header magic mismatch; staying on HTTP ingest");
+            error = ErrorMagic;
             UnmapViewOfFile(view);
             CloseHandle(mapping);
             return null;
@@ -64,7 +72,7 @@ internal sealed unsafe class SharedFrameWriter : IDisposable
         var ready = OpenEventW(EventModifyState, 0, sectionName + "-Ready");
         if (ready == IntPtr.Zero)
         {
-            Log.Warn($"shared frames: OpenEvent failed: {Marshal.GetLastWin32Error()}");
+            error = Marshal.GetLastWin32Error();
             UnmapViewOfFile(view);
             CloseHandle(mapping);
             return null;

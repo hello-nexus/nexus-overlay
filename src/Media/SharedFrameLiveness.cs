@@ -2,26 +2,33 @@ namespace Nexus.Overlay.Media;
 
 /// <summary>
 /// Detects a service reader that stopped consuming while the overlay keeps producing. Frames in
-/// shared mode bypass the HTTP send queue, which is what used to fault a stuck service.
+/// shared mode bypass the HTTP send queue, which is what used to fault a stuck service. The window
+/// runs from when the oldest unconsumed write was published, so an idle stretch never counts.
 /// </summary>
 internal sealed class SharedFrameLiveness
 {
     public const long StaleAfterMs = 5000;
 
-    private bool _started;
+    private bool _pending;
     private long _lastConsumed;
-    private long _progressMs;
+    private long _pendingSinceMs;
 
-    /// <summary>True once frames have been published for longer than <see cref="StaleAfterMs"/> with the consumed sequence unchanged.</summary>
+    /// <summary>Call right after each write. True once the oldest unconsumed write is older than <see cref="StaleAfterMs"/>.</summary>
     public bool IsStale(long nowMs, long writtenSequence, long consumedSequence)
     {
-        if (!_started || consumedSequence != _lastConsumed || consumedSequence >= writtenSequence)
+        if (consumedSequence >= writtenSequence)
         {
-            _started = true;
+            _pending = false;
             _lastConsumed = consumedSequence;
-            _progressMs = nowMs;
             return false;
         }
-        return nowMs - _progressMs > StaleAfterMs;
+        if (!_pending || consumedSequence != _lastConsumed)
+        {
+            _pending = true;
+            _lastConsumed = consumedSequence;
+            _pendingSinceMs = nowMs;
+            return false;
+        }
+        return nowMs - _pendingSinceMs > StaleAfterMs;
     }
 }

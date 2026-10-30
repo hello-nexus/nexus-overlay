@@ -49,4 +49,14 @@ public class SharedFrameLivenessTests
         Assert.False(live.IsStale(0, 10, 10));
         Assert.False(live.IsStale(60_000, 10, 10));
     }
+
+    [Fact]
+    public void An_idle_stretch_after_a_caught_up_sample_does_not_fault_the_next_write()
+    {
+        var live = new SharedFrameLiveness();
+        Assert.False(live.IsStale(0, 10, 10));
+        Assert.False(live.IsStale(60_000, 12, 10));
+        Assert.False(live.IsStale(62_000, 14, 10));
+        Assert.True(live.IsStale(60_000 + SharedFrameLiveness.StaleAfterMs + 1, 16, 10));
+    }
 }

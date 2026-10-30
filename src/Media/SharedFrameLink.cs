@@ -13,6 +13,7 @@ internal sealed unsafe class SharedFrameLink : IDisposable
 {
     private const long OpenWindowMs = 5000;
     private const long OpenRetryMs = 100;
+    private const int ErrorAccessDenied = 5;
 
     private readonly string _name;
     private readonly int _frameBytes;
@@ -25,6 +26,8 @@ internal sealed unsafe class SharedFrameLink : IDisposable
     private bool _gaveUp;
     private bool _fallbackLogged;
     private bool _staleRaised;
+    private bool _deniedLogged;
+    private int _lastError;
 
     public SharedFrameLink(string name, int frameBytes, Action onStale, string logTag)
     {
@@ -53,13 +56,20 @@ internal sealed unsafe class SharedFrameLink : IDisposable
                 return false;
             }
             _nextTryMs = now + OpenRetryMs;
-            _writer = SharedFrameWriter.TryOpen(_name, _frameBytes);
+            _writer = SharedFrameWriter.TryOpen(_name, _frameBytes, out var error);
             if (_writer is null)
             {
+                _lastError = error;
+                // Not-found and not-yet-initialised are expected while the service creates the section; access denied is not.
+                if (error == ErrorAccessDenied && !_deniedLogged)
+                {
+                    _deniedLogged = true;
+                    Log.Warn($"{_logTag}: shared section access denied (overlay user is not the one the service scoped it to)");
+                }
                 if (now - _startMs > OpenWindowMs)
                 {
                     _gaveUp = true;
-                    Log.Warn($"{_logTag}: shared section never opened; using HTTP ingest");
+                    Log.Warn($"{_logTag}: shared section never opened (last error {_lastError}); using HTTP ingest");
                 }
                 return false;
             }
