@@ -71,6 +71,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private WgcCapture? _capture;
     private IFrameSink? _encoder;
     private IngestClient? _ingest;
+    private SharedFrameWriter? _shared;
     private Thread? _pumpThread;
     private volatile bool _pumpStop;
     private long _framesPumped;
@@ -325,8 +326,10 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         if (raw)
         {
             RawFrameSink? sink = null;
+            _shared = SharedFrameWriter.TryOpen(_assignment.FrameSection ?? "", _assignment.FrameSectionBytes);
+            Log.Info($"stream-host {SessionId}: frame handoff={(_shared is null ? "http" : "shared section")}");
             sink = new RawFrameSink(_d3d, _pixelWidth, _pixelHeight,
-                (frame, key) => _ingest?.Send(frame, key, sink!.Return), SessionId);
+                (frame, key) => _ingest?.Send(frame, key, sink!.Return), SessionId, _shared);
             _encoder = sink;
         }
         else
@@ -620,6 +623,8 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         {
             _encoder?.Dispose();
             _encoder = null;
+            _shared?.Dispose();
+            _shared = null;
             _capture?.Dispose();
             _capture = null;
             _d3d?.Dispose();

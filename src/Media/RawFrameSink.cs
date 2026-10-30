@@ -32,11 +32,15 @@ internal sealed unsafe class RawFrameSink : IFrameSink
     private const int MaxSpareFrames = 4;
     private readonly ConcurrentQueue<byte[]> _spare = new();
 
+    private readonly SharedFrameWriter? _shared;
     private IntPtr _staging;
     private bool _disposed;
 
-    public RawFrameSink(D3DDevice device, int width, int height, Action<byte[], bool> onFrame, string logTag)
+    /// <param name="shared">When set, a mapped frame is written straight into the shared section and
+    /// <paramref name="onFrame"/> only sees frames the section could not take.</param>
+    public RawFrameSink(D3DDevice device, int width, int height, Action<byte[], bool> onFrame, string logTag, SharedFrameWriter? shared = null)
     {
+        _shared = shared;
         _width = width;
         _height = height;
         _onFrame = onFrame;
@@ -129,6 +133,13 @@ internal sealed unsafe class RawFrameSink : IFrameSink
         if (hr < 0 || mapped.pData == IntPtr.Zero)
         {
             Log.Error($"{_logTag}: staging Map failed: 0x{hr:X8}");
+            return;
+        }
+        if (_shared is not null && _shared.TryWrite((byte*)mapped.pData, mapped.RowPitch, _width, _height))
+        {
+            var unmapShared = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, uint, void>)
+                Wv2.Slot(_context, D3D11Vtable.Context_Unmap);
+            unmapShared(_context, _staging, 0);
             return;
         }
         int rowBytes = _width * 4;

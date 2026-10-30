@@ -224,6 +224,10 @@ internal sealed class StreamAssignment
     public int BitrateKbps { get; set; } = 8000;
     [JsonPropertyName("codec")]
     public string Codec { get; set; } = "h264";
+    [JsonPropertyName("frameSection")]
+    public string? FrameSection { get; set; }
+    [JsonPropertyName("frameSectionBytes")]
+    public int FrameSectionBytes { get; set; }
 }
 
 /// <summary>
