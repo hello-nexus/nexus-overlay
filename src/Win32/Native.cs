@@ -387,12 +387,11 @@ internal static unsafe class Native
     // Rounded-corner preference and border color of a top-level window.
     // Windows 11 only; earlier builds return a nonzero HRESULT we ignore.
     public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
-    public const int DWMWCP_DONOTROUND = 1;
     public const int DWMWA_BORDER_COLOR = 34;
 
     // Undocumented but stable accent policy giving a window an acrylic
-    // blur-behind. It fills the whole window rect and ignores a region set on
-    // some builds, so each frosted card gets its own small window.
+    // blur-behind. It fills the whole window rect and ignores a window region
+    // (measured on build 26300), so each frosted card gets its own small window.
     public const int WCA_ACCENT_POLICY = 19;
     public const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
 

@@ -42,9 +42,25 @@ internal static class FrostPolicy
     public static int ClampRadius(double radiusPx)
         => double.IsFinite(radiusPx) ? (int)Math.Clamp(Math.Round(radiusPx), 0, MaxRadiusPx) : 0;
 
-    /// <summary>Corner radius for one plate: never more than half its shorter side.</summary>
-    public static int RadiusFor(int radiusPx, int width, int height)
-        => Math.Clamp(radiusPx, 0, Math.Max(0, Math.Min(width, height) / 2));
+    // DWMWA_WINDOW_CORNER_PREFERENCE values (DWMWCP_DONOTROUND, _ROUND, _ROUNDSMALL).
+    internal const int CornerSquare = 1;
+    internal const int CornerRound = 2;
+    internal const int CornerRoundSmall = 3;
+    // DWM's rounded and small-rounded corner radii at 96 DPI; it scales both with the window's DPI.
+    private const int DwmRoundPx = 8;
+    private const int DwmRoundSmallPx = 4;
+
+    /// <summary>
+    /// DWM corner preference for a plate. The acrylic accent ignores a window
+    /// region, so DWM's rounding is the only way to shape it: square, small or
+    /// rounded, whichever radius is nearest the card's.
+    /// </summary>
+    public static int CornerFor(int radiusPx, uint dpi)
+    {
+        var scale = dpi > 0 ? dpi / 96.0 : 1;
+        if (radiusPx < DwmRoundSmallPx / 2.0 * scale) return CornerSquare;
+        return radiusPx < (DwmRoundSmallPx + DwmRoundPx) / 2.0 * scale ? CornerRoundSmall : CornerRound;
+    }
 
     // The slider's strength when only a level is sent.
     private const int LightDefaultPercent = 25;
@@ -73,8 +89,8 @@ internal static class FrostPolicy
 
     /// <summary>
     /// Diff by plate index so existing windows are reused. Style changes
-    /// (strength, radius) re-place every plate, since the radius is baked into
-    /// each plate's region.
+    /// (strength, radius) re-place every plate, since the radius sets each
+    /// plate's corner preference.
     /// </summary>
     public static FrostDiff Diff(FrostPlan current, FrostPlan wanted)
     {

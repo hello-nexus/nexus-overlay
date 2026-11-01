@@ -7,17 +7,16 @@ namespace Nexus.Overlay;
 
 /// <summary>
 /// One acrylic blur plate under a widget card. Its own top-level window,
-/// because the acrylic accent fills the whole window rect and on some builds
-/// ignores a region set on a shared window. Never takes input or focus and
-/// stays out of Alt+Tab and the taskbar.
+/// because the acrylic accent fills the whole window rect and ignores a
+/// window region. Never takes input or focus and stays out of Alt+Tab and
+/// the taskbar.
 /// </summary>
 internal sealed unsafe class FrostPlate : IWin32WindowOwner, IDisposable
 {
     private const string WindowClassName = "Nexus.Overlay.PanelFrost";
     private const uint MA_NOACTIVATE = 3;
     private bool _shown;
-    private int _w;
-    private int _h;
+    private int _corner = -1;
 
     public IntPtr Hwnd { get; private set; }
 
@@ -28,13 +27,13 @@ internal sealed unsafe class FrostPlate : IWin32WindowOwner, IDisposable
         var plate = new FrostPlate();
         try
         {
+            // No redirection bitmap: the plate never paints, and a GDI surface it never
+            // paints showed as opaque white over the acrylic at the size it was first shown.
             plate.Hwnd = Win32Window.Create(
                 WindowClassName, "Nexus Panel Frost", Native.WS_POPUP,
-                (uint)(Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE),
+                (uint)(Native.WS_EX_TOOLWINDOW | Native.WS_EX_NOACTIVATE | Native.WS_EX_NOREDIRECTIONBITMAP),
                 0, 0, 1, 1, plate);
-            // No border and no DWM corner rounding: the rounded region is the only edge.
             Native.DwmSetWindowAttribute(plate.Hwnd, Native.DWMWA_BORDER_COLOR, Native.DWMWA_COLOR_NONE, sizeof(int));
-            Native.DwmSetWindowAttribute(plate.Hwnd, Native.DWMWA_WINDOW_CORNER_PREFERENCE, Native.DWMWCP_DONOTROUND, sizeof(int));
             return plate;
         }
         catch (Exception ex)
@@ -63,16 +62,15 @@ internal sealed unsafe class FrostPlate : IWin32WindowOwner, IDisposable
         return Native.SetWindowCompositionAttribute(Hwnd, ref data) != 0;
     }
 
-    /// <summary>Place at a screen rect and clip to a rounded shape so no blur reaches past the card corners.</summary>
+    /// <summary>Place at a screen rect with DWM's corner rounding nearest the card radius.</summary>
     public void Place(int x, int y, int w, int h, int radiusPx)
     {
         if (Hwnd == IntPtr.Zero) return;
-        _w = w;
-        _h = h;
         Native.SetWindowPos(Hwnd, IntPtr.Zero, x, y, w, h, Native.SWP_NOACTIVATE | Native.SWP_NOZORDER);
-        var r = FrostPolicy.RadiusFor(radiusPx, w, h);
-        var region = r > 0 ? Native.CreateRoundRectRgn(0, 0, w + 1, h + 1, r * 2, r * 2) : IntPtr.Zero;
-        if (Native.SetWindowRgn(Hwnd, region, false) == 0 && region != IntPtr.Zero) Native.DeleteObject(region);
+        var corner = FrostPolicy.CornerFor(radiusPx, Native.GetDpiForWindow(Hwnd));
+        if (corner == _corner) return;
+        _corner = corner;
+        Native.DwmSetWindowAttribute(Hwnd, Native.DWMWA_WINDOW_CORNER_PREFERENCE, corner, sizeof(int));
     }
 
     /// <summary>Insert directly below <paramref name="kiosk"/>, showing the plate on first use.</summary>

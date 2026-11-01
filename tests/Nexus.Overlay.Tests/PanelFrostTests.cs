@@ -89,12 +89,21 @@ public class PanelFrostTests
     public void RadiusIsClamped(double input, int expected) => Assert.Equal(expected, FrostPolicy.ClampRadius(input));
 
     [Theory]
-    [InlineData(40, 100, 50, 25)]
-    [InlineData(10, 100, 50, 10)]
-    [InlineData(0, 100, 50, 0)]
-    [InlineData(40, 0, 50, 0)]
-    public void PlateRadiusNeverExceedsHalfTheShorterSide(int radius, int w, int h, int expected)
-        => Assert.Equal(expected, FrostPolicy.RadiusFor(radius, w, h));
+    [InlineData(0, 96u, FrostPolicy.CornerSquare)]
+    [InlineData(1, 96u, FrostPolicy.CornerSquare)]
+    [InlineData(4, 96u, FrostPolicy.CornerRoundSmall)]
+    [InlineData(5, 96u, FrostPolicy.CornerRoundSmall)]
+    [InlineData(6, 96u, FrostPolicy.CornerRound)]
+    [InlineData(16, 96u, FrostPolicy.CornerRound)]
+    [InlineData(40, 96u, FrostPolicy.CornerRound)]
+    // DWM scales its radii with DPI: 8 device px at 200% is DWM's small radius.
+    [InlineData(8, 192u, FrostPolicy.CornerRoundSmall)]
+    [InlineData(16, 192u, FrostPolicy.CornerRound)]
+    [InlineData(3, 192u, FrostPolicy.CornerSquare)]
+    // An unreadable DPI falls back to 96.
+    [InlineData(16, 0u, FrostPolicy.CornerRound)]
+    public void CornerIsTheDwmRoundingNearestTheCardRadius(int radiusPx, uint dpi, int expected)
+        => Assert.Equal(expected, FrostPolicy.CornerFor(radiusPx, dpi));
 
     [Theory]
     [InlineData(19045, false)]
