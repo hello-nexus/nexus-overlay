@@ -12,12 +12,15 @@ internal sealed class FrostPlan
     public int Percent { get; }
     public int RadiusPx { get; }
     public IReadOnlyList<RegionLayout.Rect> Rects { get; }
+    /// <summary>The panel's light theme; dark when the page did not say.</summary>
+    public bool Light { get; }
 
-    public FrostPlan(int percent, int radiusPx, IReadOnlyList<RegionLayout.Rect> rects)
+    public FrostPlan(int percent, int radiusPx, IReadOnlyList<RegionLayout.Rect> rects, bool light = false)
     {
         Percent = percent;
         RadiusPx = radiusPx;
         Rects = rects;
+        Light = light;
     }
 
     public bool IsEmpty => Percent <= 0 || Rects.Count == 0;
@@ -46,7 +49,7 @@ internal static class FrostPolicy
     internal const int CornerSquare = 1;
     internal const int CornerRound = 2;
     internal const int CornerRoundSmall = 3;
-    // DWM's rounded and small-rounded corner radii at 96 DPI; it scales both with the window's DPI.
+    // DWM's rounded and small-rounded corner radii at the baseline DPI; it scales both with the window's DPI.
     private const int DwmRoundPx = 8;
     private const int DwmRoundSmallPx = 4;
 
@@ -67,7 +70,8 @@ internal static class FrostPolicy
     private const int HeavyDefaultPercent = 75;
     // Tint alpha at full strength: below opaque so some backdrop always shows through.
     private const int MaxTintAlpha = 0xB3;
-    private const uint TintRgb = 0x00181818u;
+    private const uint DarkTintRgb = 0x00181818u;
+    private const uint LightTintRgb = 0x00F3F3F3u;
 
     /// <summary>
     /// Strength from the message. An explicit percent wins; otherwise the
@@ -80,11 +84,11 @@ internal static class FrostPolicy
         return level switch { "light" => LightDefaultPercent, "heavy" => HeavyDefaultPercent, _ => 0 };
     }
 
-    /// <summary>Acrylic gradient tint, AABBGGRR: a dark neutral whose alpha scales continuously with strength.</summary>
-    public static uint TintFor(int percent)
+    /// <summary>Acrylic gradient tint, AABBGGRR: a neutral matching the panel theme whose alpha scales continuously with strength.</summary>
+    public static uint TintFor(int percent, bool light = false)
     {
         var p = Math.Clamp(percent, 0, 100);
-        return ((uint)Math.Round(p * MaxTintAlpha / 100.0) << 24) | TintRgb;
+        return ((uint)Math.Round(p * MaxTintAlpha / 100.0) << 24) | (light ? LightTintRgb : DarkTintRgb);
     }
 
     /// <summary>
@@ -104,6 +108,6 @@ internal static class FrostPolicy
             if (i >= have || styleChanged || current.Rects[i] != wanted.Rects[i]) place.Add(i);
         }
         return new FrostDiff(place, Math.Max(0, want - have), Math.Max(0, have - want),
-            Retint: have > 0 && want > 0 && current.Percent != wanted.Percent);
+            Retint: have > 0 && want > 0 && (current.Percent != wanted.Percent || current.Light != wanted.Light));
     }
 }

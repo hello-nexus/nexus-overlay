@@ -96,11 +96,9 @@ public class PanelFrostTests
     [InlineData(6, 96u, FrostPolicy.CornerRound)]
     [InlineData(16, 96u, FrostPolicy.CornerRound)]
     [InlineData(40, 96u, FrostPolicy.CornerRound)]
-    // DWM scales its radii with DPI: 8 device px at 200% is DWM's small radius.
     [InlineData(8, 192u, FrostPolicy.CornerRoundSmall)]
     [InlineData(16, 192u, FrostPolicy.CornerRound)]
     [InlineData(3, 192u, FrostPolicy.CornerSquare)]
-    // An unreadable DPI falls back to 96.
     [InlineData(16, 0u, FrostPolicy.CornerRound)]
     public void CornerIsTheDwmRoundingNearestTheCardRadius(int radiusPx, uint dpi, int expected)
         => Assert.Equal(expected, FrostPolicy.CornerFor(radiusPx, dpi));
@@ -126,6 +124,36 @@ public class PanelFrostTests
         Assert.True((FrostPolicy.TintFor(100) >> 24) < 0xFF);
         Assert.Equal(FrostPolicy.TintFor(100), FrostPolicy.TintFor(500));
         Assert.NotEqual(FrostPolicy.TintFor(50), FrostPolicy.TintFor(51));
+    }
+
+    [Theory]
+    [InlineData("\"theme\":\"light\",", true)]
+    [InlineData("\"theme\":\"dark\",", false)]
+    [InlineData("", false)]
+    [InlineData("\"theme\":\"sepia\",", false)]
+    [InlineData("\"theme\":1,", false)]
+    public void ThemeIsLightOnlyWhenThePageSaysSo(string theme, bool light)
+        => Assert.Equal(light, Parse(Msg("light", OneRect, percent: theme)).Frost!.Light);
+
+    [Fact]
+    public void LightTintIsALightNeutralOnTheSameAlphaCurve()
+    {
+        for (var p = 0; p <= 100; p += 10)
+        {
+            Assert.Equal(FrostPolicy.TintFor(p) >> 24, FrostPolicy.TintFor(p, light: true) >> 24);
+        }
+        Assert.Equal(0x181818u, FrostPolicy.TintFor(30) & 0xFFFFFF);
+        Assert.Equal(0x181818u, FrostPolicy.TintFor(30, light: false) & 0xFFFFFF);
+        Assert.Equal(0xF3F3F3u, FrostPolicy.TintFor(30, light: true) & 0xFFFFFF);
+    }
+
+    [Fact]
+    public void ThemeChangeRetintsWithoutReplacingPlates()
+    {
+        var d = FrostPolicy.Diff(Plan(30, 8, (0, 5), (10, 5)), new FrostPlan(30, 8, Plan(30, 8, (0, 5), (10, 5)).Rects, light: true));
+        Assert.True(d.Retint);
+        Assert.Empty(d.Place);
+        Assert.Equal((0, 0), (d.Create, d.Destroy));
     }
 
     private static FrostPlan Plan(int level, int radius, params (int x, int w)[] cards)

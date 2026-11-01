@@ -44,13 +44,13 @@ internal sealed unsafe class FrostPlate : IWin32WindowOwner, IDisposable
         }
     }
 
-    public bool SetTint(int percent)
+    public bool SetTint(int percent, bool light)
     {
         var accent = new Native.AccentPolicy
         {
             AccentState = Native.ACCENT_ENABLE_ACRYLICBLURBEHIND,
             AccentFlags = 0,
-            GradientColor = FrostPolicy.TintFor(percent),
+            GradientColor = FrostPolicy.TintFor(percent, light),
             AnimationId = 0,
         };
         var data = new Native.WindowCompositionAttributeData
@@ -153,14 +153,15 @@ internal sealed class FrostLayer : IDisposable
                 var isNew = i >= (_current.IsEmpty ? 0 : _current.Rects.Count);
                 if (isNew || diff.Retint)
                 {
-                    if (!_plates[i].SetTint(wanted.Percent)) Log.Warn("panel-frost acrylic accent rejected");
+                    if (!_plates[i].SetTint(wanted.Percent, wanted.Light)) Log.Warn("panel-frost acrylic accent rejected");
                 }
                 // Only a new plate needs inserting; a moved or resized one keeps its place.
                 if (isNew) _plates[i].StackBelow(kiosk);
             }
         }
-        _current = live == 0 ? FrostPlan.Empty : new FrostPlan(wanted.Percent, wanted.RadiusPx, applied);
-        if (structural) LogState(kiosk, wanted.Percent);
+        var themeChanged = !_current.IsEmpty && _current.Light != wanted.Light;
+        _current = live == 0 ? FrostPlan.Empty : new FrostPlan(wanted.Percent, wanted.RadiusPx, applied, wanted.Light);
+        if (structural || themeChanged) LogState(kiosk, wanted.Percent);
     }
 
     /// <summary>Re-insert the plates under the kiosk after it was raised, lowered or its topmost state changed; a no-op when they already sit there.</summary>
@@ -236,7 +237,7 @@ internal sealed class FrostLayer : IDisposable
     private void LogState(IntPtr kiosk, int percent)
     {
         var sb = new StringBuilder();
-        sb.Append($"panel-frost percent={percent} plates={_plates.Count} kioskZ={ZIndex(kiosk)} kioskTopmost={IsTopmost(kiosk)}");
+        sb.Append($"panel-frost percent={percent} theme={(_current.Light ? "light" : "dark")} plates={_plates.Count} kioskZ={ZIndex(kiosk)} kioskTopmost={IsTopmost(kiosk)}");
         for (var i = 0; i < _plates.Count && i < 3; i++)
         {
             var h = _plates[i].Hwnd;

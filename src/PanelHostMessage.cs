@@ -120,7 +120,8 @@ internal readonly record struct PanelHostMessage(PanelMessageKind Kind, HitRegio
         if (root.TryGetProperty("radius", out var r) && r.ValueKind == JsonValueKind.Number
             && r.TryGetDouble(out var rv) && double.IsFinite(rv) && rv > 0)
             radius = rv * dpr;
-        return new FrostPlan(percent, FrostPolicy.ClampRadius(radius), rects);
+        var light = root.TryGetProperty("theme", out var t) && t.ValueKind == JsonValueKind.String && t.GetString() == "light";
+        return new FrostPlan(percent, FrostPolicy.ClampRadius(radius), rects, light);
     }
 
     private static bool TryReadDpr(JsonElement root, out double dpr)
