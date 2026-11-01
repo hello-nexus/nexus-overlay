@@ -6,8 +6,8 @@ public class PanelFrostTests
 {
     private static PanelHostMessage Parse(string json, int w = 2560, int h = 1440) => PanelHostMessage.Parse(json, w, h);
 
-    private static string Msg(string level, string rects, double dpr = 1, double radius = 12, string percent = "")
-        => $"{{\"type\":\"nexus.panel.frost\",\"level\":\"{level}\",{percent}\"dpr\":{dpr},\"radius\":{radius},\"rects\":[{rects}]}}";
+    private static string Msg(string level, string rects, double dpr = 1, double radius = 12, string extra = "")
+        => $"{{\"type\":\"nexus.panel.frost\",\"level\":\"{level}\",{extra}\"dpr\":{dpr},\"radius\":{radius},\"rects\":[{rects}]}}";
 
     private const string OneRect = "{\"x\":100,\"y\":50,\"w\":200,\"h\":100}";
 
@@ -31,25 +31,25 @@ public class PanelFrostTests
     [InlineData("\"percent\":250,", 100)]
     [InlineData("\"percent\":33.6,", 34)]
     public void ExplicitPercentOverridesTheLevelDefault(string percent, int expected)
-        => Assert.Equal(expected, Parse(Msg("light", OneRect, percent: percent)).Frost!.Percent);
+        => Assert.Equal(expected, Parse(Msg("light", OneRect, extra: percent)).Frost!.Percent);
 
     [Theory]
     [InlineData("\"percent\":0,")]
     [InlineData("\"percent\":-5,")]
     public void ZeroPercentIsOff(string percent)
-        => Assert.True(Parse(Msg("heavy", OneRect, percent: percent)).Frost!.IsEmpty);
+        => Assert.True(Parse(Msg("heavy", OneRect, extra: percent)).Frost!.IsEmpty);
 
     [Fact]
     public void NoneLevelIsOffEvenWithAPercent()
-        => Assert.True(Parse(Msg("none", OneRect, percent: "\"percent\":60,")).Frost!.IsEmpty);
+        => Assert.True(Parse(Msg("none", OneRect, extra: "\"percent\":60,")).Frost!.IsEmpty);
 
     [Fact]
     public void PercentAloneWorksWithoutALevel()
-        => Assert.Equal(60, Parse(Msg("", OneRect, percent: "\"percent\":60,")).Frost!.Percent);
+        => Assert.Equal(60, Parse(Msg("", OneRect, extra: "\"percent\":60,")).Frost!.Percent);
 
     [Fact]
     public void NonNumericPercentFallsBackToTheLevel()
-        => Assert.Equal(25, Parse(Msg("light", OneRect, percent: "\"percent\":\"x\",")).Frost!.Percent);
+        => Assert.Equal(25, Parse(Msg("light", OneRect, extra: "\"percent\":\"x\",")).Frost!.Percent);
 
     [Theory]
     [InlineData("none")]
@@ -133,7 +133,7 @@ public class PanelFrostTests
     [InlineData("\"theme\":\"sepia\",", false)]
     [InlineData("\"theme\":1,", false)]
     public void ThemeIsLightOnlyWhenThePageSaysSo(string theme, bool light)
-        => Assert.Equal(light, Parse(Msg("light", OneRect, percent: theme)).Frost!.Light);
+        => Assert.Equal(light, Parse(Msg("light", OneRect, extra: theme)).Frost!.Light);
 
     [Fact]
     public void LightTintIsALightNeutralOnTheSameAlphaCurve()

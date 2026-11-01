@@ -161,7 +161,7 @@ internal sealed class FrostLayer : IDisposable
         }
         var themeChanged = !_current.IsEmpty && _current.Light != wanted.Light;
         _current = live == 0 ? FrostPlan.Empty : new FrostPlan(wanted.Percent, wanted.RadiusPx, applied, wanted.Light);
-        if (structural || themeChanged) LogState(kiosk, wanted.Percent);
+        if (structural || themeChanged) LogState(kiosk, wanted.Percent, wanted.Light);
     }
 
     /// <summary>Re-insert the plates under the kiosk after it was raised, lowered or its topmost state changed; a no-op when they already sit there.</summary>
@@ -169,7 +169,7 @@ internal sealed class FrostLayer : IDisposable
     {
         if (_plates.Count == 0 || IsStackedBelow(kiosk)) return;
         foreach (var plate in _plates) plate.StackBelow(kiosk);
-        LogState(kiosk, _current.Percent);
+        LogState(kiosk, _current.Percent, _current.Light);
     }
 
     /// <summary>
@@ -234,10 +234,10 @@ internal sealed class FrostLayer : IDisposable
 
     // Plates were once missing from the window list with always-on-top off and the
     // cause is unknown, so every change logs how many exist and where they sit.
-    private void LogState(IntPtr kiosk, int percent)
+    private void LogState(IntPtr kiosk, int percent, bool light)
     {
         var sb = new StringBuilder();
-        sb.Append($"panel-frost percent={percent} theme={(_current.Light ? "light" : "dark")} plates={_plates.Count} kioskZ={ZIndex(kiosk)} kioskTopmost={IsTopmost(kiosk)}");
+        sb.Append($"panel-frost percent={percent} theme={(light ? "light" : "dark")} plates={_plates.Count} kioskZ={ZIndex(kiosk)} kioskTopmost={IsTopmost(kiosk)}");
         for (var i = 0; i < _plates.Count && i < 3; i++)
         {
             var h = _plates[i].Hwnd;
