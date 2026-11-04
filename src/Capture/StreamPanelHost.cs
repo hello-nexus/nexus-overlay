@@ -285,14 +285,21 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         _navCompletedHandler = WebView2Callbacks.CreateNavigationCompletedHandler(&OnNavigationCompletedStatic);
         Wv2.Wv2_add_NavigationCompleted(_coreWebView2, _navCompletedHandler, out _navCompletedToken);
 
-        // Before the navigation, so the page boots reporting touch support, as it would on a touchscreen.
+        // Touch emulation settles before the page loads, so it boots reporting touch support as it
+        // would on a touchscreen; its completion navigates, failed or not, so CDP never blocks the page.
         if (_assignment.Touch)
         {
             _cdpEmulationHandler = WebView2Callbacks.CreateCallDevToolsProtocolMethodCompletedHandler(&OnCdpCompletedStatic);
             _cdpTouchHandler = WebView2Callbacks.CreateCallDevToolsProtocolMethodCompletedHandler(&OnCdpCompletedStatic);
-            CallCdp(EmulationMethod, "{\"enabled\":true,\"maxTouchPoints\":10}", _cdpEmulationHandler, ref _emulationFailureLogged);
+            if (CallCdp(EmulationMethod, "{\"enabled\":true,\"maxTouchPoints\":10}", _cdpEmulationHandler, ref _emulationFailureLogged))
+                return;
         }
+        Navigate();
+    }
 
+    private void Navigate()
+    {
+        if (_disposed || _coreWebView2 == IntPtr.Zero) return;
         var hr = Wv2.Wv2_Navigate(_coreWebView2, _navigationUrl);
         Log.Info($"stream-host {SessionId}: navigate hr=0x{hr:X8}");
     }
@@ -366,26 +373,31 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     }
 
     // Each method logs its first failure once per host, so a broken path does not log per contact.
-    private void CallCdp(string method, string json, IntPtr handler, ref int failureLogged)
+    // False when the call was refused, in which case its completion handler never runs.
+    private bool CallCdp(string method, string json, IntPtr handler, ref int failureLogged)
     {
         var hr = Wv2.Wv2_CallDevToolsProtocolMethod(_coreWebView2, method, json, handler);
-        if (WebView2Native.Failed(hr) && Interlocked.Exchange(ref failureLogged, 1) == 0)
+        if (WebView2Native.Succeeded(hr)) return true;
+        if (Interlocked.Exchange(ref failureLogged, 1) == 0)
             Log.Warn($"stream-host {SessionId}: {method} hr=0x{hr:X8}");
+        return false;
     }
 
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     private static int OnCdpCompletedStatic(IntPtr self, int errorCode, IntPtr resultJson)
     {
-        if (WebView2Native.Failed(errorCode))
-            FindByCdpHandler(self)?.OnCdpFailed(self, errorCode, Marshal.PtrToStringUni(resultJson));
+        FindByCdpHandler(self)?.OnCdpCompleted(self, errorCode, resultJson);
         return WebView2Native.S_OK;
     }
 
-    private void OnCdpFailed(IntPtr handler, int errorCode, string? resultJson)
+    private void OnCdpCompleted(IntPtr handler, int errorCode, IntPtr resultJson)
     {
         bool emulation = handler == _cdpEmulationHandler;
-        if (Interlocked.Exchange(ref (emulation ? ref _emulationFailureLogged : ref _touchFailureLogged), 1) == 0)
-            Log.Warn($"stream-host {SessionId}: {(emulation ? EmulationMethod : TouchMethod)} failed err=0x{errorCode:X8} {resultJson}");
+        if (WebView2Native.Failed(errorCode)
+            && Interlocked.Exchange(ref (emulation ? ref _emulationFailureLogged : ref _touchFailureLogged), 1) == 0)
+            Log.Warn($"stream-host {SessionId}: {(emulation ? EmulationMethod : TouchMethod)} failed err=0x{errorCode:X8} {Marshal.PtrToStringUni(resultJson)}");
+        if (emulation)
+            Navigate();
     }
 
     // ===================== capture -> encode -> ingest =====================

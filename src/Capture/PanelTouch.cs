@@ -33,11 +33,12 @@ internal readonly record struct PanelTouchContact(uint PointerId, PanelTouchPhas
 }
 
 /// <summary>
-/// Turns contacts into CDP Input.dispatchTouchEvent parameters. CDP takes the full set of
-/// points down and diffs it against the previous event, so every event carries all of them;
-/// touchEnd must carry none, so a release that leaves others down is a touchMove without it.
-/// Only the first point down is a touchStart: Chromium's synthetic-pointer dispatch rejects a
-/// touchStart while points are active, and both dispatch paths press a new id seen in a touchMove.
+/// Turns contacts into CDP Input.dispatchTouchEvent parameters. Every event carries all points
+/// down, as the protocol documents, and a release that leaves others down is a touchMove without
+/// it, since touchEnd must carry none. Chromium's synthetic-pointer dispatch releases the omitted
+/// point; its default dispatch keeps it down until the last finger lifts. Which path WebView2
+/// uses is unverified. Only the first point down is a touchStart: the synthetic path rejects a
+/// touchStart while points are active, and both paths press a new id seen in a touchMove.
 /// </summary>
 internal sealed class CdpTouchState
 {
