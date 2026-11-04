@@ -225,8 +225,19 @@ public class WebViewWidgetPlanTests
         Assert.True(grant.Spec!.Media);
         Assert.Empty(reg.Apply(Sync(3, View("a", media: "true")), 20));
         var revoke = reg.Apply(Sync(4, View("a")), 30);
-        Assert.Equal(new[] { WidgetActionKind.Layout, WidgetActionKind.Navigate }, revoke.ConvertAll(x => x.Kind));
+        Assert.Equal(new[] { WidgetActionKind.Layout, WidgetActionKind.Reload }, revoke.ConvertAll(x => x.Kind));
         Assert.False(revoke[0].Spec!.Media);
+    }
+
+    [Fact]
+    public void Registry_UrlChangePlusMediaRevoke_NavigatesOnceWithoutReload()
+    {
+        var reg = new WidgetRegistry();
+        reg.Apply(Sync(1, View("a", media: "true")), 0);
+        var kinds = reg.Apply(Sync(2, View("a", url: "https://example.org/")), 10).ConvertAll(x => x.Kind);
+        Assert.Equal(1, kinds.FindAll(k => k == WidgetActionKind.Navigate).Count);
+        Assert.Contains(WidgetActionKind.Layout, kinds);
+        Assert.DoesNotContain(WidgetActionKind.Reload, kinds);
     }
 
     [Theory]

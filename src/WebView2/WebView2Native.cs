@@ -67,6 +67,12 @@ internal static unsafe class WebView2Native
     public static readonly Guid IID_ICoreWebView2Settings9 =
         new("0528a73b-e92d-49f4-927a-e547dddaa37d");
 
+    // ICoreWebView2PermissionRequestedEventArgs3 (extends Args2). Adds
+    // SavesInProfile: false keeps a PermissionRequested decision out of the
+    // profile's persisted per-origin permission state.
+    public static readonly Guid IID_ICoreWebView2PermissionRequestedEventArgs3 =
+        new("e61670bc-3dce-4177-86d2-c629ae3cb6ac");
+
     public static readonly Guid IID_ICoreWebView2WebMessageReceivedEventHandler =
         new("57213f19-00e6-49fa-8e07-898ea01ecbd2");
 

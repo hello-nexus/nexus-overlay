@@ -44,6 +44,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
 
     private static readonly ConcurrentDictionary<long, WebViewWidgetHost> Hosts = new();
     private static readonly ConcurrentDictionary<long, NativeView> Views = new();
+    private static bool _savesInProfileWarned;
     private static long _nextKey;
 
     private sealed class NativeView
@@ -171,6 +172,9 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                         nav.Home.Expect();
                         Wv2.Wv2_Navigate(nav.Core, action.Spec!.Url);
                     }
+                    break;
+                case WidgetActionKind.Reload:
+                    if (_byId.TryGetValue(action.Id, out var rel) && rel.Ready) Wv2.Wv2_Reload(rel.Core);
                     break;
                 case WidgetActionKind.Layout:
                     if (_byId.TryGetValue(action.Id, out var lay))
@@ -975,6 +979,12 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             var media = Views.TryGetValue(WebView2Callbacks.GetUserData(self), out var view) && view.Spec.Media;
             Wv2.PermissionArgs_get_PermissionKind(args, out var kind);
             var state = WebViewWidgetProtocol.PermissionDecision(media, kind);
+            // The widget views share one profile; an unsaved decision cannot leak to another view of the origin or outlive a revoke.
+            if (!Wv2.PermissionArgs_TryDisableSavesInProfile(args) && !_savesInProfileWarned)
+            {
+                _savesInProfileWarned = true;
+                Log.Warn("webview-widget permission decisions are saved in the profile (runtime lacks SavesInProfile)");
+            }
             Wv2.PermissionArgs_put_State(args, state);
             Log.Info($"webview-widget permission {(state == WebViewWidgetProtocol.PermissionStateAllow ? "allowed" : "denied")} kind={kind}");
         }

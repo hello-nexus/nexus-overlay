@@ -199,4 +199,8 @@ internal static class WebView2Vtable
     public const int PermissionArgs_get_State = 6;
     public const int PermissionArgs_put_State = 7;
     public const int PermissionArgs_GetDeferral = 8;
+
+    // ICoreWebView2PermissionRequestedEventArgs3 (Args2 owns 9..10: Handled).
+    public const int PermissionArgs3_get_SavesInProfile = 11;
+    public const int PermissionArgs3_put_SavesInProfile = 12;
 }

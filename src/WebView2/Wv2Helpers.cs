@@ -577,6 +577,22 @@ internal static unsafe class Wv2
         return hr;
     }
 
+    /// <summary>
+    /// Sets SavesInProfile=false on the args. Returns false when the runtime
+    /// predates ICoreWebView2PermissionRequestedEventArgs3 or the call fails.
+    /// </summary>
+    public static bool PermissionArgs_TryDisableSavesInProfile(IntPtr args)
+    {
+        var args3 = QueryInterface(args, WebView2Native.IID_ICoreWebView2PermissionRequestedEventArgs3);
+        if (args3 == IntPtr.Zero) return false;
+        try
+        {
+            var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(args3, WebView2Vtable.PermissionArgs3_put_SavesInProfile);
+            return !WebView2Native.Failed(fn(args3, 0));
+        }
+        finally { Release(args3); }
+    }
+
     public static int PermissionArgs_put_State(IntPtr args, int state)
     {
         var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(args, WebView2Vtable.PermissionArgs_put_State);

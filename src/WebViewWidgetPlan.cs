@@ -160,7 +160,7 @@ internal static class WebViewWidgetProtocol
     private static double ReadRadius(JsonElement obj)
         => TryNumber(obj, "radius", out var r) ? Math.Clamp(r, 0, MaxRadius) : 0;
 
-    /// <summary>WebView2 permission kinds the widget can grant when the view's Media toggle is on.</summary>
+    /// <summary>WebView2 permission kinds (microphone, camera) and states (allow, deny) used by the media decision.</summary>
     public const int PermissionKindMicrophone = 1;
     public const int PermissionKindCamera = 2;
     public const int PermissionStateAllow = 1;
@@ -530,6 +530,8 @@ internal enum WidgetActionKind
     Create,
     /// <summary>The configured url changed; navigate the existing view.</summary>
     Navigate,
+    /// <summary>Media was revoked with the url unchanged; reload in place so a live capture stream stops.</summary>
+    Reload,
     /// <summary>Rect, interactive or visible changed; never touches the page.</summary>
     Layout,
     /// <summary>The page no longer lists the view.</summary>
@@ -608,10 +610,11 @@ internal sealed class WidgetRegistry
                 {
                     actions.Add(new WidgetAction(WidgetActionKind.Layout, spec.Id, spec));
                 }
-                // Revoking media reloads the page so any live capture stream stops; granting needs no reload.
+                // Revoking media with the url unchanged reloads in place so any live capture stream stops.
+                // A url change already navigates, and granting needs no reload.
                 if (entry.Spec.Media && !spec.Media && !urlChanged)
                 {
-                    actions.Add(new WidgetAction(WidgetActionKind.Navigate, spec.Id, spec));
+                    actions.Add(new WidgetAction(WidgetActionKind.Reload, spec.Id, spec));
                 }
                 entry.Spec = spec;
                 continue;
