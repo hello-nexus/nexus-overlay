@@ -93,8 +93,10 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private readonly ConcurrentQueue<PanelTouchContact?> _touchQueue = new();
     private readonly CdpTouchState _touchState = new();
     private int _touchPosted;
-    private IntPtr _cdpHandler;
-    private static int _cdpFailureLogged;
+    private IntPtr _cdpEmulationHandler;
+    private IntPtr _cdpTouchHandler;
+    private int _emulationFailureLogged;
+    private int _touchFailureLogged;
     private bool _taskbarTabPending;
 
     public StreamPanelHost(StreamAssignment assignment, string serviceOrigin, string pairedToken)
@@ -283,6 +285,14 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         _navCompletedHandler = WebView2Callbacks.CreateNavigationCompletedHandler(&OnNavigationCompletedStatic);
         Wv2.Wv2_add_NavigationCompleted(_coreWebView2, _navCompletedHandler, out _navCompletedToken);
 
+        // Before the navigation, so the page boots reporting touch support, as it would on a touchscreen.
+        if (_assignment.Touch)
+        {
+            _cdpEmulationHandler = WebView2Callbacks.CreateCallDevToolsProtocolMethodCompletedHandler(&OnCdpCompletedStatic);
+            _cdpTouchHandler = WebView2Callbacks.CreateCallDevToolsProtocolMethodCompletedHandler(&OnCdpCompletedStatic);
+            CallCdp(EmulationMethod, "{\"enabled\":true,\"maxTouchPoints\":10}", _cdpEmulationHandler, ref _emulationFailureLogged);
+        }
+
         var hr = Wv2.Wv2_Navigate(_coreWebView2, _navigationUrl);
         Log.Info($"stream-host {SessionId}: navigate hr=0x{hr:X8}");
     }
@@ -325,11 +335,11 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
 
     // ===================== touch =====================
 
+    private const string EmulationMethod = "Emulation.setTouchEmulationEnabled";
+    private const string TouchMethod = "Input.dispatchTouchEvent";
+
     private void StartTouch()
     {
-        _cdpHandler = WebView2Callbacks.CreateCallDevToolsProtocolMethodCompletedHandler(&OnCdpCompletedStatic);
-        // The page then reports touch support, as it would on a touchscreen.
-        CallCdp("Emulation.setTouchEmulationEnabled", "{\"enabled\":true,\"maxTouchPoints\":10}");
         _touch = new PanelTouchClient(_serviceOrigin, SessionId, _pairedToken, c => QueueTouch(c), () => QueueTouch(null));
         Log.Info($"stream-host {SessionId}: touch enabled");
     }
@@ -338,8 +348,9 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private void QueueTouch(PanelTouchContact? contact)
     {
         _touchQueue.Enqueue(contact);
-        if (Interlocked.Exchange(ref _touchPosted, 1) == 0)
-            Native.PostMessageW(Hwnd, WM_TOUCH_CONTACTS, IntPtr.Zero, IntPtr.Zero);
+        if (Interlocked.Exchange(ref _touchPosted, 1) == 0
+            && !Native.PostMessageW(Hwnd, WM_TOUCH_CONTACTS, IntPtr.Zero, IntPtr.Zero))
+            Volatile.Write(ref _touchPosted, 0);
     }
 
     private void DrainTouch()
@@ -350,23 +361,31 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
             if (_disposed || _coreWebView2 == IntPtr.Zero) continue;
             var json = contact is { } c ? _touchState.Apply(c, _assignment.CssWidth, _assignment.CssHeight) : _touchState.ReleaseAll();
             if (json is not null)
-                CallCdp("Input.dispatchTouchEvent", json);
+                CallCdp(TouchMethod, json, _cdpTouchHandler, ref _touchFailureLogged);
         }
     }
 
-    private void CallCdp(string method, string json)
+    // Each method logs its first failure once per host, so a broken path does not log per contact.
+    private void CallCdp(string method, string json, IntPtr handler, ref int failureLogged)
     {
-        var hr = Wv2.Wv2_CallDevToolsProtocolMethod(_coreWebView2, method, json, _cdpHandler);
-        if (WebView2Native.Failed(hr) && Interlocked.Exchange(ref _cdpFailureLogged, 1) == 0)
+        var hr = Wv2.Wv2_CallDevToolsProtocolMethod(_coreWebView2, method, json, handler);
+        if (WebView2Native.Failed(hr) && Interlocked.Exchange(ref failureLogged, 1) == 0)
             Log.Warn($"stream-host {SessionId}: {method} hr=0x{hr:X8}");
     }
 
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     private static int OnCdpCompletedStatic(IntPtr self, int errorCode, IntPtr resultJson)
     {
-        if (WebView2Native.Failed(errorCode) && Interlocked.Exchange(ref _cdpFailureLogged, 1) == 0)
-            Log.Warn($"stream-host: devtools call failed err=0x{errorCode:X8} {Marshal.PtrToStringUni(resultJson)}");
+        if (WebView2Native.Failed(errorCode))
+            FindByCdpHandler(self)?.OnCdpFailed(self, errorCode, Marshal.PtrToStringUni(resultJson));
         return WebView2Native.S_OK;
+    }
+
+    private void OnCdpFailed(IntPtr handler, int errorCode, string? resultJson)
+    {
+        bool emulation = handler == _cdpEmulationHandler;
+        if (Interlocked.Exchange(ref (emulation ? ref _emulationFailureLogged : ref _touchFailureLogged), 1) == 0)
+            Log.Warn($"stream-host {SessionId}: {(emulation ? EmulationMethod : TouchMethod)} failed err=0x{errorCode:X8} {resultJson}");
     }
 
     // ===================== capture -> encode -> ingest =====================
@@ -722,7 +741,8 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         ReleaseHandler(ref _ctrlCreatedHandler);
         ReleaseHandler(ref _navCompletedHandler);
         ReleaseHandler(ref _previewHandler);
-        ReleaseHandler(ref _cdpHandler);
+        ReleaseHandler(ref _cdpEmulationHandler);
+        ReleaseHandler(ref _cdpTouchHandler);
         if (_envOptions != IntPtr.Zero)
         {
             Wv2.Release(_envOptions);
@@ -772,6 +792,13 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     {
         foreach (var kv in _instances)
             if (kv.Value._navCompletedHandler == h) return kv.Value;
+        return null;
+    }
+
+    private static StreamPanelHost? FindByCdpHandler(IntPtr h)
+    {
+        foreach (var kv in _instances)
+            if (kv.Value._cdpEmulationHandler == h || kv.Value._cdpTouchHandler == h) return kv.Value;
         return null;
     }
 }

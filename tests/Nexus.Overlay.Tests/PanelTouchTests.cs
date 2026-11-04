@@ -38,14 +38,27 @@ public class PanelTouchTests
     }
 
     [Fact]
-    public void Every_event_carries_all_points_and_a_partial_release_is_a_move()
+    public void Every_event_carries_all_points_and_a_second_press_or_partial_release_is_a_move()
     {
         var state = new CdpTouchState();
         state.Apply(new(1, PanelTouchPhase.Down, 0, 0), 100, 100);
 
-        Assert.Equal("{\"type\":\"touchStart\",\"touchPoints\":[{\"x\":0,\"y\":0,\"id\":1},{\"x\":50,\"y\":50,\"id\":2}]}", state.Apply(new(2, PanelTouchPhase.Down, 0.5, 0.5), 100, 100));
+        Assert.Equal("{\"type\":\"touchMove\",\"touchPoints\":[{\"x\":0,\"y\":0,\"id\":1},{\"x\":50,\"y\":50,\"id\":2}]}", state.Apply(new(2, PanelTouchPhase.Down, 0.5, 0.5), 100, 100));
         Assert.Equal("{\"type\":\"touchMove\",\"touchPoints\":[{\"x\":50,\"y\":50,\"id\":2}]}", state.Apply(new(1, PanelTouchPhase.Up, 0, 0), 100, 100));
         Assert.Equal("{\"type\":\"touchCancel\",\"touchPoints\":[]}", state.ReleaseAll());
+    }
+
+    [Fact]
+    public void A_second_finger_tapping_while_the_first_is_held_never_restarts_the_touch()
+    {
+        var state = new CdpTouchState();
+        Assert.Equal("{\"type\":\"touchStart\",\"touchPoints\":[{\"x\":10,\"y\":10,\"id\":1}]}", state.Apply(new(1, PanelTouchPhase.Down, 0.1, 0.1), 100, 100));
+
+        Assert.Equal("{\"type\":\"touchMove\",\"touchPoints\":[{\"x\":10,\"y\":10,\"id\":1},{\"x\":80,\"y\":80,\"id\":2}]}", state.Apply(new(2, PanelTouchPhase.Down, 0.8, 0.8), 100, 100));
+        Assert.Equal("{\"type\":\"touchMove\",\"touchPoints\":[{\"x\":10,\"y\":10,\"id\":1}]}", state.Apply(new(2, PanelTouchPhase.Up, 0.8, 0.8), 100, 100));
+        Assert.Equal("{\"type\":\"touchMove\",\"touchPoints\":[{\"x\":10,\"y\":10,\"id\":1},{\"x\":70,\"y\":70,\"id\":2}]}", state.Apply(new(2, PanelTouchPhase.Down, 0.7, 0.7), 100, 100));
+        Assert.Equal("{\"type\":\"touchMove\",\"touchPoints\":[{\"x\":10,\"y\":10,\"id\":1}]}", state.Apply(new(2, PanelTouchPhase.Up, 0.7, 0.7), 100, 100));
+        Assert.Equal("{\"type\":\"touchEnd\",\"touchPoints\":[]}", state.Apply(new(1, PanelTouchPhase.Up, 0.1, 0.1), 100, 100));
     }
 
     [Fact]
