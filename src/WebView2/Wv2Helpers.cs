@@ -368,6 +368,17 @@ internal static unsafe class Wv2
     public static int DownloadArgs_put_Handled(IntPtr args, bool handled) =>
         SettingsPutBool(args, WebView2Vtable.DownloadArgs_put_Handled, handled);
 
+    // ===================== ICoreWebView2_9 =====================
+
+    public static readonly Guid IID_ICoreWebView2_9 =
+        new("4d7b2eab-9fdc-468d-b998-a9260b5ed651");
+
+    public static int Wv2_9_OpenDefaultDownloadDialog(IntPtr wv9)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int>)Slot(wv9, WebView2Vtable.Wv2_9_OpenDefaultDownloadDialog);
+        return fn(wv9);
+    }
+
     // ===================== ICoreWebView2Settings =====================
 
     public static int Settings_put_IsWebMessageEnabled(IntPtr s, bool v) =>
@@ -583,7 +594,7 @@ internal static unsafe class Wv2
     /// </summary>
     public static bool PermissionArgs_TryDisableSavesInProfile(IntPtr args)
     {
-        var args3 = QueryInterface(args, WebView2Native.IID_ICoreWebView2PermissionRequestedEventArgs3);
+        var args3 = QueryInterface(args, IID_ICoreWebView2PermissionRequestedEventArgs3);
         if (args3 == IntPtr.Zero) return false;
         try
         {
@@ -593,13 +604,49 @@ internal static unsafe class Wv2
         finally { Release(args3); }
     }
 
-    // ===================== Profile permission state =====================
+    public static int PermissionArgs_put_State(IntPtr args, int state)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(args, WebView2Vtable.PermissionArgs_put_State);
+        return fn(args, state);
+    }
 
-    public static int Wv2_13_get_Profile(IntPtr wv2_13, out IntPtr profile)
+    public static int PermissionArgs_get_Uri(IntPtr args, out string? uri)
     {
         IntPtr p;
-        var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(wv2_13, WebView2Vtable.Wv2_13_get_Profile);
-        var hr = fn(wv2_13, &p);
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(args, WebView2Vtable.PermissionArgs_get_Uri);
+        var hr = fn(args, &p);
+        if (WebView2Native.Failed(hr) || p == IntPtr.Zero) { uri = null; return hr; }
+        uri = Marshal.PtrToStringUni(p);
+        Marshal.FreeCoTaskMem(p);
+        return hr;
+    }
+
+    public static readonly Guid IID_ICoreWebView2PermissionRequestedEventArgs3 =
+        new("e61670bc-3dce-4177-86d2-c629ae3cb6ac");
+
+    /// <summary>Keeps this request's decision out of the profile. No-op on runtimes without Args3.</summary>
+    public static void PermissionArgs_DoNotSaveInProfile(IntPtr args)
+    {
+        var args3 = QueryInterface(args, IID_ICoreWebView2PermissionRequestedEventArgs3);
+        if (args3 == IntPtr.Zero) return;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(args3, WebView2Vtable.PermissionArgs3_put_SavesInProfile);
+        fn(args3, 0);
+        Release(args3);
+    }
+
+    // ===================== ICoreWebView2_13 / ICoreWebView2Profile4 =====================
+
+    public static readonly Guid IID_ICoreWebView2_13 =
+        new("f75f09a8-667e-4983-88d6-c8773f315e84");
+
+    public static readonly Guid IID_ICoreWebView2Profile4 =
+        new("8f4ae680-192e-4ec8-833a-21cfadaef628");
+
+    public static int Wv2_13_get_Profile(IntPtr wv13, out IntPtr profile)
+    {
+        IntPtr p;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(wv13, WebView2Vtable.Wv2_13_get_Profile);
+        var hr = fn(wv13, &p);
         profile = p;
         return hr;
     }
@@ -608,11 +655,5 @@ internal static unsafe class Wv2
     {
         var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, char*, int, IntPtr, int>)Slot(profile4, WebView2Vtable.Profile4_SetPermissionState);
         fixed (char* o = origin) return fn(profile4, kind, o, state, handler);
-    }
-
-    public static int PermissionArgs_put_State(IntPtr args, int state)
-    {
-        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(args, WebView2Vtable.PermissionArgs_put_State);
-        return fn(args, state);
     }
 }

@@ -655,10 +655,10 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         IntPtr core13 = IntPtr.Zero, profile = IntPtr.Zero, profile4 = IntPtr.Zero;
         try
         {
-            core13 = Wv2.QueryInterface(view.Core, WebView2Native.IID_ICoreWebView2_13);
+            core13 = Wv2.QueryInterface(view.Core, Wv2.IID_ICoreWebView2_13);
             if (core13 == IntPtr.Zero) { WarnProfileBinding("ICoreWebView2_13"); return; }
             if (WebView2Native.Failed(Wv2.Wv2_13_get_Profile(core13, out profile)) || profile == IntPtr.Zero) { WarnProfileBinding("get_Profile"); return; }
-            profile4 = Wv2.QueryInterface(profile, WebView2Native.IID_ICoreWebView2Profile4);
+            profile4 = Wv2.QueryInterface(profile, Wv2.IID_ICoreWebView2Profile4);
             if (profile4 == IntPtr.Zero) { WarnProfileBinding("ICoreWebView2Profile4"); return; }
             if (_permissionResetHandler == IntPtr.Zero) _permissionResetHandler = WebView2Callbacks.CreateSetPermissionStateCompletedHandler(&OnPermissionResetCompletedStatic);
             allOk = true;

@@ -67,23 +67,6 @@ internal static unsafe class WebView2Native
     public static readonly Guid IID_ICoreWebView2Settings9 =
         new("0528a73b-e92d-49f4-927a-e547dddaa37d");
 
-    // ICoreWebView2PermissionRequestedEventArgs3 (extends Args2). Adds
-    // SavesInProfile: false keeps a PermissionRequested decision out of the
-    // profile's persisted per-origin permission state.
-    public static readonly Guid IID_ICoreWebView2PermissionRequestedEventArgs3 =
-        new("e61670bc-3dce-4177-86d2-c629ae3cb6ac");
-
-    // ICoreWebView2_13 adds get_Profile; Profile4 adds
-    // SetPermissionState; the handler is its completion callback.
-    public static readonly Guid IID_ICoreWebView2_13 =
-        new("f75f09a8-667e-4983-88d6-c8773f315e84");
-
-    public static readonly Guid IID_ICoreWebView2Profile4 =
-        new("8f4ae680-192e-4ec8-833a-21cfadaef628");
-
-    public static readonly Guid IID_ICoreWebView2SetPermissionStateCompletedHandler =
-        new("fc77fb30-9c9e-4076-b8c7-7644a703ca1b");
-
     public static readonly Guid IID_ICoreWebView2WebMessageReceivedEventHandler =
         new("57213f19-00e6-49fa-8e07-898ea01ecbd2");
 
@@ -143,6 +126,9 @@ internal static unsafe class WebView2Native
 
     public static readonly Guid IID_ICoreWebView2_4 =
         new("20d02d59-6df2-42dc-bd06-f98a694b1302");
+
+    public static readonly Guid IID_ICoreWebView2SetPermissionStateCompletedHandler =
+        new("fc77fb30-9c9e-4076-b8c7-7644a703ca1b");
 
     public static readonly Guid IID_ICoreWebView2DownloadStartingEventHandler =
         new("efedc989-c396-41ca-83f7-07f845a55724");

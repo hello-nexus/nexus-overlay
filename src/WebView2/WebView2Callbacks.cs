@@ -221,31 +221,6 @@ internal static unsafe class WebView2Callbacks
         return WebView2Native.E_NOINTERFACE;
     }
 
-    // ============== SetPermissionState completed handler ==============
-
-    // Invoke(HRESULT errorCode)
-    public static IntPtr CreateSetPermissionStateCompletedHandler(
-        delegate* unmanaged[Stdcall]<IntPtr, int, int> onInvoke)
-    {
-        var vt = AllocVtable4((IntPtr)onInvoke, &SetPermissionStateQI);
-        return AllocObject((IntPtr)vt);
-    }
-
-    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
-    private static int SetPermissionStateQI(IntPtr self, Guid* iid, IntPtr* ppv)
-    {
-        if (iid == null) return WebView2Native.E_POINTER;
-        if (*iid == WebView2Native.IID_IUnknown ||
-            *iid == WebView2Native.IID_ICoreWebView2SetPermissionStateCompletedHandler)
-        {
-            *ppv = self;
-            AddRefInternal(self);
-            return WebView2Native.S_OK;
-        }
-        *ppv = IntPtr.Zero;
-        return WebView2Native.E_NOINTERFACE;
-    }
-
     // ============== CallDevToolsProtocolMethod completed handler ==============
 
     // Invoke(HRESULT errorCode, LPCWSTR returnObjectAsJson)
@@ -383,6 +358,30 @@ internal static unsafe class WebView2Callbacks
         if (iid == null) return WebView2Native.E_POINTER;
         if (*iid == WebView2Native.IID_IUnknown ||
             *iid == WebView2Native.IID_ICoreWebView2DownloadStartingEventHandler)
+        {
+            *ppv = self;
+            AddRefInternal(self);
+            return WebView2Native.S_OK;
+        }
+        *ppv = IntPtr.Zero;
+        return WebView2Native.E_NOINTERFACE;
+    }
+
+    // ============== SetPermissionState completed handler ==============
+
+    public static IntPtr CreateSetPermissionStateCompletedHandler(
+        delegate* unmanaged[Stdcall]<IntPtr, int, int> onInvoke)
+    {
+        var vt = AllocVtable4((IntPtr)onInvoke, &SetPermissionStateCompletedQI);
+        return AllocObject((IntPtr)vt);
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int SetPermissionStateCompletedQI(IntPtr self, Guid* iid, IntPtr* ppv)
+    {
+        if (iid == null) return WebView2Native.E_POINTER;
+        if (*iid == WebView2Native.IID_IUnknown ||
+            *iid == WebView2Native.IID_ICoreWebView2SetPermissionStateCompletedHandler)
         {
             *ppv = self;
             AddRefInternal(self);

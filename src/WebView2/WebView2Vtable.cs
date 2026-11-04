@@ -95,6 +95,12 @@ internal static class WebView2Vtable
     // ICoreWebView2_4 (QI for IID_ICoreWebView2_4); _2 is 61..67, _3 is 68..72, _4 starts with FrameCreated at 73..74.
     public const int Wv2_4_add_DownloadStarting = 75;
     public const int Wv2_4_remove_DownloadStarting = 76;
+    // ICoreWebView2_9 (QI for IID_ICoreWebView2_9), after the _5.._8 methods.
+    public const int Wv2_9_OpenDefaultDownloadDialog = 91;
+    // ICoreWebView2_13 (QI for IID_ICoreWebView2_13).
+    public const int Wv2_13_get_Profile = 105;
+    // ICoreWebView2Profile4 (QI the profile for IID_ICoreWebView2Profile4).
+    public const int Profile4_SetPermissionState = 15;
     // ICoreWebView2_19 (extends ICoreWebView2_18). QI for IID_ICoreWebView2_19.
     public const int Wv2_19_put_MemoryUsageTargetLevel = 120;
 
@@ -199,17 +205,7 @@ internal static class WebView2Vtable
     public const int PermissionArgs_get_State = 6;
     public const int PermissionArgs_put_State = 7;
     public const int PermissionArgs_GetDeferral = 8;
-
-    // ICoreWebView2_13: ICoreWebView2 owns 3..60, _2 61..67, _3 68..72, _4 73..76,
-    // _5 77..78, _6 79, _7 80, _8 81..87, _9 88..96, _10 97..98, _11 99..101, _12 102..104,
-    // so _13 get_Profile is 105. QI for IID_ICoreWebView2_13.
-    public const int Wv2_13_get_Profile = 105;
-
-    // ICoreWebView2Profile4: Profile owns 3..9 (7 members), Profile2 10..12, Profile3 13..14,
-    // Profile4 starts at 15 with SetPermissionState. QI for IID_ICoreWebView2Profile4.
-    public const int Profile4_SetPermissionState = 15;
-
-    // ICoreWebView2PermissionRequestedEventArgs3 (Args2 owns 9..10: Handled).
+    // ICoreWebView2PermissionRequestedEventArgs3 (QI the args for IID_ICoreWebView2PermissionRequestedEventArgs3).
     public const int PermissionArgs3_get_SavesInProfile = 11;
     public const int PermissionArgs3_put_SavesInProfile = 12;
 }
