@@ -73,7 +73,7 @@ internal static unsafe class WebView2Native
     public static readonly Guid IID_ICoreWebView2PermissionRequestedEventArgs3 =
         new("e61670bc-3dce-4177-86d2-c629ae3cb6ac");
 
-    // WebView2.h 1.0.2792.45. ICoreWebView2_13 adds get_Profile; Profile4 adds
+    // ICoreWebView2_13 adds get_Profile; Profile4 adds
     // SetPermissionState; the handler is its completion callback.
     public static readonly Guid IID_ICoreWebView2_13 =
         new("f75f09a8-667e-4983-88d6-c8773f315e84");

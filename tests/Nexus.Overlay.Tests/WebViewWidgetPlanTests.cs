@@ -846,4 +846,32 @@ public class WebViewWidgetPlanTests
         h.OnFailed();
         Assert.False(h.IsPending);
     }
+
+    [Theory]
+    [InlineData("https://discord.com/channels/@me", "https://discord.com")]
+    [InlineData("https://Discord.com:443/app?x=1#h", "https://discord.com")]
+    [InlineData("http://example.com:80/a", "http://example.com")]
+    [InlineData("http://example.com:8080/a", "http://example.com:8080")]
+    [InlineData("https://example.com:8443/", "https://example.com:8443")]
+    [InlineData("https://User:Pw@Example.COM/a", "https://example.com")]
+    [InlineData("https://b\u00fccher.example/", "https://xn--bcher-kva.example")]
+    [InlineData("https://[2001:db8::1]/a", "https://[2001:db8::1]")]
+    [InlineData("https://[2001:db8::1]:8443/a", "https://[2001:db8::1]:8443")]
+    [InlineData("ftp://example.com/", null)]
+    [InlineData("not a url", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void MediaOrigin_IsSchemeHostPortOnly(string? url, string? expected)
+        => Assert.Equal(expected, WebViewWidgetProtocol.MediaOrigin(url));
+
+    [Fact]
+    public void MediaOriginResets_MarksEachOriginOnceUntilCleared()
+    {
+        var r = new MediaOriginResets();
+        Assert.True(r.TryMark("https://a.example"));
+        Assert.False(r.TryMark("https://a.example"));
+        Assert.True(r.TryMark("https://www.a.example"));
+        r.Clear();
+        Assert.True(r.TryMark("https://a.example"));
+    }
 }

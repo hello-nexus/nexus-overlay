@@ -56,6 +56,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         public required WebViewWidgetHost Host;
         public required WidgetViewSpec Spec;
         public readonly LongPressGate LongPress = new();
+        public readonly MediaOriginResets MediaResets = new();
         public readonly LongPressGate BackSwipe = new(BackSwipeGapMs);
         public IntPtr Container;
         public IntPtr Controller;
@@ -172,7 +173,6 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                     if (_byId.TryGetValue(action.Id, out var nav) && nav.Ready)
                     {
                         nav.Home.Expect();
-                        if (action.Spec!.Media) ResetMediaPermissions(nav, action.Spec.Url);
                         Wv2.Wv2_Navigate(nav.Core, action.Spec!.Url);
                     }
                     break;
@@ -190,7 +190,11 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                         var previousMedia = lay.Spec.Media;
                         lay.Spec = action.Spec!;
                         if (previousMedia != lay.Spec.Media) Log.Info($"webview-widget media {(lay.Spec.Media ? "on" : "off")} id={lay.Id}");
-                        if (lay.Ready && WebViewWidgetProtocol.ShouldResetMediaPermissions(previousMedia, lay.Spec.Media)) ResetMediaPermissions(lay, _registry.ConfiguredUrl(lay.Id) ?? lay.Spec.Url);
+                        if (previousMedia != lay.Spec.Media)
+                        {
+                            if (!lay.Spec.Media) lay.MediaResets.Clear();
+                            else if (lay.Ready) ResetMediaPermissions(lay, Wv2.Wv2_get_Source(lay.Core) ?? _registry.ConfiguredUrl(lay.Id) ?? lay.Spec.Url);
+                        }
                         ApplyLayout(lay);
                     }
                     break;
@@ -557,6 +561,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         };
         Views[view.Key] = view;
         _byId[spec.Id] = view;
+        Log.Info($"webview-widget media {(spec.Media ? "on" : "off")} id={spec.Id}");
         Post(WebViewWidgetProtocol.BuildState(spec.Id, "loading", null, false));
 
         if (_env == IntPtr.Zero) EnsureEnv();
@@ -624,21 +629,21 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         view.Ready = true;
         ApplyLayout(view);
         var url = _registry.ConfiguredUrl(view.Id) ?? view.Spec.Url;
-        if (WebViewWidgetProtocol.ShouldResetMediaPermissions(null, view.Spec.Media)) ResetMediaPermissions(view, url);
         view.Home.Expect();
         var hr = Wv2.Wv2_Navigate(view.Core, url);
         Log.Info($"webview-widget view ready navigate hr=0x{hr:X8} url={LogRedact.Url(url)}");
     }
 
     /// <summary>
-    /// A prior build denied every request with the decision saved in the shared profile, and Chromium then
-    /// answers from that saved state without raising PermissionRequested. Reset microphone and camera for
-    /// the origin to default. Fire and forget; navigation does not wait on the completion.
+    /// A saved per-origin permission state in the shared profile suppresses PermissionRequested. For a media
+    /// view, reset microphone and camera to default once per origin it reaches (created, flipped on,
+    /// navigated, redirected). Fire and forget; navigation does not wait on the completion.
     /// </summary>
     private static void ResetMediaPermissions(NativeView view, string url)
     {
+        if (!view.Spec.Media) return;
         var origin = WebViewWidgetProtocol.MediaOrigin(url);
-        if (origin is null) return;
+        if (origin is null || !view.MediaResets.TryMark(origin)) return;
         IntPtr core13 = IntPtr.Zero, profile = IntPtr.Zero, profile4 = IntPtr.Zero;
         try
         {
@@ -957,6 +962,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                 Log.Info($"webview-widget blocked navigation {LogRedact.Url(uri)}");
                 return WebView2Native.S_OK;
             }
+            ResetMediaPermissions(view, uri!);
             view.Nav.OnNavigationStarting();
             view.EditFocus.OnNavigationStarting();
             view.Host.UpdateActivation();

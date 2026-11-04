@@ -171,18 +171,23 @@ internal static class WebViewWidgetProtocol
     public static int PermissionDecision(bool media, int kind)
         => media && (kind == PermissionKindMicrophone || kind == PermissionKindCamera) ? PermissionStateAllow : PermissionStateDeny;
 
-    /// <summary>scheme://host[:port] of an absolute http(s) url, default ports omitted; null when not an origin.</summary>
+    /// <summary>
+    /// scheme://host[:port] of an absolute http(s) url: lowercase scheme, punycode host, IPv6 bracketed, default
+    /// port omitted, no userinfo, path, query or fragment. Null when the url is not an allowed widget url.
+    /// </summary>
     public static string? MediaOrigin(string? url)
     {
-        if (!IsAllowedUrl(url)) return null;
-        return Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.GetLeftPart(UriPartial.Authority) : null;
+        if (!IsAllowedUrl(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri)) return null;
+        var host = uri.IdnHost;
+        if (string.IsNullOrEmpty(host)) return null;
+        if (uri.HostNameType == UriHostNameType.IPv6)
+        {
+            var pct = host.IndexOf('%');
+            if (pct >= 0) host = host[..pct];
+            host = "[" + host.Trim('[', ']') + "]";
+        }
+        return uri.Scheme + "://" + host + (uri.IsDefaultPort ? "" : ":" + uri.Port.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
-
-    /// <summary>
-    /// True when saved microphone and camera state for the view's origin must be reset to default:
-    /// media is on and was not already on (a null previous value means the view is being created).
-    /// </summary>
-    public static bool ShouldResetMediaPermissions(bool? previousMedia, bool media) => media && previousMedia != true;
 
     private static bool ReadBool(JsonElement obj, string name)
         => obj.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.True;
@@ -904,4 +909,15 @@ internal static class CursorCountClamp
 {
     /// <summary>True to call ShowCursor(true), false for ShowCursor(false), null when the count is already zero.</summary>
     public static bool? NextCall(int count) => count < 0 ? true : count > 0 ? false : null;
+}
+
+/// <summary>Origins whose saved microphone and camera state was already reset for one view, so each is reset once.</summary>
+internal sealed class MediaOriginResets
+{
+    private readonly HashSet<string> _done = new(StringComparer.Ordinal);
+
+    /// <summary>True the first time an origin is seen since the last <see cref="Clear"/>.</summary>
+    public bool TryMark(string origin) => _done.Add(origin);
+
+    public void Clear() => _done.Clear();
 }
