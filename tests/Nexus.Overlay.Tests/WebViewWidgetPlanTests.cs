@@ -857,7 +857,7 @@ public class WebViewWidgetPlanTests
     [InlineData("https://b\u00fccher.example/", "https://xn--bcher-kva.example")]
     [InlineData("https://[2001:db8::1]/a", "https://[2001:db8::1]")]
     [InlineData("https://[2001:db8::1]:8443/a", "https://[2001:db8::1]:8443")]
-    [InlineData("https://fe80::1%25eth0/", null)]
+    [InlineData("https://fe80::1%25eth0/", null)] // invalid input: unbracketed IPv6 does not parse
     [InlineData("https://[fe80::1%25eth0]/a", "https://[fe80::1]")]
     [InlineData("ftp://example.com/", null)]
     [InlineData("not a url", null)]
@@ -867,26 +867,40 @@ public class WebViewWidgetPlanTests
         => Assert.Equal(expected, WebViewWidgetProtocol.MediaOrigin(url));
 
     [Fact]
-    public void MediaOriginResets_MarksEachOriginOnceUntilCleared()
-    {
-        var r = new MediaOriginResets();
-        Assert.True(r.TryMark("https://a.example"));
-        Assert.False(r.TryMark("https://a.example"));
-        Assert.True(r.TryMark("https://www.a.example"));
-        r.Clear();
-        Assert.True(r.TryMark("https://a.example"));
-    }
-
-    [Fact]
     public void MediaOrigin_HasNoUrlLengthCap()
         => Assert.Equal("https://login.example.com", WebViewWidgetProtocol.MediaOrigin("https://login.example.com/oauth?state=" + new string('a', 5000)));
 
     [Fact]
-    public void MediaOriginResets_IsMarkedOnlyAfterMark()
+    public void MediaOrigin_RejectsHostOverDnsMax()
+    {
+        var longHost = string.Join(".", Enumerable.Repeat(new string('a', 60), 5));
+        Assert.Null(WebViewWidgetProtocol.MediaOrigin($"https://{longHost}/"));
+        Assert.NotNull(WebViewWidgetProtocol.MediaOrigin($"https://{new string('a', 60)}.example/"));
+    }
+
+    [Fact]
+    public void MediaOriginResets_DoneOnlyWhenEveryKindAccepted()
     {
         var r = new MediaOriginResets();
-        Assert.False(r.IsMarked("https://a.example"));
-        r.TryMark("https://a.example");
-        Assert.True(r.IsMarked("https://a.example"));
+        Assert.True(r.ShouldAttempt("https://a.example"));
+        r.RecordResult("https://a.example", allOk: true);
+        Assert.False(r.ShouldAttempt("https://a.example"));
+        Assert.True(r.ShouldAttempt("https://www.a.example"));
+    }
+
+    [Fact]
+    public void MediaOriginResets_FailureRetriesUpToTheCap()
+    {
+        var r = new MediaOriginResets();
+        for (var i = 0; i < MediaOriginResets.MaxAttempts; i++)
+        {
+            Assert.True(r.ShouldAttempt("https://a.example"));
+            Assert.Equal(i, r.Attempts("https://a.example"));
+            r.RecordResult("https://a.example", allOk: false);
+        }
+        Assert.False(r.ShouldAttempt("https://a.example"));
+        r.Clear();
+        Assert.True(r.ShouldAttempt("https://a.example"));
+        Assert.Equal(0, r.Attempts("https://a.example"));
     }
 }

@@ -44,6 +44,7 @@ internal static class WebViewWidgetProtocol
     private const int MaxMessageChars = 64 * 1024;
     private const int MaxIdChars = 128;
     private const int MaxUrlChars = 2048;
+    private const int MaxHostChars = 253;
 
     /// <summary>
     /// Parses one bridge message. Anything malformed or of an unknown type
@@ -180,7 +181,7 @@ internal static class WebViewWidgetProtocol
     {
         if (!IsHttpScheme(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri)) return null;
         var host = uri.IdnHost;
-        if (string.IsNullOrEmpty(host)) return null;
+        if (string.IsNullOrEmpty(host) || host.Length > MaxHostChars) return null;
         if (uri.HostNameType == UriHostNameType.IPv6)
         {
             var pct = host.IndexOf('%');
@@ -912,15 +913,32 @@ internal static class CursorCountClamp
     public static bool? NextCall(int count) => count < 0 ? true : count > 0 ? false : null;
 }
 
-/// <summary>Origins whose saved microphone and camera state was already reset for one view, so each is reset once.</summary>
+/// <summary>
+/// Per-view record of which origins had their saved microphone and camera state reset. An origin is reset
+/// until both kinds were accepted, with a bounded number of attempts so a rejecting profile is not hammered.
+/// </summary>
 internal sealed class MediaOriginResets
 {
+    public const int MaxAttempts = 3;
+
     private readonly HashSet<string> _done = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, int> _attempts = new(StringComparer.Ordinal);
 
-    public bool IsMarked(string origin) => _done.Contains(origin);
+    /// <summary>True while the origin is not done and has attempts left.</summary>
+    public bool ShouldAttempt(string origin) => !_done.Contains(origin) && Attempts(origin) < MaxAttempts;
 
-    /// <summary>True the first time an origin is marked since the last <see cref="Clear"/>.</summary>
-    public bool TryMark(string origin) => _done.Add(origin);
+    public int Attempts(string origin) => _attempts.TryGetValue(origin, out var n) ? n : 0;
 
-    public void Clear() => _done.Clear();
+    /// <summary>Records one attempt; the origin is done only when every kind was accepted.</summary>
+    public void RecordResult(string origin, bool allOk)
+    {
+        _attempts[origin] = Attempts(origin) + 1;
+        if (allOk) _done.Add(origin);
+    }
+
+    public void Clear()
+    {
+        _done.Clear();
+        _attempts.Clear();
+    }
 }

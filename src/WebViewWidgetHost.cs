@@ -649,7 +649,9 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     {
         if (!view.Spec.Media) return;
         var origin = WebViewWidgetProtocol.MediaOrigin(url);
-        if (origin is null || view.MediaResets.IsMarked(origin)) return;
+        if (origin is null || !view.MediaResets.ShouldAttempt(origin)) return;
+        var firstAttempt = view.MediaResets.Attempts(origin) == 0;
+        var allOk = false;
         IntPtr core13 = IntPtr.Zero, profile = IntPtr.Zero, profile4 = IntPtr.Zero;
         try
         {
@@ -659,19 +661,20 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             profile4 = Wv2.QueryInterface(profile, WebView2Native.IID_ICoreWebView2Profile4);
             if (profile4 == IntPtr.Zero) { WarnProfileBinding("ICoreWebView2Profile4"); return; }
             if (_permissionResetHandler == IntPtr.Zero) _permissionResetHandler = WebView2Callbacks.CreateSetPermissionStateCompletedHandler(&OnPermissionResetCompletedStatic);
-            var anyOk = false;
+            allOk = true;
             foreach (var kind in new[] { WebViewWidgetProtocol.PermissionKindMicrophone, WebViewWidgetProtocol.PermissionKindCamera })
             {
                 var hr = Wv2.Profile4_SetPermissionState(profile4, kind, origin, WebViewWidgetProtocol.PermissionStateDefault, _permissionResetHandler);
-                Log.Info($"webview-widget media reset origin={origin} kind={kind} hr=0x{hr:X8}");
-                anyOk |= !WebView2Native.Failed(hr);
+                var ok = !WebView2Native.Failed(hr);
+                if (ok || firstAttempt) Log.Info($"webview-widget media reset origin={origin} kind={kind} hr=0x{hr:X8}");
+                allOk &= ok;
             }
-            // Mark only after a call was accepted, so a transient failure is retried on the next navigation.
-            if (anyOk) view.MediaResets.TryMark(origin);
         }
         catch (Exception ex) { Log.Error($"webview-widget media reset: {ex.Message}"); }
         finally
         {
+            // Done only when both kinds were accepted; a failure is retried on later navigations up to the attempt cap.
+            view.MediaResets.RecordResult(origin, allOk);
             if (profile4 != IntPtr.Zero) Wv2.Release(profile4);
             if (profile != IntPtr.Zero) Wv2.Release(profile);
             if (core13 != IntPtr.Zero) Wv2.Release(core13);
