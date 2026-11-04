@@ -910,10 +910,10 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         if (owner is null || args == IntPtr.Zero || owner._coreWebView2_9 == IntPtr.Zero) return WebView2Native.S_OK;
         try
         {
-            // Suppress the automatic flyout only once this window's own one is open.
+            // Not marked handled: a handled download is left out of the dialog's list.
+            // The automatic flyout reuses the dialog already open here.
             var hr = Wv2.Wv2_9_OpenDefaultDownloadDialog(owner._coreWebView2_9);
             if (WebView2Native.Failed(hr)) Log.Warn($"dashboard OpenDefaultDownloadDialog hr=0x{hr:X8}");
-            else Wv2.DownloadArgs_put_Handled(args, true);
         }
         catch (Exception ex) { Log.Error($"dashboard Download: {ex.Message}"); }
         return WebView2Native.S_OK;
