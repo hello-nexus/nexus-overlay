@@ -593,4 +593,47 @@ internal static unsafe class Wv2
         var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(args, WebView2Vtable.PermissionArgs_put_State);
         return fn(args, state);
     }
+
+    public static int PermissionArgs_get_Uri(IntPtr args, out string? uri)
+    {
+        IntPtr p;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(args, WebView2Vtable.PermissionArgs_get_Uri);
+        var hr = fn(args, &p);
+        if (WebView2Native.Failed(hr) || p == IntPtr.Zero) { uri = null; return hr; }
+        uri = Marshal.PtrToStringUni(p);
+        Marshal.FreeCoTaskMem(p);
+        return hr;
+    }
+
+    public static readonly Guid IID_ICoreWebView2PermissionRequestedEventArgs3 =
+        new("e61670bc-3dce-4177-86d2-c629ae3cb6ac");
+
+    public static int PermissionArgs3_put_SavesInProfile(IntPtr args3, bool saves)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(args3, WebView2Vtable.PermissionArgs3_put_SavesInProfile);
+        return fn(args3, saves ? 1 : 0);
+    }
+
+    // ===================== ICoreWebView2_13 / ICoreWebView2Profile4 =====================
+
+    public static readonly Guid IID_ICoreWebView2_13 =
+        new("f75f09a8-667e-4983-88d6-c8773f315e84");
+
+    public static readonly Guid IID_ICoreWebView2Profile4 =
+        new("8f4ae680-192e-4ec8-833a-21cfadaef628");
+
+    public static int Wv2_13_get_Profile(IntPtr wv13, out IntPtr profile)
+    {
+        IntPtr p;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(wv13, WebView2Vtable.Wv2_13_get_Profile);
+        var hr = fn(wv13, &p);
+        profile = p;
+        return hr;
+    }
+
+    public static int Profile4_SetPermissionState(IntPtr profile4, int kind, string origin, int state, IntPtr handler)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, char*, int, IntPtr, int>)Slot(profile4, WebView2Vtable.Profile4_SetPermissionState);
+        fixed (char* o = origin) return fn(profile4, kind, o, state, handler);
+    }
 }

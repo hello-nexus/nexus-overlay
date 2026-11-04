@@ -97,6 +97,10 @@ internal static class WebView2Vtable
     public const int Wv2_4_remove_DownloadStarting = 76;
     // ICoreWebView2_9 (QI for IID_ICoreWebView2_9), after the _5.._8 methods.
     public const int Wv2_9_OpenDefaultDownloadDialog = 91;
+    // ICoreWebView2_13 (QI for IID_ICoreWebView2_13).
+    public const int Wv2_13_get_Profile = 105;
+    // ICoreWebView2Profile4 (QI the profile for IID_ICoreWebView2Profile4).
+    public const int Profile4_SetPermissionState = 15;
     // ICoreWebView2_19 (extends ICoreWebView2_18). QI for IID_ICoreWebView2_19.
     public const int Wv2_19_put_MemoryUsageTargetLevel = 120;
 
@@ -201,4 +205,6 @@ internal static class WebView2Vtable
     public const int PermissionArgs_get_State = 6;
     public const int PermissionArgs_put_State = 7;
     public const int PermissionArgs_GetDeferral = 8;
+    // ICoreWebView2PermissionRequestedEventArgs3 (QI the args for IID_ICoreWebView2PermissionRequestedEventArgs3).
+    public const int PermissionArgs3_put_SavesInProfile = 12;
 }

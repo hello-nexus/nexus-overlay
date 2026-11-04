@@ -127,6 +127,9 @@ internal static unsafe class WebView2Native
     public static readonly Guid IID_ICoreWebView2_4 =
         new("20d02d59-6df2-42dc-bd06-f98a694b1302");
 
+    public static readonly Guid IID_ICoreWebView2SetPermissionStateCompletedHandler =
+        new("fc77fb30-9c9e-4076-b8c7-7644a703ca1b");
+
     public static readonly Guid IID_ICoreWebView2DownloadStartingEventHandler =
         new("efedc989-c396-41ca-83f7-07f845a55724");
 

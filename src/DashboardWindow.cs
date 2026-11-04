@@ -45,7 +45,9 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     // to grab. 12 matches Edge / Settings / Microsoft Store custom frames.
     private const int ResizeGrabLogical = 12;
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 2;
+    private const int PermissionStateAllow = 1;
     private const int PermissionStateDeny = 2;
+    private const int PermissionKindMultipleAutomaticDownloads = 7;
     // Fully-transparent COREWEBVIEW2_COLOR for the WebView2 controller's
     // default backdrop so the DWM Mica system backdrop shows through wherever
     // the page paints transparent. The nexus-web page renders a transparent
@@ -784,6 +786,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         _permissionHandler = WebView2Callbacks.CreatePermissionRequestedHandler(&OnPermissionRequestedStatic);
         var permHr = Wv2.Wv2_add_PermissionRequested(_coreWebView2, _permissionHandler, out _permissionToken);
         if (WebView2Native.Failed(permHr)) Log.Error($"dashboard add_PermissionRequested failed hr=0x{permHr:X8}");
+        AllowOwnDownloads();
 
         // The panel kiosks share this browser process, and its automatic download
         // flyout opens on whichever WebView it last saw active, which can be a panel.
@@ -888,6 +891,52 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         return WebView2Native.S_OK;
     }
 
+    private string? OwnOrigin()
+    {
+        try { return new Uri(_navigationUrl).GetLeftPart(UriPartial.Authority); }
+        catch { return null; }
+    }
+
+    // A second download in one page session asks for MultipleAutomaticDownloads, and a
+    // refusal saved in the profile (by older builds) blocks every later export. Allow it
+    // for the dashboard's own origin, overwriting any saved refusal. Older runtimes
+    // without ICoreWebView2Profile4 fall back to the PermissionRequested allow.
+    private void AllowOwnDownloads()
+    {
+        var origin = OwnOrigin();
+        if (origin is null) return;
+        var wv13 = Wv2.QueryInterface(_coreWebView2, Wv2.IID_ICoreWebView2_13);
+        if (wv13 == IntPtr.Zero) return;
+        var profile = IntPtr.Zero;
+        var profile4 = IntPtr.Zero;
+        var handler = IntPtr.Zero;
+        try
+        {
+            if (WebView2Native.Failed(Wv2.Wv2_13_get_Profile(wv13, out profile)) || profile == IntPtr.Zero) return;
+            profile4 = Wv2.QueryInterface(profile, Wv2.IID_ICoreWebView2Profile4);
+            if (profile4 == IntPtr.Zero) return;
+            handler = WebView2Callbacks.CreateSetPermissionStateCompletedHandler(&OnSetPermissionStateCompletedStatic);
+            var hr = Wv2.Profile4_SetPermissionState(profile4, PermissionKindMultipleAutomaticDownloads, origin,
+                PermissionStateAllow, handler);
+            if (WebView2Native.Failed(hr)) Log.Warn($"dashboard SetPermissionState hr=0x{hr:X8}");
+        }
+        catch (Exception ex) { Log.Error($"dashboard SetPermissionState: {ex.Message}"); }
+        finally
+        {
+            if (handler != IntPtr.Zero) Wv2.Release(handler);
+            if (profile4 != IntPtr.Zero) Wv2.Release(profile4);
+            if (profile != IntPtr.Zero) Wv2.Release(profile);
+            Wv2.Release(wv13);
+        }
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnSetPermissionStateCompletedStatic(IntPtr self, int errorCode)
+    {
+        if (WebView2Native.Failed(errorCode)) Log.Warn($"dashboard SetPermissionState completed hr=0x{errorCode:X8}");
+        return WebView2Native.S_OK;
+    }
+
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
     private static int OnPermissionRequestedStatic(IntPtr self, IntPtr sender, IntPtr args)
     {
@@ -896,6 +945,22 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         try
         {
             Wv2.PermissionArgs_get_PermissionKind(args, out var kind);
+            if (kind == PermissionKindMultipleAutomaticDownloads
+                && WebView2Native.Succeeded(Wv2.PermissionArgs_get_Uri(args, out var uri)) && uri is not null
+                && Uri.TryCreate(uri, UriKind.Absolute, out var parsed)
+                && string.Equals(parsed.GetLeftPart(UriPartial.Authority), owner.OwnOrigin(), StringComparison.OrdinalIgnoreCase))
+            {
+                Wv2.PermissionArgs_put_State(args, PermissionStateAllow);
+                Log.Info("dashboard permission allowed kind=MultipleAutomaticDownloads");
+                return WebView2Native.S_OK;
+            }
+            // Refuse for this request only: a saved refusal would outlive the reason for it.
+            var args3 = Wv2.QueryInterface(args, Wv2.IID_ICoreWebView2PermissionRequestedEventArgs3);
+            if (args3 != IntPtr.Zero)
+            {
+                Wv2.PermissionArgs3_put_SavesInProfile(args3, false);
+                Wv2.Release(args3);
+            }
             Wv2.PermissionArgs_put_State(args, PermissionStateDeny);
             Log.Info($"dashboard permission denied kind={kind}");
         }
