@@ -13,7 +13,12 @@ namespace Nexus.Overlay.WebView2;
 /// additional browser arguments. The stream host passes
 /// --disable-features=CalculateNativeWinOcclusion (Chromium occlusion-throttles
 /// rendering of the off-screen stream host window without it, which starves
-/// WGC); the Y70 kiosk's compatibility rendering passes its own.
+/// WGC) and --disable-frame-rate-limit (the window has no display to pace
+/// against, and its synthetic frame clock holds a change and a CDP touch event
+/// several frames behind the page; without the limit both land within a frame.
+/// The page paces its own draw loops and the capture pump decimates to the
+/// stream rate, so the GPU and CPU cost stays the same); the Y70 kiosk's
+/// compatibility rendering passes its own.
 ///
 /// Vtable order from WebView2.h (Microsoft.Web.WebView2 1.0.2792.45,
 /// ICoreWebView2EnvironmentOptionsVtbl): slots 3-10 are
@@ -23,7 +28,7 @@ namespace Nexus.Overlay.WebView2;
 /// </summary>
 internal static unsafe class Wv2EnvironmentOptions
 {
-    private const string AdditionalBrowserArguments = "--disable-features=CalculateNativeWinOcclusion";
+    private const string AdditionalBrowserArguments = "--disable-features=CalculateNativeWinOcclusion --disable-frame-rate-limit";
 
     /// <summary>Bench diagnostics hook: NEXUS_STREAM_WV2_ARGS appends extra
     /// browser args (e.g. --remote-debugging-port=9223) to the stream env
