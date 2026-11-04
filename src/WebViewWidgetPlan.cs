@@ -173,11 +173,12 @@ internal static class WebViewWidgetProtocol
 
     /// <summary>
     /// scheme://host[:port] of an absolute http(s) url: lowercase scheme, punycode host, IPv6 bracketed, default
-    /// port omitted, no userinfo, path, query or fragment. Null when the url is not an allowed widget url.
+    /// port omitted, no userinfo, path, query or fragment. Null when not an http(s) url with a host; no length cap, since
+    /// redirect targets can be long.
     /// </summary>
     public static string? MediaOrigin(string? url)
     {
-        if (!IsAllowedUrl(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri)) return null;
+        if (!IsHttpScheme(url) || !Uri.TryCreate(url, UriKind.Absolute, out var uri)) return null;
         var host = uri.IdnHost;
         if (string.IsNullOrEmpty(host)) return null;
         if (uri.HostNameType == UriHostNameType.IPv6)
@@ -916,7 +917,9 @@ internal sealed class MediaOriginResets
 {
     private readonly HashSet<string> _done = new(StringComparer.Ordinal);
 
-    /// <summary>True the first time an origin is seen since the last <see cref="Clear"/>.</summary>
+    public bool IsMarked(string origin) => _done.Contains(origin);
+
+    /// <summary>True the first time an origin is marked since the last <see cref="Clear"/>.</summary>
     public bool TryMark(string origin) => _done.Add(origin);
 
     public void Clear() => _done.Clear();

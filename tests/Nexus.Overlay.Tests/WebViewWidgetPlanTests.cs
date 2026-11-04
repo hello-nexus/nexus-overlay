@@ -857,6 +857,8 @@ public class WebViewWidgetPlanTests
     [InlineData("https://b\u00fccher.example/", "https://xn--bcher-kva.example")]
     [InlineData("https://[2001:db8::1]/a", "https://[2001:db8::1]")]
     [InlineData("https://[2001:db8::1]:8443/a", "https://[2001:db8::1]:8443")]
+    [InlineData("https://fe80::1%25eth0/", null)]
+    [InlineData("https://[fe80::1%25eth0]/a", "https://[fe80::1]")]
     [InlineData("ftp://example.com/", null)]
     [InlineData("not a url", null)]
     [InlineData("", null)]
@@ -873,5 +875,18 @@ public class WebViewWidgetPlanTests
         Assert.True(r.TryMark("https://www.a.example"));
         r.Clear();
         Assert.True(r.TryMark("https://a.example"));
+    }
+
+    [Fact]
+    public void MediaOrigin_HasNoUrlLengthCap()
+        => Assert.Equal("https://login.example.com", WebViewWidgetProtocol.MediaOrigin("https://login.example.com/oauth?state=" + new string('a', 5000)));
+
+    [Fact]
+    public void MediaOriginResets_IsMarkedOnlyAfterMark()
+    {
+        var r = new MediaOriginResets();
+        Assert.False(r.IsMarked("https://a.example"));
+        r.TryMark("https://a.example");
+        Assert.True(r.IsMarked("https://a.example"));
     }
 }

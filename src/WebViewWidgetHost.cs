@@ -189,11 +189,17 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                     {
                         var previousMedia = lay.Spec.Media;
                         lay.Spec = action.Spec!;
-                        if (previousMedia != lay.Spec.Media) Log.Info($"webview-widget media {(lay.Spec.Media ? "on" : "off")} id={lay.Id}");
                         if (previousMedia != lay.Spec.Media)
                         {
+                            Log.Info($"webview-widget media {(lay.Spec.Media ? "on" : "off")} id={lay.Id}");
                             if (!lay.Spec.Media) lay.MediaResets.Clear();
-                            else if (lay.Ready) ResetMediaPermissions(lay, Wv2.Wv2_get_Source(lay.Core) ?? _registry.ConfiguredUrl(lay.Id) ?? lay.Spec.Url);
+                            else if (lay.Ready)
+                            {
+                                // The committed page and the target of a navigation still in flight can differ; the set dedupes.
+                                var source = Wv2.Wv2_get_Source(lay.Core);
+                                if (source is not null) ResetMediaPermissions(lay, source);
+                                ResetMediaPermissions(lay, _registry.ConfiguredUrl(lay.Id) ?? lay.Spec.Url);
+                            }
                         }
                         ApplyLayout(lay);
                     }
@@ -643,7 +649,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     {
         if (!view.Spec.Media) return;
         var origin = WebViewWidgetProtocol.MediaOrigin(url);
-        if (origin is null || !view.MediaResets.TryMark(origin)) return;
+        if (origin is null || view.MediaResets.IsMarked(origin)) return;
         IntPtr core13 = IntPtr.Zero, profile = IntPtr.Zero, profile4 = IntPtr.Zero;
         try
         {
@@ -653,11 +659,15 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             profile4 = Wv2.QueryInterface(profile, WebView2Native.IID_ICoreWebView2Profile4);
             if (profile4 == IntPtr.Zero) { WarnProfileBinding("ICoreWebView2Profile4"); return; }
             if (_permissionResetHandler == IntPtr.Zero) _permissionResetHandler = WebView2Callbacks.CreateSetPermissionStateCompletedHandler(&OnPermissionResetCompletedStatic);
+            var anyOk = false;
             foreach (var kind in new[] { WebViewWidgetProtocol.PermissionKindMicrophone, WebViewWidgetProtocol.PermissionKindCamera })
             {
                 var hr = Wv2.Profile4_SetPermissionState(profile4, kind, origin, WebViewWidgetProtocol.PermissionStateDefault, _permissionResetHandler);
                 Log.Info($"webview-widget media reset origin={origin} kind={kind} hr=0x{hr:X8}");
+                anyOk |= !WebView2Native.Failed(hr);
             }
+            // Mark only after a call was accepted, so a transient failure is retried on the next navigation.
+            if (anyOk) view.MediaResets.TryMark(origin);
         }
         catch (Exception ex) { Log.Error($"webview-widget media reset: {ex.Message}"); }
         finally
