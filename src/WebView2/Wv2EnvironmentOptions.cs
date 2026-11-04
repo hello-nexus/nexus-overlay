@@ -16,8 +16,8 @@ namespace Nexus.Overlay.WebView2;
 /// WGC) and --disable-frame-rate-limit (the window has no display to pace
 /// against, and its synthetic frame clock holds a change and a CDP touch event
 /// several frames behind the page; without the limit both land within a frame.
-/// The page paces its own draw loops and the capture pump decimates to the
-/// stream rate, so the GPU and CPU cost stays the same); the Y70 kiosk's
+/// The page's own draw loops pace themselves to the stream rate through
+/// framePacer, and the capture pump decimates to the same rate); the Y70 kiosk's
 /// compatibility rendering passes its own.
 ///
 /// Vtable order from WebView2.h (Microsoft.Web.WebView2 1.0.2792.45,
