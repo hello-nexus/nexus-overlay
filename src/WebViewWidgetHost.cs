@@ -45,6 +45,8 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     private static readonly ConcurrentDictionary<long, WebViewWidgetHost> Hosts = new();
     private static readonly ConcurrentDictionary<long, NativeView> Views = new();
     private static bool _savesInProfileWarned;
+    private static bool _profileBindingWarned;
+    private static IntPtr _permissionResetHandler;
     private static long _nextKey;
 
     private sealed class NativeView
@@ -170,6 +172,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                     if (_byId.TryGetValue(action.Id, out var nav) && nav.Ready)
                     {
                         nav.Home.Expect();
+                        if (action.Spec!.Media) ResetMediaPermissions(nav, action.Spec.Url);
                         Wv2.Wv2_Navigate(nav.Core, action.Spec!.Url);
                     }
                     break;
@@ -184,7 +187,10 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                 case WidgetActionKind.Layout:
                     if (_byId.TryGetValue(action.Id, out var lay))
                     {
+                        var previousMedia = lay.Spec.Media;
                         lay.Spec = action.Spec!;
+                        if (previousMedia != lay.Spec.Media) Log.Info($"webview-widget media {(lay.Spec.Media ? "on" : "off")} id={lay.Id}");
+                        if (lay.Ready && WebViewWidgetProtocol.ShouldResetMediaPermissions(previousMedia, lay.Spec.Media)) ResetMediaPermissions(lay, _registry.ConfiguredUrl(lay.Id) ?? lay.Spec.Url);
                         ApplyLayout(lay);
                     }
                     break;
@@ -618,9 +624,58 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
         view.Ready = true;
         ApplyLayout(view);
         var url = _registry.ConfiguredUrl(view.Id) ?? view.Spec.Url;
+        if (WebViewWidgetProtocol.ShouldResetMediaPermissions(null, view.Spec.Media)) ResetMediaPermissions(view, url);
         view.Home.Expect();
         var hr = Wv2.Wv2_Navigate(view.Core, url);
         Log.Info($"webview-widget view ready navigate hr=0x{hr:X8} url={LogRedact.Url(url)}");
+    }
+
+    /// <summary>
+    /// A prior build denied every request with the decision saved in the shared profile, and Chromium then
+    /// answers from that saved state without raising PermissionRequested. Reset microphone and camera for
+    /// the origin to default. Fire and forget; navigation does not wait on the completion.
+    /// </summary>
+    private static void ResetMediaPermissions(NativeView view, string url)
+    {
+        var origin = WebViewWidgetProtocol.MediaOrigin(url);
+        if (origin is null) return;
+        IntPtr core13 = IntPtr.Zero, profile = IntPtr.Zero, profile4 = IntPtr.Zero;
+        try
+        {
+            core13 = Wv2.QueryInterface(view.Core, WebView2Native.IID_ICoreWebView2_13);
+            if (core13 == IntPtr.Zero) { WarnProfileBinding("ICoreWebView2_13"); return; }
+            if (WebView2Native.Failed(Wv2.Wv2_13_get_Profile(core13, out profile)) || profile == IntPtr.Zero) { WarnProfileBinding("get_Profile"); return; }
+            profile4 = Wv2.QueryInterface(profile, WebView2Native.IID_ICoreWebView2Profile4);
+            if (profile4 == IntPtr.Zero) { WarnProfileBinding("ICoreWebView2Profile4"); return; }
+            if (_permissionResetHandler == IntPtr.Zero) _permissionResetHandler = WebView2Callbacks.CreateSetPermissionStateCompletedHandler(&OnPermissionResetCompletedStatic);
+            foreach (var kind in new[] { WebViewWidgetProtocol.PermissionKindMicrophone, WebViewWidgetProtocol.PermissionKindCamera })
+            {
+                var hr = Wv2.Profile4_SetPermissionState(profile4, kind, origin, WebViewWidgetProtocol.PermissionStateDefault, _permissionResetHandler);
+                Log.Info($"webview-widget media reset origin={origin} kind={kind} hr=0x{hr:X8}");
+            }
+        }
+        catch (Exception ex) { Log.Error($"webview-widget media reset: {ex.Message}"); }
+        finally
+        {
+            if (profile4 != IntPtr.Zero) Wv2.Release(profile4);
+            if (profile != IntPtr.Zero) Wv2.Release(profile);
+            if (core13 != IntPtr.Zero) Wv2.Release(core13);
+        }
+    }
+
+    private static void WarnProfileBinding(string missing)
+    {
+        if (_profileBindingWarned) return;
+        _profileBindingWarned = true;
+        Log.Warn($"webview-widget cannot reset saved media permissions: {missing} unavailable");
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnPermissionResetCompletedStatic(IntPtr self, int errorCode)
+    {
+        try { Log.Info($"webview-widget media reset completed hr=0x{errorCode:X8}"); }
+        catch { }
+        return WebView2Native.S_OK;
     }
 
     private static void ConfigureSettings(IntPtr core)

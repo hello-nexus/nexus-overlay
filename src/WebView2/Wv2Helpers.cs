@@ -593,6 +593,23 @@ internal static unsafe class Wv2
         finally { Release(args3); }
     }
 
+    // ===================== Profile permission state =====================
+
+    public static int Wv2_13_get_Profile(IntPtr wv2_13, out IntPtr profile)
+    {
+        IntPtr p;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr*, int>)Slot(wv2_13, WebView2Vtable.Wv2_13_get_Profile);
+        var hr = fn(wv2_13, &p);
+        profile = p;
+        return hr;
+    }
+
+    public static int Profile4_SetPermissionState(IntPtr profile4, int kind, string origin, int state, IntPtr handler)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, char*, int, IntPtr, int>)Slot(profile4, WebView2Vtable.Profile4_SetPermissionState);
+        fixed (char* o = origin) return fn(profile4, kind, o, state, handler);
+    }
+
     public static int PermissionArgs_put_State(IntPtr args, int state)
     {
         var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(args, WebView2Vtable.PermissionArgs_put_State);

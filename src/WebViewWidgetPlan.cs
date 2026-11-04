@@ -165,10 +165,24 @@ internal static class WebViewWidgetProtocol
     public const int PermissionKindCamera = 2;
     public const int PermissionStateAllow = 1;
     public const int PermissionStateDeny = 2;
+    public const int PermissionStateDefault = 0;
 
     /// <summary>Allow only microphone and camera, and only for a view whose Media toggle is on; everything else is denied.</summary>
     public static int PermissionDecision(bool media, int kind)
         => media && (kind == PermissionKindMicrophone || kind == PermissionKindCamera) ? PermissionStateAllow : PermissionStateDeny;
+
+    /// <summary>scheme://host[:port] of an absolute http(s) url, default ports omitted; null when not an origin.</summary>
+    public static string? MediaOrigin(string? url)
+    {
+        if (!IsAllowedUrl(url)) return null;
+        return Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.GetLeftPart(UriPartial.Authority) : null;
+    }
+
+    /// <summary>
+    /// True when saved microphone and camera state for the view's origin must be reset to default:
+    /// media is on and was not already on (a null previous value means the view is being created).
+    /// </summary>
+    public static bool ShouldResetMediaPermissions(bool? previousMedia, bool media) => media && previousMedia != true;
 
     private static bool ReadBool(JsonElement obj, string name)
         => obj.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.True;
