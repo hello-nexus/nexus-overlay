@@ -7,10 +7,11 @@ namespace Nexus.Overlay.Tests;
 public class WebViewWidgetPlanTests
 {
     private static string View(string id, string url = "https://example.com/", double x = 10, double y = 20,
-        double w = 100, double h = 50, bool interactive = false, bool visible = true, bool immersive = false)
+        double w = 100, double h = 50, bool interactive = false, bool visible = true, bool immersive = false, string? media = null)
         => $"{{\"id\":\"{id}\",\"url\":\"{url}\",\"rect\":{{\"x\":{x},\"y\":{y},\"w\":{w},\"h\":{h}}},"
            + $"\"interactive\":{(interactive ? "true" : "false")},\"visible\":{(visible ? "true" : "false")}"
-           + (immersive ? ",\"immersive\":true" : "") + "}";
+           + (immersive ? ",\"immersive\":true" : "")
+           + (media is null ? "" : $",\"media\":{media}") + "}";
 
     private static WidgetMessage Sync(long seq, params string[] views)
         => WebViewWidgetProtocol.Parse(
@@ -204,6 +205,41 @@ public class WebViewWidgetPlanTests
         Assert.Equal(WidgetActionKind.Layout, a.Kind);
         Assert.True(a.Spec!.Interactive);
     }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("false", false)]
+    [InlineData("true", true)]
+    [InlineData("\"true\"", false)]
+    [InlineData("1", false)]
+    public void Parse_MediaFlag(string? raw, bool expected)
+        => Assert.Equal(expected, Assert.Single(Sync(1, View("a", media: raw)).Views).Media);
+
+    [Fact]
+    public void Registry_MediaGrantIsLayoutOnlyAndRevokeReloads()
+    {
+        var reg = new WidgetRegistry();
+        reg.Apply(Sync(1, View("a")), 0);
+        var grant = Assert.Single(reg.Apply(Sync(2, View("a", media: "true")), 10));
+        Assert.Equal(WidgetActionKind.Layout, grant.Kind);
+        Assert.True(grant.Spec!.Media);
+        Assert.Empty(reg.Apply(Sync(3, View("a", media: "true")), 20));
+        var revoke = reg.Apply(Sync(4, View("a")), 30);
+        Assert.Equal(new[] { WidgetActionKind.Layout, WidgetActionKind.Navigate }, revoke.ConvertAll(x => x.Kind));
+        Assert.False(revoke[0].Spec!.Media);
+    }
+
+    [Theory]
+    [InlineData(true, 1, 1)]
+    [InlineData(true, 2, 1)]
+    [InlineData(true, 0, 2)]
+    [InlineData(true, 3, 2)]
+    [InlineData(true, 7, 2)]
+    [InlineData(false, 1, 2)]
+    [InlineData(false, 2, 2)]
+    [InlineData(false, 5, 2)]
+    public void PermissionDecision_GrantsOnlyMicAndCameraWhenMediaOn(bool media, int kind, int expected)
+        => Assert.Equal(expected, WebViewWidgetProtocol.PermissionDecision(media, kind));
 
     [Fact]
     public void Registry_ImmersiveFlagIsParsedAndChangesLayoutOnly()

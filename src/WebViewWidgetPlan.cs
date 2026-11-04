@@ -10,7 +10,7 @@ namespace Nexus.Overlay;
 internal readonly record struct WidgetRect(double X, double Y, double W, double H);
 
 /// <summary>One entry of the panel page's desired widget set.</summary>
-internal sealed record WidgetViewSpec(string Id, string Url, WidgetRect Rect, bool Interactive, bool Visible, double Radius = 0, double Zoom = 1, bool Immersive = false);
+internal sealed record WidgetViewSpec(string Id, string Url, WidgetRect Rect, bool Interactive, bool Visible, double Radius = 0, double Zoom = 1, bool Immersive = false, bool Media = false);
 
 /// <summary>A pixel rect inside the kiosk client area.</summary>
 internal readonly record struct WidgetPixelRect(int Left, int Top, int Width, int Height)
@@ -117,7 +117,7 @@ internal static class WebViewWidgetProtocol
             }
 
             views.Add(new WidgetViewSpec(id, url!, new WidgetRect(x, y, w, h),
-                Interactive: ReadBool(el, "interactive"), Visible: ReadBool(el, "visible"), Radius: ReadRadius(el), Zoom: ReadZoom(el), Immersive: ReadBool(el, "immersive")));
+                Interactive: ReadBool(el, "interactive"), Visible: ReadBool(el, "visible"), Radius: ReadRadius(el), Zoom: ReadZoom(el), Immersive: ReadBool(el, "immersive"), Media: ReadBool(el, "media")));
         }
 
         return new WidgetMessage
@@ -159,6 +159,16 @@ internal static class WebViewWidgetProtocol
 
     private static double ReadRadius(JsonElement obj)
         => TryNumber(obj, "radius", out var r) ? Math.Clamp(r, 0, MaxRadius) : 0;
+
+    /// <summary>WebView2 permission kinds the widget can grant when the view's Media toggle is on.</summary>
+    public const int PermissionKindMicrophone = 1;
+    public const int PermissionKindCamera = 2;
+    public const int PermissionStateAllow = 1;
+    public const int PermissionStateDeny = 2;
+
+    /// <summary>Allow only microphone and camera, and only for a view whose Media toggle is on; everything else is denied.</summary>
+    public static int PermissionDecision(bool media, int kind)
+        => media && (kind == PermissionKindMicrophone || kind == PermissionKindCamera) ? PermissionStateAllow : PermissionStateDeny;
 
     private static bool ReadBool(JsonElement obj, string name)
         => obj.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.True;
@@ -588,14 +598,20 @@ internal sealed class WidgetRegistry
         {
             if (_live.TryGetValue(spec.Id, out var entry))
             {
-                if (!string.Equals(entry.ConfiguredUrl, spec.Url, StringComparison.Ordinal))
+                var urlChanged = !string.Equals(entry.ConfiguredUrl, spec.Url, StringComparison.Ordinal);
+                if (urlChanged)
                 {
                     entry.ConfiguredUrl = spec.Url;
                     actions.Add(new WidgetAction(WidgetActionKind.Navigate, spec.Id, spec));
                 }
-                if (entry.Spec.Rect != spec.Rect || entry.Spec.Radius != spec.Radius || entry.Spec.Zoom != spec.Zoom || entry.Spec.Interactive != spec.Interactive || entry.Spec.Immersive != spec.Immersive || entry.Spec.Visible != spec.Visible)
+                if (entry.Spec.Rect != spec.Rect || entry.Spec.Media != spec.Media || entry.Spec.Radius != spec.Radius || entry.Spec.Zoom != spec.Zoom || entry.Spec.Interactive != spec.Interactive || entry.Spec.Immersive != spec.Immersive || entry.Spec.Visible != spec.Visible)
                 {
                     actions.Add(new WidgetAction(WidgetActionKind.Layout, spec.Id, spec));
+                }
+                // Revoking media reloads the page so any live capture stream stops; granting needs no reload.
+                if (entry.Spec.Media && !spec.Media && !urlChanged)
+                {
+                    actions.Add(new WidgetAction(WidgetActionKind.Navigate, spec.Id, spec));
                 }
                 entry.Spec = spec;
                 continue;

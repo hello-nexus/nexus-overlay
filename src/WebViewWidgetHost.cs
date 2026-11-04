@@ -33,7 +33,6 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
            || id == (IntPtr)(long)TimerBackSwipe.ToUInt64() || id == (IntPtr)(long)TimerNavError.ToUInt64();
     private const uint WatchdogPollMs = 500;
     private const uint WS_DISABLED = 0x08000000u;
-    private const int PermissionStateDeny = 2;
     private const int WebErrorOperationCanceled = 14;
     private const int ProcessFailedBrowserExited = 0;
     private const int ProcessFailedRenderExited = 1;
@@ -972,7 +971,12 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
     {
         try
         {
-            if (args != IntPtr.Zero) Wv2.PermissionArgs_put_State(args, PermissionStateDeny);
+            if (args == IntPtr.Zero) return WebView2Native.S_OK;
+            var media = Views.TryGetValue(WebView2Callbacks.GetUserData(self), out var view) && view.Spec.Media;
+            Wv2.PermissionArgs_get_PermissionKind(args, out var kind);
+            var state = WebViewWidgetProtocol.PermissionDecision(media, kind);
+            Wv2.PermissionArgs_put_State(args, state);
+            Log.Info($"webview-widget permission {(state == WebViewWidgetProtocol.PermissionStateAllow ? "allowed" : "denied")} kind={kind}");
         }
         catch (Exception ex) { Log.Error($"webview-widget Permission: {ex.Message}"); }
         return WebView2Native.S_OK;
