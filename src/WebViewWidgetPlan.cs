@@ -532,7 +532,7 @@ internal enum WidgetActionKind
     Navigate,
     /// <summary>Media was revoked with the url unchanged; reload in place so a live capture stream stops.</summary>
     Reload,
-    /// <summary>Rect, interactive or visible changed; never touches the page.</summary>
+    /// <summary>Rect, radius, zoom, interactive, immersive, visible or media changed; never touches the page.</summary>
     Layout,
     /// <summary>The page no longer lists the view.</summary>
     Destroy,
@@ -832,6 +832,9 @@ internal sealed class WidgetHomeTracker
         _expecting = true;
         _home = null;
     }
+
+    /// <summary>True while a navigation to the configured url is in flight; a reload then would cancel it.</summary>
+    public bool IsPending => _expecting;
 
     /// <summary>The navigation to the configured url failed for real: a later load elsewhere must not become home.</summary>
     public void OnFailed() => _expecting = false;

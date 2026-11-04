@@ -235,7 +235,7 @@ public class WebViewWidgetPlanTests
         var reg = new WidgetRegistry();
         reg.Apply(Sync(1, View("a", media: "true")), 0);
         var kinds = reg.Apply(Sync(2, View("a", url: "https://example.org/")), 10).ConvertAll(x => x.Kind);
-        Assert.Equal(1, kinds.FindAll(k => k == WidgetActionKind.Navigate).Count);
+        Assert.Single(kinds.FindAll(k => k == WidgetActionKind.Navigate));
         Assert.Contains(WidgetActionKind.Layout, kinds);
         Assert.DoesNotContain(WidgetActionKind.Reload, kinds);
     }
@@ -832,4 +832,18 @@ public class WebViewWidgetPlanTests
     [InlineData(4, false)]
     public void CursorCountClamp_NextCall_MovesTowardZero(int count, bool? expected)
         => Assert.Equal(expected, CursorCountClamp.NextCall(count));
+
+    [Fact]
+    public void HomeTracker_IsPendingFromExpectUntilCompletedOrFailed()
+    {
+        var h = new WidgetHomeTracker();
+        Assert.False(h.IsPending);
+        h.Expect();
+        Assert.True(h.IsPending);
+        h.OnCompleted("https://example.com/");
+        Assert.False(h.IsPending);
+        h.Expect();
+        h.OnFailed();
+        Assert.False(h.IsPending);
+    }
 }

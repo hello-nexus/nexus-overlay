@@ -174,7 +174,12 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
                     }
                     break;
                 case WidgetActionKind.Reload:
-                    if (_byId.TryGetValue(action.Id, out var rel) && rel.Ready) Wv2.Wv2_Reload(rel.Core);
+                    if (_byId.TryGetValue(action.Id, out var rel) && rel.Ready)
+                    {
+                        // A reload would cancel an in-flight navigation to the configured url and reload the old page.
+                        if (rel.Home.IsPending && _registry.ConfiguredUrl(action.Id) is { } pendingUrl) Wv2.Wv2_Navigate(rel.Core, pendingUrl);
+                        else Wv2.Wv2_Reload(rel.Core);
+                    }
                     break;
                 case WidgetActionKind.Layout:
                     if (_byId.TryGetValue(action.Id, out var lay))
@@ -983,7 +988,7 @@ internal sealed unsafe class WebViewWidgetHost : IWin32WindowOwner, IDisposable
             if (!Wv2.PermissionArgs_TryDisableSavesInProfile(args) && !_savesInProfileWarned)
             {
                 _savesInProfileWarned = true;
-                Log.Warn("webview-widget permission decisions are saved in the profile (runtime lacks SavesInProfile)");
+                Log.Warn("webview-widget could not disable SavesInProfile (runtime too old or the call failed); decisions are saved in the profile");
             }
             Wv2.PermissionArgs_put_State(args, state);
             Log.Info($"webview-widget permission {(state == WebViewWidgetProtocol.PermissionStateAllow ? "allowed" : "denied")} kind={kind}");
