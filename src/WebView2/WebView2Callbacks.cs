@@ -221,6 +221,31 @@ internal static unsafe class WebView2Callbacks
         return WebView2Native.E_NOINTERFACE;
     }
 
+    // ============== CallDevToolsProtocolMethod completed handler ==============
+
+    // Invoke(HRESULT errorCode, LPCWSTR returnObjectAsJson)
+    public static IntPtr CreateCallDevToolsProtocolMethodCompletedHandler(
+        delegate* unmanaged[Stdcall]<IntPtr, int, IntPtr, int> onInvoke)
+    {
+        var vt = AllocVtable4((IntPtr)onInvoke, &DevToolsCallQI);
+        return AllocObject((IntPtr)vt);
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int DevToolsCallQI(IntPtr self, Guid* iid, IntPtr* ppv)
+    {
+        if (iid == null) return WebView2Native.E_POINTER;
+        if (*iid == WebView2Native.IID_IUnknown ||
+            *iid == WebView2Native.IID_ICoreWebView2CallDevToolsProtocolMethodCompletedHandler)
+        {
+            *ppv = self;
+            AddRefInternal(self);
+            return WebView2Native.S_OK;
+        }
+        *ppv = IntPtr.Zero;
+        return WebView2Native.E_NOINTERFACE;
+    }
+
     // ============== CapturePreview completed handler ==============
 
     // Invoke(HRESULT errorCode)

@@ -91,6 +91,9 @@ internal static unsafe class WebView2Native
     public static readonly Guid IID_ICoreWebView2ExecuteScriptCompletedHandler =
         new("49511172-cc67-4bca-9923-137112f4c4cc");
 
+    public static readonly Guid IID_ICoreWebView2CallDevToolsProtocolMethodCompletedHandler =
+        new("5c4889f0-5ef6-4c5a-952c-d8f1b92d0574");
+
     public static readonly Guid IID_ICoreWebView2CapturePreviewCompletedHandler =
         new("697e05e9-3d8f-45fa-96f4-8ffe1ededaf5");
 

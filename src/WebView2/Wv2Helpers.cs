@@ -168,6 +168,14 @@ internal static unsafe class Wv2
         fixed (char* s = script) return fn(wv2, s, completedHandler);
     }
 
+    public static int Wv2_CallDevToolsProtocolMethod(IntPtr wv2, string method, string parametersJson, IntPtr completedHandler)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, char*, char*, IntPtr, int>)Slot(wv2, WebView2Vtable.Wv2_CallDevToolsProtocolMethod);
+        fixed (char* m = method)
+        fixed (char* p = parametersJson)
+            return fn(wv2, m, p, completedHandler);
+    }
+
     /// <summary>The stream receives the encoded image; see <see cref="WebView2Vtable.CapturePreviewFormatJpeg"/>.</summary>
     public static int Wv2_CapturePreview(IntPtr wv2, int imageFormat, IntPtr stream, IntPtr completedHandler)
     {

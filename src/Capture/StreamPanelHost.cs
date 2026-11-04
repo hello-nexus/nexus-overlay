@@ -27,6 +27,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private const string WindowClassName = "Nexus.Overlay.StreamHost";
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 7;
     private const uint WM_HOST_FAULTED = Native.WM_USER + 8;
+    private const uint WM_TOUCH_CONTACTS = Native.WM_USER + 9;
     private const int E_INVALIDARG = unchecked((int)0x80070057);
     // Off any plausible desktop; WGC captures regardless of visibility as
     // long as the window is shown and unminimized.
@@ -85,6 +86,15 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private IntPtr _previewStream;
     private bool _engineStarted;
     private bool _disposed;
+
+    // Touch from the glass: the client queues from its worker, the message loop drains into CDP.
+    // A null entry marks a dropped stream, which cancels whatever is still down.
+    private PanelTouchClient? _touch;
+    private readonly ConcurrentQueue<PanelTouchContact?> _touchQueue = new();
+    private readonly CdpTouchState _touchState = new();
+    private int _touchPosted;
+    private IntPtr _cdpHandler;
+    private static int _cdpFailureLogged;
     private bool _taskbarTabPending;
 
     public StreamPanelHost(StreamAssignment assignment, string serviceOrigin, string pairedToken)
@@ -138,6 +148,10 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
                     Dispose();
                     try { callback?.Invoke(); } catch { }
                 }
+                return IntPtr.Zero;
+
+            case WM_TOUCH_CONTACTS:
+                DrainTouch();
                 return IntPtr.Zero;
 
             case Native.WM_TIMER:
@@ -303,7 +317,56 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         {
             Log.Error($"stream-host {SessionId}: engine start failed: {ex.GetType().Name}: {ex.Message}");
             PostFault();
+            return;
         }
+        if (_assignment.Touch)
+            StartTouch();
+    }
+
+    // ===================== touch =====================
+
+    private void StartTouch()
+    {
+        _cdpHandler = WebView2Callbacks.CreateCallDevToolsProtocolMethodCompletedHandler(&OnCdpCompletedStatic);
+        // The page then reports touch support, as it would on a touchscreen.
+        CallCdp("Emulation.setTouchEmulationEnabled", "{\"enabled\":true,\"maxTouchPoints\":10}");
+        _touch = new PanelTouchClient(_serviceOrigin, SessionId, _pairedToken, c => QueueTouch(c), () => QueueTouch(null));
+        Log.Info($"stream-host {SessionId}: touch enabled");
+    }
+
+    // Worker thread: one posted message drains everything queued before it runs.
+    private void QueueTouch(PanelTouchContact? contact)
+    {
+        _touchQueue.Enqueue(contact);
+        if (Interlocked.Exchange(ref _touchPosted, 1) == 0)
+            Native.PostMessageW(Hwnd, WM_TOUCH_CONTACTS, IntPtr.Zero, IntPtr.Zero);
+    }
+
+    private void DrainTouch()
+    {
+        Volatile.Write(ref _touchPosted, 0);
+        while (_touchQueue.TryDequeue(out var contact))
+        {
+            if (_disposed || _coreWebView2 == IntPtr.Zero) continue;
+            var json = contact is { } c ? _touchState.Apply(c, _assignment.CssWidth, _assignment.CssHeight) : _touchState.ReleaseAll();
+            if (json is not null)
+                CallCdp("Input.dispatchTouchEvent", json);
+        }
+    }
+
+    private void CallCdp(string method, string json)
+    {
+        var hr = Wv2.Wv2_CallDevToolsProtocolMethod(_coreWebView2, method, json, _cdpHandler);
+        if (WebView2Native.Failed(hr) && Interlocked.Exchange(ref _cdpFailureLogged, 1) == 0)
+            Log.Warn($"stream-host {SessionId}: {method} hr=0x{hr:X8}");
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnCdpCompletedStatic(IntPtr self, int errorCode, IntPtr resultJson)
+    {
+        if (WebView2Native.Failed(errorCode) && Interlocked.Exchange(ref _cdpFailureLogged, 1) == 0)
+            Log.Warn($"stream-host: devtools call failed err=0x{errorCode:X8} {Marshal.PtrToStringUni(resultJson)}");
+        return WebView2Native.S_OK;
     }
 
     // ===================== capture -> encode -> ingest =====================
@@ -614,6 +677,8 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         }
         _ingest?.Dispose();
         _ingest = null;
+        _touch?.Dispose();
+        _touch = null;
         if (!pumpExited)
         {
             // The pump may still be inside a wedged TryGetNextFrame/Submit on
@@ -657,6 +722,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         ReleaseHandler(ref _ctrlCreatedHandler);
         ReleaseHandler(ref _navCompletedHandler);
         ReleaseHandler(ref _previewHandler);
+        ReleaseHandler(ref _cdpHandler);
         if (_envOptions != IntPtr.Zero)
         {
             Wv2.Release(_envOptions);

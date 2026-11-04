@@ -88,7 +88,8 @@ internal static class WebView2Vtable
     public const int Wv2_get_CanGoForward = 39;
     public const int Wv2_GoBack = 40;
     public const int Wv2_GoForward = 41;
-    // 36, 37, 42, 43 unbound (CallDevToolsProtocolMethod, BrowserProcessId, GetDevToolsProtocolEventReceiver, Stop)
+    public const int Wv2_CallDevToolsProtocolMethod = 36;
+    // 37, 42, 43 unbound (BrowserProcessId, GetDevToolsProtocolEventReceiver, Stop)
     public const int Wv2_add_NewWindowRequested = 44;
     public const int Wv2_remove_NewWindowRequested = 45;
     // ICoreWebView2_4 (QI for IID_ICoreWebView2_4); _2 is 61..67, _3 is 68..72, _4 starts with FrameCreated at 73..74.

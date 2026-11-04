@@ -228,6 +228,9 @@ internal sealed class StreamAssignment
     public string? FrameSection { get; set; }
     [JsonPropertyName("frameSectionBytes")]
     public int FrameSectionBytes { get; set; }
+    /// <summary>The glass reports touch, streamed on GET /panel/streams/{sessionId}/touch.</summary>
+    [JsonPropertyName("touch")]
+    public bool Touch { get; set; }
 }
 
 /// <summary>
