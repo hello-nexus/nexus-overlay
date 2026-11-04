@@ -790,7 +790,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
         // The panel kiosks share this browser process, and its automatic download
         // flyout opens on whichever WebView it last saw active, which can be a panel.
-        // Suppress it per download and open it on this window instead.
+        // Open this window's dialog as each download starts; the automatic flyout reuses it.
         _coreWebView2_4 = Wv2.QueryInterface(_coreWebView2, WebView2Native.IID_ICoreWebView2_4);
         _coreWebView2_9 = Wv2.QueryInterface(_coreWebView2, Wv2.IID_ICoreWebView2_9);
         if (_coreWebView2_4 != IntPtr.Zero && _coreWebView2_9 != IntPtr.Zero)
@@ -898,7 +898,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     }
 
     // A second download in one page session asks for MultipleAutomaticDownloads, and a
-    // refusal saved in the profile (by older builds) blocks every later export. Allow it
+    // refusal saved in the profile blocks every later export. Allow it
     // for the dashboard's own origin, overwriting any saved refusal. Older runtimes
     // without ICoreWebView2Profile4 fall back to the PermissionRequested allow.
     private void AllowOwnDownloads()
@@ -955,12 +955,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 return WebView2Native.S_OK;
             }
             // Refuse for this request only: a saved refusal would outlive the reason for it.
-            var args3 = Wv2.QueryInterface(args, Wv2.IID_ICoreWebView2PermissionRequestedEventArgs3);
-            if (args3 != IntPtr.Zero)
-            {
-                Wv2.PermissionArgs3_put_SavesInProfile(args3, false);
-                Wv2.Release(args3);
-            }
+            Wv2.PermissionArgs_DoNotSaveInProfile(args);
             Wv2.PermissionArgs_put_State(args, PermissionStateDeny);
             Log.Info($"dashboard permission denied kind={kind}");
         }

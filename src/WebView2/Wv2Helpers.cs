@@ -608,10 +608,14 @@ internal static unsafe class Wv2
     public static readonly Guid IID_ICoreWebView2PermissionRequestedEventArgs3 =
         new("e61670bc-3dce-4177-86d2-c629ae3cb6ac");
 
-    public static int PermissionArgs3_put_SavesInProfile(IntPtr args3, bool saves)
+    /// <summary>Keeps this request's decision out of the profile. No-op on runtimes without Args3.</summary>
+    public static void PermissionArgs_DoNotSaveInProfile(IntPtr args)
     {
+        var args3 = QueryInterface(args, IID_ICoreWebView2PermissionRequestedEventArgs3);
+        if (args3 == IntPtr.Zero) return;
         var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, int>)Slot(args3, WebView2Vtable.PermissionArgs3_put_SavesInProfile);
-        return fn(args3, saves ? 1 : 0);
+        fn(args3, 0);
+        Release(args3);
     }
 
     // ===================== ICoreWebView2_13 / ICoreWebView2Profile4 =====================

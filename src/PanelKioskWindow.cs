@@ -987,6 +987,9 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         try
         {
             Wv2.PermissionArgs_get_PermissionKind(args, out var kind);
+            // Not saved: non-compat kiosks share the dashboard's profile and origin, so a saved
+            // refusal (MultipleAutomaticDownloads) would block the dashboard's exports.
+            Wv2.PermissionArgs_DoNotSaveInProfile(args);
             Wv2.PermissionArgs_put_State(args, PermissionStateDeny);
             Log.Info($"panel-kiosk permission denied kind={kind}");
         }
