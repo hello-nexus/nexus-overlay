@@ -34,6 +34,9 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private const int OffscreenOrigin = -4000;
     private const uint TIMER_CAPTURE_WATCHDOG = 1;
     private const uint WatchdogIntervalMs = 5000;
+    // Bounds the wait for the touch-emulation completion that starts the navigation.
+    private const uint TIMER_NAVIGATE_FALLBACK = 2;
+    private const uint NavigateFallbackMs = 2000;
     // Above compositor scheduling jitter, below what a viewer reads as a
     // time-jump. WGC is change-driven, so slow-changing content gaps
     // legitimately on every content update; hits are sparse-logged.
@@ -85,6 +88,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private IntPtr _previewHandler;
     private IntPtr _previewStream;
     private bool _engineStarted;
+    private bool _navigateStarted;
     private bool _disposed;
 
     // Touch from the glass: the client queues from its worker, the message loop drains into CDP.
@@ -160,6 +164,12 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
                 if (wParam == (nint)TIMER_CAPTURE_WATCHDOG)
                 {
                     OnWatchdogTick();
+                    return IntPtr.Zero;
+                }
+                if (wParam == (nint)TIMER_NAVIGATE_FALLBACK)
+                {
+                    Log.Warn($"stream-host {SessionId}: {EmulationMethod} did not complete in {NavigateFallbackMs} ms, navigating");
+                    Navigate();
                     return IntPtr.Zero;
                 }
                 return null;
@@ -286,12 +296,14 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         Wv2.Wv2_add_NavigationCompleted(_coreWebView2, _navCompletedHandler, out _navCompletedToken);
 
         // Touch emulation settles before the page loads, so it boots reporting touch support as it
-        // would on a touchscreen; its completion navigates, failed or not, so CDP never blocks the page.
+        // would on a touchscreen. Its completion navigates, failed or not; a completion that never
+        // arrives is bounded by the fallback timer, so CDP never keeps the page from loading.
         if (_assignment.Touch)
         {
             _cdpEmulationHandler = WebView2Callbacks.CreateCallDevToolsProtocolMethodCompletedHandler(&OnCdpCompletedStatic);
             _cdpTouchHandler = WebView2Callbacks.CreateCallDevToolsProtocolMethodCompletedHandler(&OnCdpCompletedStatic);
-            if (CallCdp(EmulationMethod, "{\"enabled\":true,\"maxTouchPoints\":10}", _cdpEmulationHandler, ref _emulationFailureLogged))
+            if (CallCdp(EmulationMethod, "{\"enabled\":true,\"maxTouchPoints\":10}", _cdpEmulationHandler, ref _emulationFailureLogged)
+                && Native.SetTimer(Hwnd, (nuint)TIMER_NAVIGATE_FALLBACK, NavigateFallbackMs, IntPtr.Zero) != 0)
                 return;
         }
         Navigate();
@@ -299,7 +311,9 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
 
     private void Navigate()
     {
-        if (_disposed || _coreWebView2 == IntPtr.Zero) return;
+        if (_disposed || _coreWebView2 == IntPtr.Zero || _navigateStarted) return;
+        _navigateStarted = true;
+        Native.KillTimer(Hwnd, (nuint)TIMER_NAVIGATE_FALLBACK);
         var hr = Wv2.Wv2_Navigate(_coreWebView2, _navigationUrl);
         Log.Info($"stream-host {SessionId}: navigate hr=0x{hr:X8}");
     }
@@ -694,6 +708,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         _instances.TryRemove(_instanceId, out _);
 
         try { Native.KillTimer(Hwnd, (nuint)TIMER_CAPTURE_WATCHDOG); } catch { }
+        try { Native.KillTimer(Hwnd, (nuint)TIMER_NAVIGATE_FALLBACK); } catch { }
 
         _pumpStop = true;
         var pumpExited = true;
