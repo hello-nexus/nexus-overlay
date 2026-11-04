@@ -95,6 +95,9 @@ internal static class WebView2Vtable
     // ICoreWebView2_4 (QI for IID_ICoreWebView2_4); _2 is 61..67, _3 is 68..72, _4 starts with FrameCreated at 73..74.
     public const int Wv2_4_add_DownloadStarting = 75;
     public const int Wv2_4_remove_DownloadStarting = 76;
+    // ICoreWebView2_9 (QI for IID_ICoreWebView2_9); _5 is 77..78, _6 is 79, _7 is 80, _8 is 81..87,
+    // _9 starts with add_IsDefaultDownloadDialogOpenChanged at 88.
+    public const int Wv2_9_OpenDefaultDownloadDialog = 91;
     // ICoreWebView2_19 (extends ICoreWebView2_18). QI for IID_ICoreWebView2_19.
     public const int Wv2_19_put_MemoryUsageTargetLevel = 120;
 

@@ -368,6 +368,17 @@ internal static unsafe class Wv2
     public static int DownloadArgs_put_Handled(IntPtr args, bool handled) =>
         SettingsPutBool(args, WebView2Vtable.DownloadArgs_put_Handled, handled);
 
+    // ===================== ICoreWebView2_9 =====================
+
+    public static readonly Guid IID_ICoreWebView2_9 =
+        new("4d7b2eab-9fdc-468d-b998-a9260b5ed651");
+
+    public static int Wv2_9_OpenDefaultDownloadDialog(IntPtr wv9)
+    {
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int>)Slot(wv9, WebView2Vtable.Wv2_9_OpenDefaultDownloadDialog);
+        return fn(wv9);
+    }
+
     // ===================== ICoreWebView2Settings =====================
 
     public static int Settings_put_IsWebMessageEnabled(IntPtr s, bool v) =>

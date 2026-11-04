@@ -78,6 +78,10 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
     private IntPtr _controller2;
     private IntPtr _coreWebView2;
     private IntPtr _coreWebView2_19;
+    private IntPtr _coreWebView2_4;
+    private IntPtr _coreWebView2_9;
+    private IntPtr _downloadHandler;
+    private long _downloadToken;
     private long _navStartingToken;
     private long _navCompletedToken;
     // Set while the shell's own failure document is up, so its load does not
@@ -781,6 +785,19 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         var permHr = Wv2.Wv2_add_PermissionRequested(_coreWebView2, _permissionHandler, out _permissionToken);
         if (WebView2Native.Failed(permHr)) Log.Error($"dashboard add_PermissionRequested failed hr=0x{permHr:X8}");
 
+        // The panel kiosks share this browser process, and its automatic download
+        // flyout opens on whichever WebView it last saw active, which can be a panel.
+        // Suppress it per download and open it on this window instead.
+        _coreWebView2_4 = Wv2.QueryInterface(_coreWebView2, WebView2Native.IID_ICoreWebView2_4);
+        _coreWebView2_9 = Wv2.QueryInterface(_coreWebView2, Wv2.IID_ICoreWebView2_9);
+        if (_coreWebView2_4 != IntPtr.Zero && _coreWebView2_9 != IntPtr.Zero)
+        {
+            _downloadHandler = WebView2Callbacks.CreateDownloadStartingHandler(&OnDownloadStartingStatic);
+            var dlHr = Wv2.Wv2_4_add_DownloadStarting(_coreWebView2_4, _downloadHandler, out _downloadToken);
+            if (WebView2Native.Failed(dlHr)) Log.Error($"dashboard add_DownloadStarting failed hr=0x{dlHr:X8}");
+        }
+        else Log.Warn("dashboard download flyout not pinned: ICoreWebView2_4/_9 unavailable");
+
         // Window-action IPC: the React app posts {type:'window-action',action:...}
         // strings via window.chrome.webview.postMessage(...) when the user
         // clicks our custom title bar's min / max / close buttons. We dispatch
@@ -883,6 +900,21 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             Log.Info($"dashboard permission denied kind={kind}");
         }
         catch (Exception ex) { Log.Error($"dashboard Permission: {ex.Message}"); }
+        return WebView2Native.S_OK;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnDownloadStartingStatic(IntPtr self, IntPtr sender, IntPtr args)
+    {
+        var owner = FindByDownloadHandler(self);
+        if (owner is null || args == IntPtr.Zero || owner._coreWebView2_9 == IntPtr.Zero) return WebView2Native.S_OK;
+        try
+        {
+            Wv2.DownloadArgs_put_Handled(args, true);
+            var hr = Wv2.Wv2_9_OpenDefaultDownloadDialog(owner._coreWebView2_9);
+            if (WebView2Native.Failed(hr)) Log.Warn($"dashboard OpenDefaultDownloadDialog hr=0x{hr:X8}");
+        }
+        catch (Exception ex) { Log.Error($"dashboard Download: {ex.Message}"); }
         return WebView2Native.S_OK;
     }
 
@@ -1195,6 +1227,13 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
         return null;
     }
 
+    private static DashboardWindow? FindByDownloadHandler(IntPtr handler)
+    {
+        foreach (var kv in _instances)
+            if (kv.Value._downloadHandler == handler) return kv.Value;
+        return null;
+    }
+
     private static DashboardWindow? FindByWebMessageHandler(IntPtr handler)
     {
         foreach (var kv in _instances)
@@ -1221,6 +1260,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 if (_permissionToken != 0) { Wv2.Wv2_remove_PermissionRequested(_coreWebView2, _permissionToken); _permissionToken = 0; }
                 if (_webMessageToken != 0) { Wv2.Wv2_remove_WebMessageReceived(_coreWebView2, _webMessageToken); _webMessageToken = 0; }
             }
+            if (_coreWebView2_4 != IntPtr.Zero && _downloadToken != 0) { Wv2.Wv2_4_remove_DownloadStarting(_coreWebView2_4, _downloadToken); _downloadToken = 0; }
             if (_controller != IntPtr.Zero)
             {
                 Wv2.Ctrl_Close(_controller);
@@ -1230,6 +1270,8 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             if (_coreWebView2 != IntPtr.Zero) { Wv2.Release(_coreWebView2); _coreWebView2 = IntPtr.Zero; }
             if (_controller2 != IntPtr.Zero) { Wv2.Release(_controller2); _controller2 = IntPtr.Zero; }
             if (_coreWebView2_19 != IntPtr.Zero) { Wv2.Release(_coreWebView2_19); _coreWebView2_19 = IntPtr.Zero; }
+            if (_coreWebView2_4 != IntPtr.Zero) { Wv2.Release(_coreWebView2_4); _coreWebView2_4 = IntPtr.Zero; }
+            if (_coreWebView2_9 != IntPtr.Zero) { Wv2.Release(_coreWebView2_9); _coreWebView2_9 = IntPtr.Zero; }
             if (_env != IntPtr.Zero) { Wv2.Release(_env); _env = IntPtr.Zero; }
             // Release our local refs on the callback objects. The host
             // also AddRef'd them when we passed them into the add_* / env
@@ -1242,6 +1284,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             if (_newWindowHandler != IntPtr.Zero) { Wv2.Release(_newWindowHandler); _newWindowHandler = IntPtr.Zero; }
             if (_permissionHandler != IntPtr.Zero) { Wv2.Release(_permissionHandler); _permissionHandler = IntPtr.Zero; }
             if (_webMessageHandler != IntPtr.Zero) { Wv2.Release(_webMessageHandler); _webMessageHandler = IntPtr.Zero; }
+            if (_downloadHandler != IntPtr.Zero) { Wv2.Release(_downloadHandler); _downloadHandler = IntPtr.Zero; }
         }
         catch (Exception ex) { Log.Error($"dashboard dispose: {ex.Message}"); }
         if (Hwnd != IntPtr.Zero)
