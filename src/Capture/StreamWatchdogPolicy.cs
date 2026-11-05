@@ -12,6 +12,9 @@ internal sealed class StreamWatchdogPolicy
 {
     public const int MaxProbeFailures = 3;
     public const int CeilingZeroTicks = 60;
+    // Each CapturePreview takes a display power request in the WebView2 browser process, which resets the
+    // Windows idle timer. Probing a static page must stay well above the shortest screensaver timeout.
+    public const int ProbeEveryZeroTicks = 24;
 
     private int _zeroTicks;
     private int _probeFailures;
@@ -33,7 +36,7 @@ internal sealed class StreamWatchdogPolicy
         _zeroTicks++;
         if (_zeroTicks >= CeilingZeroTicks) return Restarted();
         if (ProbeBroken) return WatchdogAction.None;
-        return WatchdogAction.Probe;
+        return _zeroTicks % ProbeEveryZeroTicks == 0 ? WatchdogAction.Probe : WatchdogAction.None;
     }
 
     /// <summary>A probe produced an image hash. True when the capture is stale and must be recreated.</summary>
