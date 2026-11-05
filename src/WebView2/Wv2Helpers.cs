@@ -176,13 +176,6 @@ internal static unsafe class Wv2
             return fn(wv2, m, p, completedHandler);
     }
 
-    /// <summary>The stream receives the encoded image; see <see cref="WebView2Vtable.CapturePreviewFormatJpeg"/>.</summary>
-    public static int Wv2_CapturePreview(IntPtr wv2, int imageFormat, IntPtr stream, IntPtr completedHandler)
-    {
-        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int, IntPtr, IntPtr, int>)Slot(wv2, WebView2Vtable.Wv2_CapturePreview);
-        return fn(wv2, imageFormat, stream, completedHandler);
-    }
-
     public static int Wv2_Reload(IntPtr wv2)
     {
         var fn = (delegate* unmanaged[Stdcall]<IntPtr, int>)Slot(wv2, WebView2Vtable.Wv2_Reload);

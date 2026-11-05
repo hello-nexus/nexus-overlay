@@ -7,18 +7,17 @@ internal enum WatchdogAction
     Restart,
 }
 
-/// <summary>Restarts the WGC session only when the WebView rendered something new (probe hash changed) while WGC delivered no frames; the zero-frame ceiling bounds a probe that never changes or never answers.</summary>
+/// <summary>Restarts the WGC session when a forced page repaint (probe) yields no WGC frame; the zero-frame ceiling bounds a probe that never answers.</summary>
 internal sealed class StreamWatchdogPolicy
 {
     public const int MaxProbeFailures = 3;
     public const int CeilingZeroTicks = 60;
-    // Each CapturePreview takes a display power request in the WebView2 browser process, which resets the
-    // Windows idle timer. Probing a static page must stay well above the shortest screensaver timeout.
-    public const int ProbeEveryZeroTicks = 24;
+    public const int ProbeEveryZeroTicks = 2;
 
     private int _zeroTicks;
     private int _probeFailures;
-    private ulong? _lastHash;
+    // Zero-frame ticks seen since the last probe was answered; null when none is outstanding.
+    private int? _ticksSinceProbe;
 
     public int ZeroTicks => _zeroTicks;
     public bool ProbeBroken => _probeFailures >= MaxProbeFailures;
@@ -29,26 +28,28 @@ internal sealed class StreamWatchdogPolicy
         if (framesDelta > 0)
         {
             _zeroTicks = 0;
-            _lastHash = null;
+            _ticksSinceProbe = null;
             _probeFailures = 0;
             return WatchdogAction.None;
         }
         _zeroTicks++;
         if (_zeroTicks >= CeilingZeroTicks) return Restarted();
+        // The answered probe must have a full tick to surface its frame: the answer can land just before a tick.
+        if (_ticksSinceProbe is { } seen)
+        {
+            if (seen >= 1) return Restarted();
+            _ticksSinceProbe = seen + 1;
+            return WatchdogAction.None;
+        }
         if (ProbeBroken) return WatchdogAction.None;
         return _zeroTicks % ProbeEveryZeroTicks == 0 ? WatchdogAction.Probe : WatchdogAction.None;
     }
 
-    /// <summary>A probe produced an image hash. True when the capture is stale and must be recreated.</summary>
-    public bool OnProbe(ulong hash)
+    /// <summary>The page applied the probe's repaint; a WGC frame must follow.</summary>
+    public void OnProbe()
     {
         _probeFailures = 0;
-        // The first probe of a run is a baseline; the page may have changed before the run began.
-        var changed = _lastHash is { } previous && previous != hash && _zeroTicks >= 2;
-        _lastHash = hash;
-        if (!changed) return false;
-        Restarted();
-        return true;
+        _ticksSinceProbe = 0;
     }
 
     public void OnProbeFailed()
@@ -59,7 +60,7 @@ internal sealed class StreamWatchdogPolicy
     private WatchdogAction Restarted()
     {
         _zeroTicks = 0;
-        _lastHash = null;
+        _ticksSinceProbe = null;
         _probeFailures = 0;
         return WatchdogAction.Restart;
     }
