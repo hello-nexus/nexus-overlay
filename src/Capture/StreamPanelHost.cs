@@ -85,8 +85,9 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private long _captureGapCount;
     private int _restartRequested;
     private readonly StreamWatchdogPolicy _watchdog = new();
+    // One handler per probe: an abandoned probe's late completion finds no host.
     private IntPtr _probeHandler;
-    private bool _probeBusy;
+    private int _probeFrameExpected;
     private bool _engineStarted;
     private bool _navigateStarted;
     private bool _disposed;
@@ -561,10 +562,12 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
             // near-frame-interval frameTs delta means this thread polled late
             // and the pool absorbed it.
             var nowTicks = Stopwatch.GetTimestamp();
+            // A probe-forced frame ends a silence the watchdog caused on purpose; it is not a capture gap.
+            var probeFrame = Interlocked.Exchange(ref _probeFrameExpected, 0) == 1;
             if (_lastFrameArrivalTicks != 0)
             {
                 var arrivalMs = (nowTicks - _lastFrameArrivalTicks) * 1000 / Stopwatch.Frequency;
-                if (arrivalMs > CaptureGapLogThresholdMs)
+                if (arrivalMs > CaptureGapLogThresholdMs && !probeFrame)
                 {
                     var count = ++_captureGapCount;
                     if (count <= 3 || count % 100 == 0)
@@ -626,19 +629,21 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         var pumped = Interlocked.Read(ref _framesPumped);
         var delta = pumped - _framesAtLastTick;
         _framesAtLastTick = pumped;
-        // An unanswered probe stays pending so its late completion cannot land on a newer probe.
-        var probeBusy = _probeBusy;
-        if (probeBusy && delta == 0) _watchdog.OnProbeFailed();
         var atCeiling = _watchdog.ZeroTicks + 1 >= StreamWatchdogPolicy.CeilingZeroTicks;
-        switch (_watchdog.Tick(delta))
+        var action = _watchdog.Tick(delta);
+        // Frames, a timeout or a restart ended the probe; its completion, if it ever comes, is dropped.
+        if (!_watchdog.ProbeInFlight) ReleaseHandler(ref _probeHandler);
+        switch (action)
         {
             case WatchdogAction.Probe:
-                if (!probeBusy) StartProbe();
+                StartProbe();
                 break;
             case WatchdogAction.Restart:
                 RequestRestart(atCeiling
                     ? $"no frames for {StreamWatchdogPolicy.CeilingZeroTicks} ticks (probe bound)"
-                    : "forced repaint produced no WGC frame");
+                    : _watchdog.RepaintRestartsExhausted
+                        ? "forced repaint produced no WGC frame; repaint restarts pause until frames return"
+                        : "forced repaint produced no WGC frame");
                 break;
         }
     }
@@ -651,19 +656,23 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
 
     // CapturePreview and CDP Page.captureScreenshot take a DisplayRequired power request in the browser
     // process, resetting the Windows display-off and screensaver idle timers; ExecuteScript does not.
-    // Toggling a 1px near-transparent element forces one composited frame without a visible change.
+    // Toggling a tiny near-transparent element forces one composited frame without a visible change.
     private const string ProbeScript =
         "(function(){var e=document.getElementById('__nexus_wgc_probe');if(!e){e=document.createElement('div');e.id='__nexus_wgc_probe';e.style.cssText='position:fixed;left:0;top:0;width:1px;height:1px;pointer-events:none;z-index:2147483647;background:rgba(0,0,0,0.01)';document.documentElement.appendChild(e);}e.style.opacity=e.style.opacity==='0.5'?'1':'0.5';return true})()";
 
     private void StartProbe()
     {
-        if (_coreWebView2 == IntPtr.Zero) return;
-        if (_probeHandler == IntPtr.Zero)
-            _probeHandler = WebView2Callbacks.CreateExecuteScriptCompletedHandler(&OnProbeCompletedStatic);
-        _probeBusy = true;
+        ReleaseHandler(ref _probeHandler);
+        if (_coreWebView2 == IntPtr.Zero)
+        {
+            _watchdog.OnProbeFailed();
+            return;
+        }
+        _probeHandler = WebView2Callbacks.CreateExecuteScriptCompletedHandler(&OnProbeCompletedStatic);
+        Interlocked.Exchange(ref _probeFrameExpected, 1);
         if (WebView2Native.Failed(Wv2.Wv2_ExecuteScript(_coreWebView2, ProbeScript, _probeHandler)))
         {
-            _probeBusy = false;
+            ReleaseHandler(ref _probeHandler);
             _watchdog.OnProbeFailed();
         }
     }
@@ -678,8 +687,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
 
     private void OnProbeCompleted(int errorCode, string? resultJson)
     {
-        if (_disposed || !_probeBusy) return;
-        _probeBusy = false;
+        if (_disposed) return;
         if (WebView2Native.Failed(errorCode) || resultJson != "true")
             _watchdog.OnProbeFailed();
         else

@@ -13,54 +13,89 @@ internal sealed class StreamWatchdogPolicy
     public const int MaxProbeFailures = 3;
     public const int CeilingZeroTicks = 60;
     public const int ProbeEveryZeroTicks = 2;
+    public const int ProbeTimeoutTicks = 3;
+    // Repaint-driven restarts in a row that never brought back a frame past the new session's initial one.
+    public const int MaxRepaintRestarts = 3;
 
     private int _zeroTicks;
     private int _probeFailures;
-    // Zero-frame ticks seen since the last probe was answered; null when none is outstanding.
-    private int? _ticksSinceProbe;
+    private bool _probeInFlight;
+    private int _inFlightTicks;
+    // Zero-frame ticks seen since the in-flight probe was answered; null while unanswered or idle.
+    private int? _ticksSinceAnswer;
+    private int _repaintRestarts;
+    private bool _awaitingInitialFrame;
 
     public int ZeroTicks => _zeroTicks;
     public bool ProbeBroken => _probeFailures >= MaxProbeFailures;
+    public bool RepaintRestartsExhausted => _repaintRestarts >= MaxRepaintRestarts;
+    /// <summary>A probe was requested and is not yet answered, failed, timed out or dropped; a completion is only accepted while this holds.</summary>
+    public bool ProbeInFlight => _probeInFlight;
 
     /// <summary>Feeds one watchdog tick with the frames pumped since the last tick.</summary>
     public WatchdogAction Tick(long framesDelta)
     {
         if (framesDelta > 0)
         {
+            if (_awaitingInitialFrame) _awaitingInitialFrame = false;
+            else _repaintRestarts = 0;
             _zeroTicks = 0;
-            _ticksSinceProbe = null;
+            ClearProbe();
             _probeFailures = 0;
             return WatchdogAction.None;
         }
         _zeroTicks++;
-        if (_zeroTicks >= CeilingZeroTicks) return Restarted();
-        // The answered probe must have a full tick to surface its frame: the answer can land just before a tick.
-        if (_ticksSinceProbe is { } seen)
+        if (_zeroTicks >= CeilingZeroTicks) return Restarted(repaint: false);
+        if (_probeInFlight)
         {
-            if (seen >= 1) return Restarted();
-            _ticksSinceProbe = seen + 1;
+            // The answered probe must have a full tick to surface its frame: the answer can land just before a tick.
+            if (_ticksSinceAnswer is { } seen)
+            {
+                if (seen >= 1) return Restarted(repaint: true);
+                _ticksSinceAnswer = seen + 1;
+            }
+            else if (++_inFlightTicks >= ProbeTimeoutTicks)
+            {
+                OnProbeFailed();
+            }
             return WatchdogAction.None;
         }
-        if (ProbeBroken) return WatchdogAction.None;
-        return _zeroTicks % ProbeEveryZeroTicks == 0 ? WatchdogAction.Probe : WatchdogAction.None;
+        if (ProbeBroken || RepaintRestartsExhausted) return WatchdogAction.None;
+        if (_zeroTicks % ProbeEveryZeroTicks != 0) return WatchdogAction.None;
+        _probeInFlight = true;
+        _inFlightTicks = 0;
+        return WatchdogAction.Probe;
     }
 
-    /// <summary>The page applied the probe's repaint; a WGC frame must follow.</summary>
+    /// <summary>The page applied the probe's repaint; a WGC frame must follow. Ignored unless a probe is in flight and unanswered.</summary>
     public void OnProbe()
     {
+        if (!_probeInFlight || _ticksSinceAnswer is not null) return;
         _probeFailures = 0;
-        _ticksSinceProbe = 0;
+        _ticksSinceAnswer = 0;
     }
 
+    /// <summary>The in-flight probe failed or timed out. Ignored unless a probe is in flight and unanswered.</summary>
     public void OnProbeFailed()
     {
+        if (!_probeInFlight || _ticksSinceAnswer is not null) return;
+        ClearProbe();
         _probeFailures++;
     }
 
-    private WatchdogAction Restarted()
+    private void ClearProbe()
     {
+        _probeInFlight = false;
+        _inFlightTicks = 0;
+        _ticksSinceAnswer = null;
+    }
+
+    private WatchdogAction Restarted(bool repaint)
+    {
+        if (repaint) _repaintRestarts++;
+        _awaitingInitialFrame = true;
         _zeroTicks = 0;
-        _ticksSinceProbe = null;
+        ClearProbe();
         _probeFailures = 0;
         return WatchdogAction.Restart;
     }
