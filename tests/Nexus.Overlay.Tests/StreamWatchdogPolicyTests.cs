@@ -95,30 +95,41 @@ public class StreamWatchdogPolicyTests
     }
 
     [Fact]
-    public void Repaint_restarts_pause_after_the_cap_when_only_initial_frames_follow()
+    public void At_the_cap_probes_continue_but_a_frameless_repaint_waits_for_the_ceiling()
     {
         var p = new StreamWatchdogPolicy();
-        for (var i = 0; i < StreamWatchdogPolicy.MaxRepaintRestarts; i++)
+        ExhaustRepaintRestarts(p);
+        var restarts = 0;
+        for (var i = 1; i <= StreamWatchdogPolicy.CeilingZeroTicks; i++)
         {
-            Assert.Equal(WatchdogAction.Restart, FreezeOnce(p));
-            p.Tick(1); // initial frame only
+            var action = p.Tick(0);
+            if (action == WatchdogAction.Probe) p.OnProbe();
+            if (action == WatchdogAction.Restart)
+            {
+                restarts++;
+                Assert.Equal(StreamWatchdogPolicy.CeilingZeroTicks, i);
+            }
         }
-        Assert.True(p.RepaintRestartsExhausted);
-        var actions = new System.Collections.Generic.List<WatchdogAction>();
-        for (var i = 0; i < StreamWatchdogPolicy.CeilingZeroTicks; i++) actions.Add(p.Tick(0));
-        Assert.DoesNotContain(WatchdogAction.Probe, actions);
-        Assert.Equal(WatchdogAction.Restart, actions[^1]); // the ceiling still recovers
+        Assert.Equal(1, restarts);
+    }
+
+    [Fact]
+    public void At_the_cap_a_probe_frame_resets_the_cap()
+    {
+        var p = new StreamWatchdogPolicy();
+        ExhaustRepaintRestarts(p);
+        Assert.Equal(WatchdogAction.Probe, TickToNextProbe(p));
+        p.OnProbe();
+        p.Tick(1); // the repaint reaches WGC
+        Assert.False(p.RepaintRestartsExhausted);
+        Assert.Equal(WatchdogAction.Restart, FreezeOnce(p));
     }
 
     [Fact]
     public void A_non_initial_frame_resumes_repaint_restarts()
     {
         var p = new StreamWatchdogPolicy();
-        for (var i = 0; i < StreamWatchdogPolicy.MaxRepaintRestarts; i++)
-        {
-            FreezeOnce(p);
-            p.Tick(1);
-        }
+        ExhaustRepaintRestarts(p);
         Assert.True(p.RepaintRestartsExhausted);
         p.Tick(1);
         Assert.False(p.RepaintRestartsExhausted);
@@ -129,12 +140,14 @@ public class StreamWatchdogPolicyTests
     public void Ceiling_restart_initial_frame_does_not_reset_the_repaint_cap()
     {
         var p = new StreamWatchdogPolicy();
-        for (var i = 0; i < StreamWatchdogPolicy.MaxRepaintRestarts; i++)
+        ExhaustRepaintRestarts(p);
+        var last = WatchdogAction.None;
+        for (var i = 0; i < StreamWatchdogPolicy.CeilingZeroTicks; i++)
         {
-            FreezeOnce(p);
-            p.Tick(1);
+            last = p.Tick(0);
+            if (last == WatchdogAction.Probe) p.OnProbe();
         }
-        for (var i = 0; i < StreamWatchdogPolicy.CeilingZeroTicks; i++) p.Tick(0);
+        Assert.Equal(WatchdogAction.Restart, last);
         p.Tick(1);
         Assert.True(p.RepaintRestartsExhausted);
     }
@@ -212,6 +225,16 @@ public class StreamWatchdogPolicyTests
         p.OnProbe();
         p.Tick(0);
         return p.Tick(0);
+    }
+
+    private static void ExhaustRepaintRestarts(StreamWatchdogPolicy p)
+    {
+        for (var i = 0; i < StreamWatchdogPolicy.MaxRepaintRestarts; i++)
+        {
+            Assert.Equal(WatchdogAction.Restart, FreezeOnce(p));
+            p.Tick(1); // initial frame only
+        }
+        Assert.True(p.RepaintRestartsExhausted);
     }
 
     private static void FailProbes(StreamWatchdogPolicy p, int count)

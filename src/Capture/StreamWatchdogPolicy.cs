@@ -14,7 +14,8 @@ internal sealed class StreamWatchdogPolicy
     public const int CeilingZeroTicks = 60;
     public const int ProbeEveryZeroTicks = 2;
     public const int ProbeTimeoutTicks = 3;
-    // Repaint-driven restarts in a row that never brought back a frame past the new session's initial one.
+    // Repaint-driven restarts in a row that never brought back a frame past the new session's initial one;
+    // at the cap a repaint with no frame no longer restarts.
     public const int MaxRepaintRestarts = 3;
 
     private int _zeroTicks;
@@ -51,7 +52,13 @@ internal sealed class StreamWatchdogPolicy
             // The answered probe must have a full tick to surface its frame: the answer can land just before a tick.
             if (_ticksSinceAnswer is { } seen)
             {
-                if (seen >= 1) return Restarted(repaint: true);
+                if (seen >= 1)
+                {
+                    if (!RepaintRestartsExhausted) return Restarted(repaint: true);
+                    // Capped: keep probing so a later probe frame can reset the cap; the ceiling still restarts.
+                    ClearProbe();
+                    return WatchdogAction.None;
+                }
                 _ticksSinceAnswer = seen + 1;
             }
             else if (++_inFlightTicks >= ProbeTimeoutTicks)
@@ -60,7 +67,7 @@ internal sealed class StreamWatchdogPolicy
             }
             return WatchdogAction.None;
         }
-        if (ProbeBroken || RepaintRestartsExhausted) return WatchdogAction.None;
+        if (ProbeBroken) return WatchdogAction.None;
         if (_zeroTicks % ProbeEveryZeroTicks != 0) return WatchdogAction.None;
         _probeInFlight = true;
         _inFlightTicks = 0;

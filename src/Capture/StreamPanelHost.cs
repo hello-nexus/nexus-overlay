@@ -632,7 +632,11 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         var atCeiling = _watchdog.ZeroTicks + 1 >= StreamWatchdogPolicy.CeilingZeroTicks;
         var action = _watchdog.Tick(delta);
         // Frames, a timeout or a restart ended the probe; its completion, if it ever comes, is dropped.
-        if (!_watchdog.ProbeInFlight) ReleaseHandler(ref _probeHandler);
+        if (!_watchdog.ProbeInFlight)
+        {
+            ReleaseHandler(ref _probeHandler);
+            Interlocked.Exchange(ref _probeFrameExpected, 0);
+        }
         switch (action)
         {
             case WatchdogAction.Probe:
@@ -673,6 +677,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         if (WebView2Native.Failed(Wv2.Wv2_ExecuteScript(_coreWebView2, ProbeScript, _probeHandler)))
         {
             ReleaseHandler(ref _probeHandler);
+            Interlocked.Exchange(ref _probeFrameExpected, 0);
             _watchdog.OnProbeFailed();
         }
     }
