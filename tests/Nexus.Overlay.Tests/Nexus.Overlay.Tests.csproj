@@ -53,6 +53,7 @@
     <Compile Include="..\..\src\ProcessTree.cs" Link="src\ProcessTree.cs" />
     <Compile Include="..\..\src\UserDataPaths.cs" Link="src\UserDataPaths.cs" />
     <Compile Include="..\..\src\Logger.cs" Link="src\Logger.cs" />
+    <Compile Include="..\..\src\PanelRank.cs" Link="src\PanelRank.cs" />
   </ItemGroup>
 
 </Project>

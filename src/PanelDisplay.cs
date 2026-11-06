@@ -10,35 +10,7 @@ namespace Nexus.Overlay;
 /// </summary>
 internal static class PanelDisplay
 {
-    // EDID names returned by EnumDisplayDevicesW are usually just "Generic PnP
-    // Monitor" - Windows doesn't surface the real friendly name through that
-    // API. HYTE panels are identified instead by the hardware DeviceID (read
-    // through DisplayIdentity so the ACTIVE-child rule applies here too), which
-    // embeds the panel controller name and is stable per model. HYTE ships the
-    // Y70 with several controllers (Realtek/BOE variants), so match any. Keep
-    // in sync with Y70DisplayProtocol.DdcPanelHardwareNames in nexus-service -
-    // a separate assembly, so the constant can't be shared.
-    private static readonly string[] KnownPanelHardwareNames =
-    {
-        "RTK2234", "RTK0004", "RTD1100", "RTK1234", "BOE2143", "RTK409A", "RTK2345",
-    };
-
-    // Lower is better; -1 is no match. The GT screen (first entry) is never used
-    // alongside the Y70 touch panel, so it wins when both are connected.
-    internal static int PanelRank(string deviceId)
-    {
-        for (var i = 0; i < KnownPanelHardwareNames.Length; i++)
-        {
-            if (deviceId.IndexOf(KnownPanelHardwareNames[i], StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                return i;
-            }
-        }
-
-        return -1;
-    }
-
-    // Every name above is a Y70 variant, so a Find() match is always this surface.
+    // Every PanelRank name is a Y70 variant, so a Find() match is always this surface.
     internal const string Surface = "y70";
 
     // Last scan result. The kiosk poll runs Find() every 5 s; logging only when
@@ -49,7 +21,7 @@ internal static class PanelDisplay
     /// <summary>
     /// Returns the <see cref="MonitorInfo"/> of the first connected display
     /// whose hardware DeviceID contains a known HYTE panel controller name,
-    /// preferring the earliest entry of <see cref="KnownPanelHardwareNames"/>;
+    /// preferring the earliest entry of <see cref="PanelRank.KnownPanelHardwareNames"/>;
     /// null if none match.
     /// </summary>
     public static MonitorInfo? Find()
@@ -67,7 +39,7 @@ internal static class PanelDisplay
             var deviceId = DisplayIdentity.ReadDrivenMonitorDeviceId(m.DeviceName);
             sig.Append(m.Index).Append('=').Append(deviceId.Length == 0 ? "?" : deviceId).Append(' ');
 
-            var rank = PanelRank(deviceId);
+            var rank = PanelRank.Of(deviceId);
             if (rank >= 0 && (match is null || rank < matchRank))
             {
                 match = m;
