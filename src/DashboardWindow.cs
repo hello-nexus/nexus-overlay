@@ -1213,8 +1213,6 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             using var stream = File.OpenRead(path);
             var doc = JsonSerializer.Deserialize(stream, DashboardBoundsJson.Default.SavedBounds);
             if (doc is null) return null;
-            // Refuse anything under the minimum at the target monitor's
-            // scale, including a corrupted/zeroed file.
             var rc = new Native.RECT { Left = doc.X, Top = doc.Y, Right = doc.X + doc.W, Bottom = doc.Y + doc.H };
             // A rect on no current monitor (display unplugged or disabled)
             // falls back to the default placement.
@@ -1222,9 +1220,20 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             if (monitor == IntPtr.Zero) return null;
             var (dpi, work) = MonitorMetrics(monitor);
             var (minW, minH) = MinSize(dpi, work);
+            // Refuse anything under the minimum at the target monitor's
+            // scale, including a corrupted/zeroed file.
             if (doc.W < minW || doc.H < minH) return null;
             var (fx, fy) = FrameInsets(dpi);
-            return DashboardBoundsClamp.Clamp(doc.X, doc.Y, doc.W, doc.H,
+            // rcNormalPosition is in workspace coordinates (offset by a
+            // top or left docked taskbar); convert to screen coordinates.
+            var info = new Native.MonitorInfoNative { cbSize = Marshal.SizeOf<Native.MonitorInfoNative>() };
+            int offX = 0, offY = 0;
+            if (Native.GetMonitorInfoW(monitor, ref info))
+            {
+                offX = info.rcWork.Left - info.rcMonitor.Left;
+                offY = info.rcWork.Top - info.rcMonitor.Top;
+            }
+            return DashboardBoundsClamp.Clamp(doc.X + offX, doc.Y + offY, doc.W, doc.H,
                 work.Left, work.Top, work.Right, work.Bottom, fx, fy);
         }
         catch { return null; }
