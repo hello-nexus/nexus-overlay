@@ -411,6 +411,7 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
                 {
                     Native.GetClientRect(hwnd, out var rc);
                     Wv2.Ctrl_put_Bounds(_controller, rc);
+                    Wv2.Ctrl_NotifyParentWindowPositionChanged(_controller);
                 }
                 int sizeKind = wParam.ToInt32();
                 // Maximize / restore are the transitions DWM is known to drop
@@ -439,6 +440,10 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
 
             case Native.WM_MOVE:
                 _saveOnClose = true;
+                if (_controller != IntPtr.Zero)
+                {
+                    Wv2.Ctrl_NotifyParentWindowPositionChanged(_controller);
+                }
                 return IntPtr.Zero;
 
             case Native.WM_GETMINMAXINFO:
@@ -1211,10 +1216,16 @@ internal sealed unsafe class DashboardWindow : IWin32WindowOwner, IDisposable
             // Refuse anything under the minimum at the target monitor's
             // scale, including a corrupted/zeroed file.
             var rc = new Native.RECT { Left = doc.X, Top = doc.Y, Right = doc.X + doc.W, Bottom = doc.Y + doc.H };
-            var (dpi, work) = MonitorMetrics(Native.MonitorFromRect(ref rc, Native.MONITOR_DEFAULTTONEAREST));
+            // A rect on no current monitor (display unplugged or disabled)
+            // falls back to the default placement.
+            var monitor = Native.MonitorFromRect(ref rc, Native.MONITOR_DEFAULTTONULL);
+            if (monitor == IntPtr.Zero) return null;
+            var (dpi, work) = MonitorMetrics(monitor);
             var (minW, minH) = MinSize(dpi, work);
             if (doc.W < minW || doc.H < minH) return null;
-            return (doc.X, doc.Y, doc.W, doc.H);
+            var (fx, fy) = FrameInsets(dpi);
+            return DashboardBoundsClamp.Clamp(doc.X, doc.Y, doc.W, doc.H,
+                work.Left, work.Top, work.Right, work.Bottom, fx, fy);
         }
         catch { return null; }
     }

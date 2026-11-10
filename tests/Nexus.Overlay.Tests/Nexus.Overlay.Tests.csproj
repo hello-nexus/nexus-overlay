@@ -54,6 +54,7 @@
     <Compile Include="..\..\src\UserDataPaths.cs" Link="src\UserDataPaths.cs" />
     <Compile Include="..\..\src\Logger.cs" Link="src\Logger.cs" />
     <Compile Include="..\..\src\PanelRank.cs" Link="src\PanelRank.cs" />
+    <Compile Include="..\..\src\DashboardBoundsClamp.cs" Link="src\DashboardBoundsClamp.cs" />
   </ItemGroup>
 
 </Project>
