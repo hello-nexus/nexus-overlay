@@ -13,9 +13,10 @@ namespace Nexus.Overlay.WebView2;
 /// additional browser arguments. The stream host passes
 /// --disable-features=CalculateNativeWinOcclusion (Chromium occlusion-throttles
 /// rendering of the off-screen stream host window without it, which starves
-/// WGC) and --force-color-profile=srgb (with Windows HDR on, Chromium composes
-/// in the HDR display space, so video renders pale and blown out into the 8-bit
-/// WGC surface; forcing sRGB keeps the captured frame in SDR). Chromium's default frame-rate limit stays on: lifting it made CSS
+/// WGC) and --disable-direct-composition (with Windows HDR on, video presented
+/// through DirectComposition lands pale and blown out in the 8-bit WGC capture;
+/// composing it into the main surface keeps the captured frame SDR). Chromium's
+/// default frame-rate limit stays on: lifting it made CSS
 /// animations free-run and video backgrounds present far below the stream rate.
 /// The Y70 kiosk's compatibility rendering passes its own.
 ///
@@ -27,7 +28,7 @@ namespace Nexus.Overlay.WebView2;
 /// </summary>
 internal static unsafe class Wv2EnvironmentOptions
 {
-    private const string AdditionalBrowserArguments = "--disable-features=CalculateNativeWinOcclusion --force-color-profile=srgb";
+    private const string AdditionalBrowserArguments = "--disable-features=CalculateNativeWinOcclusion --disable-direct-composition";
 
     /// <summary>Bench diagnostics hook: NEXUS_STREAM_WV2_ARGS appends extra
     /// browser args (e.g. --remote-debugging-port=9223) to the stream env
