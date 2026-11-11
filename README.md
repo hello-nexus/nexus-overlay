@@ -68,7 +68,7 @@ dotnet publish -c Release -r win-x64 \
   /p:PublishAot=true /p:PublishSingleFile=true /p:SelfContained=true
 ```
 
-The csproj is `<PublishAot>true</PublishAot>` and Windows-only (`net10.0-windows10.0.19041.0`). The published `nexus-overlay.exe` is dropped next to `nexus-service` and discovered by absolute path.
+The csproj is `<PublishAot>true</PublishAot>` and Windows-only (`net11.0-windows10.0.19041.0`). The published `nexus-overlay.exe` is dropped next to `nexus-service` and discovered by absolute path.
 
 ## Tests
 

@@ -1,9 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- net10.0 (no -windows suffix) so the tests run on Mac CI too.
+    <!-- net11.0 (no -windows suffix) so the tests run on Mac CI too.
          Only pure-logic helpers are tested; nothing here touches Win32. -->
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net11.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <IsPackable>false</IsPackable>
