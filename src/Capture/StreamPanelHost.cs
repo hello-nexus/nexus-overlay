@@ -19,7 +19,7 @@ namespace Nexus.Overlay.Capture;
 /// pacing and the device transport; this host only produces frames.
 ///
 /// Uses its own WebView2 environment (StreamWebView2 user-data folder) so
-/// the occlusion-disable browser argument never touches the dashboard /
+/// the stream browser arguments never touch the dashboard /
 /// kiosk / overlay surfaces sharing DesktopWebView2.
 /// </summary>
 internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
