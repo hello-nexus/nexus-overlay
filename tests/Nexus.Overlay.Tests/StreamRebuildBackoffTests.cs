@@ -83,3 +83,28 @@ public class StreamRebuildTrackerTests
         Assert.False(t.IsBlocked("gone", 0));
     }
 }
+
+public class StreamRenderModeTests
+{
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(1, false)]
+    [InlineData(2, true)]
+    [InlineData(5, true)]
+    public void Software_compositing_starts_at_the_second_consecutive_rebuild(int rebuilds, bool software)
+    {
+        Assert.Equal(software, StreamRenderMode.RequiresSoftware(rebuilds));
+    }
+
+    [Fact]
+    public void The_tracker_count_feeds_the_ladder_and_resets_on_recovery()
+    {
+        var t = new StreamRebuildTracker();
+        t.OnRebuilt("s", 0);
+        Assert.False(StreamRenderMode.RequiresSoftware(t.RebuildCount("s")));
+        t.OnRebuilt("s", 0);
+        Assert.True(StreamRenderMode.RequiresSoftware(t.RebuildCount("s")));
+        t.OnRecovered("s");
+        Assert.False(StreamRenderMode.RequiresSoftware(t.RebuildCount("s")));
+    }
+}

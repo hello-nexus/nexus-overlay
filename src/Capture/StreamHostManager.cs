@@ -82,6 +82,8 @@ internal sealed class StreamHostManager
             {
                 if (!_hosts.Remove(host.SessionId, out _)) return;
                 var delay = _rebuilds.OnRebuilt(host.SessionId, Environment.TickCount64);
+                if (StreamRenderMode.OnRebuilt(_rebuilds.RebuildCount(host.SessionId)))
+                    Log.Warn($"stream-hosts session={host.SessionId}: rebuilt host still produced no frames, switching stream browser to software compositing (--disable-gpu) for this process");
                 Log.Warn($"stream-hosts rebuild session={host.SessionId}, respawn in {delay / 1000}s");
             };
             host.BrowserExited = () =>

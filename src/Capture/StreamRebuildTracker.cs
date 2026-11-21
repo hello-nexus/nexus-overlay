@@ -11,6 +11,9 @@ internal sealed class StreamRebuildTracker
     /// <summary>Sessions waiting out a backoff before their host is built again; the process must stay alive for them.</summary>
     public int PendingCount => _notBefore.Count;
 
+    /// <summary>Rebuilds in a row for the session without frames flowing in between.</summary>
+    public int RebuildCount(string sessionId) => _rebuilds.GetValueOrDefault(sessionId);
+
     /// <summary>Records a rebuild and returns the delay before the respawn.</summary>
     public long OnRebuilt(string sessionId, long nowMs)
     {

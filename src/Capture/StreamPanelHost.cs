@@ -219,11 +219,17 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
 
     private void StartWebView2Init()
     {
-        var userDataDir = UserDataPaths.Profile("StreamWebView2", ProfileMigration.UiState);
+        // Browser arguments only apply when the browser process launches for a user-data folder, so software
+        // compositing gets its own folder; a still-running GPU-mode browser cannot swallow the new arguments.
+        var software = StreamRenderMode.Software;
+        var userDataDir = UserDataPaths.Profile(software ? "StreamWebView2-sw" : "StreamWebView2", ProfileMigration.UiState);
+        var browserArgs = software
+            ? Wv2EnvironmentOptions.EffectiveBrowserArguments + " --disable-gpu"
+            : Wv2EnvironmentOptions.EffectiveBrowserArguments;
         try { Directory.CreateDirectory(userDataDir); } catch { }
 
-        Log.Info($"stream-host {SessionId}: env create args='{Wv2EnvironmentOptions.EffectiveBrowserArguments}' userDataDir='{RedactLocalAppData(userDataDir)}'");
-        _envOptions = Wv2EnvironmentOptions.Create();
+        Log.Info($"stream-host {SessionId}: env create mode={(software ? "software" : "gpu")} args='{browserArgs}' userDataDir='{RedactLocalAppData(userDataDir)}'");
+        _envOptions = Wv2EnvironmentOptions.Create(browserArgs);
         _envCreatedHandler = WebView2Callbacks.CreateEnvCreatedHandler(&OnEnvCreatedStatic);
         fixed (char* udf = userDataDir)
         {
