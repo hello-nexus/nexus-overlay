@@ -60,6 +60,10 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     /// in-place recovery. The manager rebuilds it after a backoff; unlike <see cref="Faulted"/> it is not an immediate respawn.</summary>
     public Action? RebuildRequested;
 
+    /// <summary>Fires once (message-loop thread) after the host disposed itself because the WebView2 browser process exited.</summary>
+    public Action? BrowserExited;
+    private volatile bool _browserExited;
+
     /// <summary>Fires once (message-loop thread) when frames have flowed past the session's initial frame, ending any rebuild backoff.</summary>
     public Action? Recovered;
 
@@ -164,7 +168,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
             case WM_HOST_FAULTED:
                 if (!_disposed)
                 {
-                    var callback = Faulted;
+                    var callback = _browserExited ? BrowserExited : Faulted;
                     Dispose();
                     try { callback?.Invoke(); } catch { }
                 }
@@ -363,7 +367,11 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         if (count <= 5)
             Log.Warn($"stream-host {SessionId}: webview process failed kind={kind} (x{count}); {DescribeWindowState()}");
         // The browser process is gone, so nothing will present again: respawn now instead of burning watchdog cycles.
-        if (kind == ProcessFailedBrowserExited) PostFault();
+        if (kind == ProcessFailedBrowserExited)
+        {
+            _browserExited = true;
+            PostFault();
+        }
     }
 
     // Why a host that is up stops presenting: a hidden, minimized or DWM-cloaked window, or a controller that

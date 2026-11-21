@@ -21,6 +21,16 @@ internal sealed class StreamRebuildTracker
         return delay;
     }
 
+    /// <summary>Records a browser process exit and returns the delay before the respawn: none for the first, then the rebuild backoff for repeats without a recovery in between.</summary>
+    public long OnBrowserExited(string sessionId, long nowMs)
+    {
+        var count = _rebuilds.GetValueOrDefault(sessionId) + 1;
+        _rebuilds[sessionId] = count;
+        var delay = StreamRebuildBackoff.DelayMs(count - 1);
+        if (delay > 0) _notBefore[sessionId] = nowMs + delay;
+        return delay;
+    }
+
     public bool IsBlocked(string sessionId, long nowMs) => _notBefore.TryGetValue(sessionId, out var t) && nowMs < t;
 
     /// <summary>The respawn ran; the rebuild count stays until frames flow again.</summary>

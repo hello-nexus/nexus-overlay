@@ -47,6 +47,20 @@ public class StreamRebuildTrackerTests
     }
 
     [Fact]
+    public void Browser_exits_respawn_at_once_then_back_off_until_recovered()
+    {
+        var t = new StreamRebuildTracker();
+        Assert.Equal(0, t.OnBrowserExited("s", 0));
+        Assert.False(t.IsBlocked("s", 0));
+        Assert.Equal(0, t.PendingCount);
+        Assert.Equal(StreamRebuildBackoff.DelayMs(1), t.OnBrowserExited("s", 0));
+        Assert.Equal(1, t.PendingCount);
+        Assert.Equal(StreamRebuildBackoff.DelayMs(2), t.OnBrowserExited("s", 0));
+        t.OnRecovered("s");
+        Assert.Equal(0, t.OnBrowserExited("s", 0));
+    }
+
+    [Fact]
     public void Unlock_clears_the_backoff_and_the_pending_wait()
     {
         var t = new StreamRebuildTracker();

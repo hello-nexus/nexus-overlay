@@ -84,6 +84,12 @@ internal sealed class StreamHostManager
                 var delay = _rebuilds.OnRebuilt(host.SessionId, Environment.TickCount64);
                 Log.Warn($"stream-hosts rebuild session={host.SessionId}, respawn in {delay / 1000}s");
             };
+            host.BrowserExited = () =>
+            {
+                if (!_hosts.Remove(host.SessionId, out _)) return;
+                var delay = _rebuilds.OnBrowserExited(host.SessionId, Environment.TickCount64);
+                Log.Warn($"stream-hosts browser exited session={host.SessionId}, respawn in {delay / 1000}s");
+            };
             host.Recovered = () =>
             {
                 if (_rebuilds.OnRecovered(host.SessionId)) Log.Info($"stream-hosts recovered session={host.SessionId}");
