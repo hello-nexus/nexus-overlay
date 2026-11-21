@@ -18,3 +18,54 @@ public class StreamRebuildBackoffTests
         Assert.Equal(expectedMs, StreamRebuildBackoff.DelayMs(rebuilds));
     }
 }
+
+public class StreamRebuildTrackerTests
+{
+    [Fact]
+    public void A_rebuild_blocks_respawn_until_the_backoff_passes_and_counts_as_pending()
+    {
+        var t = new StreamRebuildTracker();
+        var delay = t.OnRebuilt("s", 1_000);
+        Assert.Equal(StreamRebuildBackoff.DelayMs(1), delay);
+        Assert.Equal(1, t.PendingCount);
+        Assert.True(t.IsBlocked("s", 1_000 + delay - 1));
+        Assert.False(t.IsBlocked("s", 1_000 + delay));
+        t.OnSpawned("s");
+        Assert.Equal(0, t.PendingCount);
+    }
+
+    [Fact]
+    public void Consecutive_rebuilds_back_off_until_recovered()
+    {
+        var t = new StreamRebuildTracker();
+        Assert.Equal(StreamRebuildBackoff.DelayMs(1), t.OnRebuilt("s", 0));
+        t.OnSpawned("s");
+        Assert.Equal(StreamRebuildBackoff.DelayMs(2), t.OnRebuilt("s", 0));
+        t.OnSpawned("s");
+        Assert.True(t.OnRecovered("s"));
+        Assert.Equal(StreamRebuildBackoff.DelayMs(1), t.OnRebuilt("s", 0));
+    }
+
+    [Fact]
+    public void Unlock_clears_the_backoff_and_the_pending_wait()
+    {
+        var t = new StreamRebuildTracker();
+        t.OnRebuilt("s", 0);
+        t.OnRebuilt("s", 0);
+        t.OnUnlocked();
+        Assert.False(t.IsBlocked("s", 0));
+        Assert.Equal(0, t.PendingCount);
+        Assert.Equal(StreamRebuildBackoff.DelayMs(1), t.OnRebuilt("s", 0));
+    }
+
+    [Fact]
+    public void Prune_drops_sessions_the_service_no_longer_wants()
+    {
+        var t = new StreamRebuildTracker();
+        t.OnRebuilt("keep", 0);
+        t.OnRebuilt("gone", 0);
+        t.Prune(new[] { "keep" });
+        Assert.Equal(1, t.PendingCount);
+        Assert.False(t.IsBlocked("gone", 0));
+    }
+}

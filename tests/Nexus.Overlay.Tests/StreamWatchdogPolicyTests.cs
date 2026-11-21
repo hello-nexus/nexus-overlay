@@ -235,6 +235,37 @@ public class StreamWatchdogPolicyTests
         Assert.False(p.ProbeBroken);
     }
 
+    [Fact]
+    public void A_frameless_repaint_at_the_cap_never_rebuilds_while_locked()
+    {
+        var p = new StreamWatchdogPolicy();
+        ExhaustRepaintRestarts(p);
+        for (var i = 0; i < 200; i++)
+        {
+            var action = p.Tick(0, sessionLocked: true);
+            if (action == WatchdogAction.Probe) p.OnProbe();
+            Assert.NotEqual(WatchdogAction.Rebuild, action);
+        }
+    }
+
+    [Fact]
+    public void Ceiling_restarts_at_the_stuck_cap_hold_while_locked_and_rebuild_after_unlock()
+    {
+        var p = new StreamWatchdogPolicy();
+        for (var cycle = 0; cycle < StreamWatchdogPolicy.MaxStuckRestarts; cycle++)
+        {
+            Assert.Equal(WatchdogAction.Restart, SilentToCeiling(p));
+            p.Tick(1);
+        }
+        for (var i = 0; i < StreamWatchdogPolicy.CeilingZeroTicks; i++)
+        {
+            var action = p.Tick(0, sessionLocked: true);
+            if (action == WatchdogAction.Probe) p.OnProbeFailed();
+            Assert.NotEqual(WatchdogAction.Rebuild, action);
+        }
+        Assert.Equal(WatchdogAction.Rebuild, SilentToCeiling(p));
+    }
+
     private static WatchdogAction SilentToCeiling(StreamWatchdogPolicy p)
     {
         var last = WatchdogAction.None;

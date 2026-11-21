@@ -15,9 +15,7 @@ internal sealed class StreamHostManager
 {
     private readonly string _serviceOrigin;
     private readonly Dictionary<string, StreamPanelHost> _hosts = new(StringComparer.Ordinal);
-    // Hosts torn down for a dead capture: consecutive rebuild count and the earliest tick the next spawn may run.
-    private readonly Dictionary<string, int> _rebuilds = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, long> _spawnNotBefore = new(StringComparer.Ordinal);
+    private readonly StreamRebuildTracker _rebuilds = new();
 
     public StreamHostManager(string serviceOrigin)
     {
@@ -25,6 +23,12 @@ internal sealed class StreamHostManager
     }
 
     public int Count => _hosts.Count;
+
+    /// <summary>Sessions waiting out a rebuild backoff; they have no host yet but the overlay must not idle-exit and lose them.</summary>
+    public bool HasPendingRebuilds => _rebuilds.PendingCount > 0;
+
+    /// <summary>The user session unlocked: drop the backoff and let the next reconcile respawn pending rebuilds at once.</summary>
+    public void OnSessionUnlocked() => _rebuilds.OnUnlocked();
 
     public void Reconcile(IReadOnlyList<StreamAssignment> assignments, string pairedToken)
     {
@@ -35,11 +39,7 @@ internal sealed class StreamHostManager
                 desired[assignment.SessionId] = assignment;
         }
 
-        foreach (var id in _spawnNotBefore.Keys.Where(id => !desired.ContainsKey(id)).ToList())
-        {
-            _spawnNotBefore.Remove(id);
-            _rebuilds.Remove(id);
-        }
+        _rebuilds.Prune(desired.Keys);
 
         var (spawn, close) = StreamHostPlan.Compute(desired.Keys.ToList(), _hosts.Keys.ToList());
 
@@ -50,7 +50,7 @@ internal sealed class StreamHostManager
 
         foreach (var sessionId in spawn)
         {
-            if (_spawnNotBefore.TryGetValue(sessionId, out var notBefore) && Environment.TickCount64 < notBefore) continue;
+            if (_rebuilds.IsBlocked(sessionId, Environment.TickCount64)) continue;
             SpawnHost(desired[sessionId], pairedToken);
         }
     }
@@ -63,7 +63,6 @@ internal sealed class StreamHostManager
         }
         _hosts.Clear();
         _rebuilds.Clear();
-        _spawnNotBefore.Clear();
     }
 
     private void SpawnHost(StreamAssignment assignment, string pairedToken)
@@ -82,18 +81,15 @@ internal sealed class StreamHostManager
             host.RebuildRequested = () =>
             {
                 if (!_hosts.Remove(host.SessionId, out _)) return;
-                var count = _rebuilds.GetValueOrDefault(host.SessionId) + 1;
-                _rebuilds[host.SessionId] = count;
-                var delay = StreamRebuildBackoff.DelayMs(count);
-                _spawnNotBefore[host.SessionId] = Environment.TickCount64 + delay;
-                Log.Warn($"stream-hosts rebuild session={host.SessionId} (x{count}), respawn in {delay / 1000}s");
+                var delay = _rebuilds.OnRebuilt(host.SessionId, Environment.TickCount64);
+                Log.Warn($"stream-hosts rebuild session={host.SessionId}, respawn in {delay / 1000}s");
             };
             host.Recovered = () =>
             {
-                if (_rebuilds.Remove(host.SessionId)) Log.Info($"stream-hosts recovered session={host.SessionId}");
-                _spawnNotBefore.Remove(host.SessionId);
+                if (_rebuilds.OnRecovered(host.SessionId)) Log.Info($"stream-hosts recovered session={host.SessionId}");
             };
             _hosts[assignment.SessionId] = host;
+            _rebuilds.OnSpawned(assignment.SessionId);
             Log.Info($"stream-hosts opened session={assignment.SessionId} device={assignment.PanelDeviceId} "
                 + $"{assignment.CssWidth}x{assignment.CssHeight}@{assignment.Fps} dpr={assignment.Dpr}");
         }
@@ -105,8 +101,7 @@ internal sealed class StreamHostManager
 
     private void CloseHost(string sessionId, string reason)
     {
-        _rebuilds.Remove(sessionId);
-        _spawnNotBefore.Remove(sessionId);
+        _rebuilds.Forget(sessionId);
         if (!_hosts.Remove(sessionId, out var host)) return;
         try { host.Dispose(); }
         catch (Exception ex) { Log.Error($"stream-hosts dispose {sessionId}: {ex.Message}"); }

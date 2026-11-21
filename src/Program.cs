@@ -339,7 +339,7 @@ internal static class Program
         {
             return false;
         }
-        if (_streamHosts is { Count: > 0 })
+        if (_streamHosts is { Count: > 0 } or { HasPendingRebuilds: true })
         {
             return false;
         }
@@ -458,6 +458,11 @@ internal static class Program
             if (msg == Native.WM_WTSSESSION_CHANGE)
             {
                 PanelMonitorGuard.OnSessionChange(wParam);
+                if ((int)wParam == Native.WTS_SESSION_UNLOCK && _streamHosts is not null)
+                {
+                    _streamHosts.OnSessionUnlocked();
+                    _ = PollAsync();
+                }
                 return IntPtr.Zero;
             }
             return null;

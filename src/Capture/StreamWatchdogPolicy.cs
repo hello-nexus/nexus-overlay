@@ -31,6 +31,8 @@ internal sealed class StreamWatchdogPolicy
     private int? _ticksSinceAnswer;
     private int _repaintRestarts;
     private int _stuckRestarts;
+    // Composition is legitimately suspended (locked workstation, secure desktop): no frames is expected, so never escalate.
+    private bool _locked;
     private bool _awaitingInitialFrame;
 
     public int ZeroTicks => _zeroTicks;
@@ -40,8 +42,9 @@ internal sealed class StreamWatchdogPolicy
     public bool ProbeInFlight => _probeInFlight;
 
     /// <summary>Feeds one watchdog tick with the frames pumped since the last tick.</summary>
-    public WatchdogAction Tick(long framesDelta)
+    public WatchdogAction Tick(long framesDelta, bool sessionLocked = false)
     {
+        _locked = sessionLocked;
         if (framesDelta > 0)
         {
             if (_awaitingInitialFrame) _awaitingInitialFrame = false;
@@ -66,6 +69,11 @@ internal sealed class StreamWatchdogPolicy
                 {
                     if (!RepaintRestartsExhausted) return Restarted(repaint: true);
                     // Capped and the repaint still reached no WGC frame: recreating the session on this window has failed.
+                    if (_locked)
+                    {
+                        ClearProbe();
+                        return WatchdogAction.None;
+                    }
                     return Rebuilt();
                 }
                 _ticksSinceAnswer = seen + 1;
@@ -108,7 +116,15 @@ internal sealed class StreamWatchdogPolicy
 
     private WatchdogAction Restarted(bool repaint)
     {
-        if (_stuckRestarts >= MaxStuckRestarts) return Rebuilt();
+        if (_stuckRestarts >= MaxStuckRestarts)
+        {
+            if (!_locked) return Rebuilt();
+            // Held at the cap: the first dead tick after unlock escalates.
+            _zeroTicks = 0;
+            ClearProbe();
+            _probeFailures = 0;
+            return WatchdogAction.None;
+        }
         _stuckRestarts++;
         if (repaint) _repaintRestarts++;
         _awaitingInitialFrame = true;

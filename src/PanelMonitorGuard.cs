@@ -115,6 +115,8 @@ internal sealed unsafe class PanelMonitorGuard : IDisposable
     /// notifications deliver only transitions, so a guard created while the
     /// session is already locked (service respawn, kiosk watchdog recreate)
     /// would otherwise sweep lock windows off the panel.</summary>
+    public static bool IsSessionLocked => _sessionLocked;
+
     public static void InitializeSessionLockState()
     {
         _sessionLocked = QuerySessionLocked();

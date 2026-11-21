@@ -28,6 +28,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private const uint WM_INIT_CONTROLLER = Native.WM_USER + 7;
     private const uint WM_HOST_FAULTED = Native.WM_USER + 8;
     private const uint WM_TOUCH_CONTACTS = Native.WM_USER + 9;
+    private const int ProcessFailedBrowserExited = 0;
     private const int E_INVALIDARG = unchecked((int)0x80070057);
     // Off any plausible desktop; WGC captures regardless of visibility as
     // long as the window is shown and unminimized.
@@ -361,6 +362,8 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         var count = Interlocked.Increment(ref _processFailedLogged);
         if (count <= 5)
             Log.Warn($"stream-host {SessionId}: webview process failed kind={kind} (x{count}); {DescribeWindowState()}");
+        // The browser process is gone, so nothing will present again: respawn now instead of burning watchdog cycles.
+        if (kind == ProcessFailedBrowserExited) PostFault();
     }
 
     // Why a host that is up stops presenting: a hidden, minimized or DWM-cloaked window, or a controller that
@@ -686,7 +689,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         var delta = pumped - _framesAtLastTick;
         _framesAtLastTick = pumped;
         var atCeiling = _watchdog.ZeroTicks + 1 >= StreamWatchdogPolicy.CeilingZeroTicks;
-        var action = _watchdog.Tick(delta);
+        var action = _watchdog.Tick(delta, PanelMonitorGuard.IsSessionLocked);
         if (delta > 0)
         {
             if (++_flowingTicks >= StreamRebuildBackoff.RecoveredFlowingTicks && !_recoveredReported)
