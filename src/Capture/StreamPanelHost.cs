@@ -82,6 +82,12 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private IntPtr _controller;
     private IntPtr _coreWebView2;
     private long _navCompletedToken;
+    private IntPtr _webMessageHandler;
+    private long _webMessageToken;
+    private string? _lastHeartbeat;
+    private long _lastHeartbeatTicks;
+    private long _lastHeartbeatLogTicks;
+    private bool _stallLogged;
     private IntPtr _processFailedHandler;
     private long _processFailedToken;
     private int _processFailedLogged;
@@ -214,6 +220,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         var userDataDir = UserDataPaths.Profile("StreamWebView2", ProfileMigration.UiState);
         try { Directory.CreateDirectory(userDataDir); } catch { }
 
+        Log.Info($"stream-host {SessionId}: env create args='{Wv2EnvironmentOptions.EffectiveBrowserArguments}' userDataDir='{userDataDir}'");
         _envOptions = Wv2EnvironmentOptions.Create();
         _envCreatedHandler = WebView2Callbacks.CreateEnvCreatedHandler(&OnEnvCreatedStatic);
         fixed (char* udf = userDataDir)
@@ -316,6 +323,11 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         _processFailedHandler = WebView2Callbacks.CreateProcessFailedHandler(&OnProcessFailedStatic);
         Wv2.Wv2_add_ProcessFailed(_coreWebView2, _processFailedHandler, out _processFailedToken);
 
+        // Page liveness: the heartbeat says whether the page is alive but not painting, throttled or dead.
+        _webMessageHandler = WebView2Callbacks.CreateWebMessageReceivedHandler(&OnWebMessageReceivedStatic);
+        Wv2.Wv2_add_WebMessageReceived(_coreWebView2, _webMessageHandler, out _webMessageToken);
+        Wv2.Wv2_AddScriptToExecuteOnDocumentCreated(_coreWebView2, HeartbeatScript);
+
         // Touch emulation settles before the page loads, so it boots reporting touch support as it
         // would on a touchscreen. Its completion navigates, failed or not; a completion that never
         // arrives is bounded by the fallback timer, so CDP never keeps the page from loading.
@@ -345,7 +357,12 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         var success = true;
         if (args != IntPtr.Zero)
             Wv2.NavCompletedArgs_get_IsSuccess(args, out success);
-        FindByNavHandler(self)?.OnNavigationCompleted(success);
+        var status = -1;
+        if (args != IntPtr.Zero)
+            Wv2.NavCompletedArgs_get_WebErrorStatus(args, out status);
+        var host = FindByNavHandler(self);
+        host?.Log_NavCompleted(success, status);
+        host?.OnNavigationCompleted(success);
         return WebView2Native.S_OK;
     }
 
@@ -387,12 +404,61 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
             if (_controller == IntPtr.Zero) return $"{window} controller=none";
             var visible = WebView2Native.Succeeded(Wv2.Ctrl_get_IsVisible(_controller, out var v)) ? v.ToString() : "?";
             var bounds = WebView2Native.Succeeded(Wv2.Ctrl_get_Bounds(_controller, out var b)) ? $"{b.Left},{b.Top} {b.Width}x{b.Height}" : "?";
-            return $"{window} controller visible={visible} bounds={bounds}";
+            return $"{window} controller visible={visible} bounds={bounds}; {DescribeHeartbeat()}";
         }
         catch (Exception ex)
         {
             return $"window state unavailable: {ex.GetType().Name}";
         }
+    }
+
+    // One rAF is requested per tick (not a free-running loop) so the probe itself does not keep the compositor busy.
+    private const string HeartbeatScript =
+        "(function(){if(window.top!==window||window.__nexusHb)return;window.__nexusHb=1;var n=0;"
+        + "setInterval(function(){requestAnimationFrame(function(){n++});"
+        + "try{window.chrome.webview.postMessage('__nexus_hb:'+JSON.stringify({rafCount:n,visibilityState:document.visibilityState,hidden:document.hidden,documentReadyState:document.readyState}))}catch(e){}},5000)})()";
+    private const string HeartbeatPrefix = "__nexus_hb:";
+    private const long HeartbeatLogIntervalMs = 30_000;
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnWebMessageReceivedStatic(IntPtr self, IntPtr sender, IntPtr args)
+    {
+        try
+        {
+            var owner = FindByWebMessageHandler(self);
+            if (owner is null || args == IntPtr.Zero) return WebView2Native.S_OK;
+            var json = Wv2.WebMsgArgs_GetJson(args);
+            // The page posts the heartbeat as a JSON string literal.
+            if (json is null || !json.StartsWith("\"" + HeartbeatPrefix, StringComparison.Ordinal)) return WebView2Native.S_OK;
+            owner.OnHeartbeat(json.Substring(HeartbeatPrefix.Length + 1, json.Length - HeartbeatPrefix.Length - 2).Replace("\\\"", "\""));
+        }
+        catch { }
+        return WebView2Native.S_OK;
+    }
+
+    private void OnHeartbeat(string payload)
+    {
+        if (_disposed) return;
+        var now = Stopwatch.GetTimestamp();
+        _lastHeartbeat = payload;
+        _lastHeartbeatTicks = now;
+        if (_lastHeartbeatLogTicks == 0 || (now - _lastHeartbeatLogTicks) * 1000 / Stopwatch.Frequency >= HeartbeatLogIntervalMs)
+        {
+            _lastHeartbeatLogTicks = now;
+            Log.Info($"stream-host {SessionId}: page heartbeat {payload}");
+        }
+    }
+
+    private string DescribeHeartbeat()
+    {
+        if (_lastHeartbeat is null) return "page heartbeat=none";
+        var ageMs = (Stopwatch.GetTimestamp() - _lastHeartbeatTicks) * 1000 / Stopwatch.Frequency;
+        return $"page heartbeat={_lastHeartbeat} age={ageMs}ms";
+    }
+
+    private void Log_NavCompleted(bool success, int status)
+    {
+        if (!_disposed) Log.Info($"stream-host {SessionId}: navigation completed success={success} webErrorStatus={status}");
     }
 
     private void OnNavigationCompleted(bool success)
@@ -709,7 +775,14 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         else
         {
             _flowingTicks = 0;
+            // First silent tick of a stall: state the page's last heartbeat now rather than waiting for a restart.
+            if (!_stallLogged)
+            {
+                _stallLogged = true;
+                Log.Warn($"stream-host {SessionId}: no frames this tick; {DescribeWindowState()}");
+            }
         }
+        if (delta > 0) _stallLogged = false;
         // Frames, a timeout or a restart ended the probe; its completion, if it ever comes, is dropped.
         if (!_watchdog.ProbeInFlight)
         {
@@ -836,6 +909,8 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
                 Wv2.Wv2_remove_NavigationCompleted(_coreWebView2, _navCompletedToken);
             if (_processFailedHandler != IntPtr.Zero)
                 Wv2.Wv2_remove_ProcessFailed(_coreWebView2, _processFailedToken);
+            if (_webMessageHandler != IntPtr.Zero)
+                Wv2.Wv2_remove_WebMessageReceived(_coreWebView2, _webMessageToken);
             Wv2.Release(_coreWebView2);
             _coreWebView2 = IntPtr.Zero;
         }
@@ -854,6 +929,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         ReleaseHandler(ref _ctrlCreatedHandler);
         ReleaseHandler(ref _navCompletedHandler);
         ReleaseHandler(ref _processFailedHandler);
+        ReleaseHandler(ref _webMessageHandler);
         ReleaseHandler(ref _probeHandler);
         ReleaseHandler(ref _cdpEmulationHandler);
         ReleaseHandler(ref _cdpTouchHandler);
@@ -906,6 +982,13 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     {
         foreach (var kv in _instances)
             if (kv.Value._processFailedHandler == h) return kv.Value;
+        return null;
+    }
+
+    private static StreamPanelHost? FindByWebMessageHandler(IntPtr h)
+    {
+        foreach (var kv in _instances)
+            if (kv.Value._webMessageHandler == h) return kv.Value;
         return null;
     }
 

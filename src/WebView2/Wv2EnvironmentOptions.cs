@@ -28,13 +28,15 @@ namespace Nexus.Overlay.WebView2;
 /// </summary>
 internal static unsafe class Wv2EnvironmentOptions
 {
-    private const string AdditionalBrowserArguments = "--disable-features=CalculateNativeWinOcclusion --disable-direct-composition";
+    // The three background/occlusion flags stop Chromium throttling or pausing the off-screen stream page's renderer and timers.
+    private const string AdditionalBrowserArguments = "--disable-features=CalculateNativeWinOcclusion --disable-direct-composition "
+        + "--disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows";
 
     /// <summary>Bench diagnostics hook: NEXUS_STREAM_WV2_ARGS appends extra
     /// browser args (e.g. --remote-debugging-port=9223) to the stream env
     /// without a rebuild. Read once; the browser process consumes the args
     /// only when it first launches for the user-data folder.</summary>
-    private static readonly string EffectiveBrowserArguments = BuildBrowserArguments();
+    internal static readonly string EffectiveBrowserArguments = BuildBrowserArguments();
 
     private static string BuildBrowserArguments()
     {
