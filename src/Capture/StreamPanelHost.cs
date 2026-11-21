@@ -87,7 +87,9 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private string? _lastHeartbeat;
     private long _lastHeartbeatTicks;
     private long _lastHeartbeatLogTicks;
-    private bool _stallLogged;
+    private long _lastStallLogTicks;
+    private string? _lastHeartbeatState;
+    private long _lastRafCount = -1;
     private IntPtr _processFailedHandler;
     private long _processFailedToken;
     private int _processFailedLogged;
@@ -220,7 +222,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         var userDataDir = UserDataPaths.Profile("StreamWebView2", ProfileMigration.UiState);
         try { Directory.CreateDirectory(userDataDir); } catch { }
 
-        Log.Info($"stream-host {SessionId}: env create args='{Wv2EnvironmentOptions.EffectiveBrowserArguments}' userDataDir='{userDataDir}'");
+        Log.Info($"stream-host {SessionId}: env create args='{Wv2EnvironmentOptions.EffectiveBrowserArguments}' userDataDir='{RedactLocalAppData(userDataDir)}'");
         _envOptions = Wv2EnvironmentOptions.Create();
         _envCreatedHandler = WebView2Callbacks.CreateEnvCreatedHandler(&OnEnvCreatedStatic);
         fixed (char* udf = userDataDir)
@@ -436,13 +438,33 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         return WebView2Native.S_OK;
     }
 
+    // The profile path carries the Windows user name; log it relative to the local app data root.
+    private static string RedactLocalAppData(string path)
+    {
+        var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        return !string.IsNullOrEmpty(root) && path.StartsWith(root, StringComparison.OrdinalIgnoreCase)
+            ? "%LOCALAPPDATA%" + path.Substring(root.Length)
+            : path;
+    }
+
     private void OnHeartbeat(string payload)
     {
         if (_disposed) return;
         var now = Stopwatch.GetTimestamp();
         _lastHeartbeat = payload;
         _lastHeartbeatTicks = now;
-        if (_lastHeartbeatLogTicks == 0 || (now - _lastHeartbeatLogTicks) * 1000 / Stopwatch.Frequency >= HeartbeatLogIntervalMs)
+        // The payload is {"rafCount":N,<state fields>}: log when the state flips, and (rate-limited) while rAF stops advancing.
+        var comma = payload.IndexOf(',');
+        var state = comma < 0 ? payload : payload.Substring(comma);
+        long raf = -1;
+        var colon = payload.IndexOf(':');
+        if (colon >= 0 && comma > colon) long.TryParse(payload.AsSpan(colon + 1, comma - colon - 1), out raf);
+        var stateChanged = state != _lastHeartbeatState;
+        var rafStuck = raf >= 0 && raf == _lastRafCount;
+        _lastHeartbeatState = state;
+        _lastRafCount = raf;
+        var due = _lastHeartbeatLogTicks == 0 || (now - _lastHeartbeatLogTicks) * 1000 / Stopwatch.Frequency >= HeartbeatLogIntervalMs;
+        if (stateChanged || (rafStuck && due))
         {
             _lastHeartbeatLogTicks = now;
             Log.Info($"stream-host {SessionId}: page heartbeat {payload}");
@@ -776,13 +798,13 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         {
             _flowingTicks = 0;
             // First silent tick of a stall: state the page's last heartbeat now rather than waiting for a restart.
-            if (!_stallLogged)
+            var stallNow = Stopwatch.GetTimestamp();
+            if (_lastStallLogTicks == 0 || (stallNow - _lastStallLogTicks) * 1000 / Stopwatch.Frequency >= HeartbeatLogIntervalMs)
             {
-                _stallLogged = true;
+                _lastStallLogTicks = stallNow;
                 Log.Warn($"stream-host {SessionId}: no frames this tick; {DescribeWindowState()}");
             }
         }
-        if (delta > 0) _stallLogged = false;
         // Frames, a timeout or a restart ended the probe; its completion, if it ever comes, is dropped.
         if (!_watchdog.ProbeInFlight)
         {

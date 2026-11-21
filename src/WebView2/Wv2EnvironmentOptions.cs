@@ -28,7 +28,7 @@ namespace Nexus.Overlay.WebView2;
 /// </summary>
 internal static unsafe class Wv2EnvironmentOptions
 {
-    // The three background/occlusion flags stop Chromium throttling or pausing the off-screen stream page's renderer and timers.
+    // The background and occlusion flags stop Chromium throttling or pausing the off-screen stream page's renderer and timers.
     private const string AdditionalBrowserArguments = "--disable-features=CalculateNativeWinOcclusion --disable-direct-composition "
         + "--disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows";
 
