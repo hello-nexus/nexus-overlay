@@ -15,6 +15,9 @@ internal sealed class StreamHostManager
 {
     private readonly string _serviceOrigin;
     private readonly Dictionary<string, StreamPanelHost> _hosts = new(StringComparer.Ordinal);
+    // Hosts torn down for a dead capture: consecutive rebuild count and the earliest tick the next spawn may run.
+    private readonly Dictionary<string, int> _rebuilds = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, long> _spawnNotBefore = new(StringComparer.Ordinal);
 
     public StreamHostManager(string serviceOrigin)
     {
@@ -32,6 +35,12 @@ internal sealed class StreamHostManager
                 desired[assignment.SessionId] = assignment;
         }
 
+        foreach (var id in _spawnNotBefore.Keys.Where(id => !desired.ContainsKey(id)).ToList())
+        {
+            _spawnNotBefore.Remove(id);
+            _rebuilds.Remove(id);
+        }
+
         var (spawn, close) = StreamHostPlan.Compute(desired.Keys.ToList(), _hosts.Keys.ToList());
 
         foreach (var sessionId in close)
@@ -41,6 +50,7 @@ internal sealed class StreamHostManager
 
         foreach (var sessionId in spawn)
         {
+            if (_spawnNotBefore.TryGetValue(sessionId, out var notBefore) && Environment.TickCount64 < notBefore) continue;
             SpawnHost(desired[sessionId], pairedToken);
         }
     }
@@ -52,6 +62,8 @@ internal sealed class StreamHostManager
             try { host.Dispose(); } catch { }
         }
         _hosts.Clear();
+        _rebuilds.Clear();
+        _spawnNotBefore.Clear();
     }
 
     private void SpawnHost(StreamAssignment assignment, string pairedToken)
@@ -67,6 +79,20 @@ internal sealed class StreamHostManager
                 if (_hosts.Remove(host.SessionId, out _))
                     Log.Warn($"stream-hosts faulted session={host.SessionId}");
             };
+            host.RebuildRequested = () =>
+            {
+                if (!_hosts.Remove(host.SessionId, out _)) return;
+                var count = _rebuilds.GetValueOrDefault(host.SessionId) + 1;
+                _rebuilds[host.SessionId] = count;
+                var delay = StreamRebuildBackoff.DelayMs(count);
+                _spawnNotBefore[host.SessionId] = Environment.TickCount64 + delay;
+                Log.Warn($"stream-hosts rebuild session={host.SessionId} (x{count}), respawn in {delay / 1000}s");
+            };
+            host.Recovered = () =>
+            {
+                if (_rebuilds.Remove(host.SessionId)) Log.Info($"stream-hosts recovered session={host.SessionId}");
+                _spawnNotBefore.Remove(host.SessionId);
+            };
             _hosts[assignment.SessionId] = host;
             Log.Info($"stream-hosts opened session={assignment.SessionId} device={assignment.PanelDeviceId} "
                 + $"{assignment.CssWidth}x{assignment.CssHeight}@{assignment.Fps} dpr={assignment.Dpr}");
@@ -79,6 +105,8 @@ internal sealed class StreamHostManager
 
     private void CloseHost(string sessionId, string reason)
     {
+        _rebuilds.Remove(sessionId);
+        _spawnNotBefore.Remove(sessionId);
         if (!_hosts.Remove(sessionId, out var host)) return;
         try { host.Dispose(); }
         catch (Exception ex) { Log.Error($"stream-hosts dispose {sessionId}: {ex.Message}"); }

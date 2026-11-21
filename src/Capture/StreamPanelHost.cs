@@ -55,6 +55,13 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     /// next reconcile respawns while the session stays desired.</summary>
     public Action? Faulted;
 
+    /// <summary>Fires once (message-loop thread) after the host disposed itself because the WGC capture stayed dead through every
+    /// in-place recovery. The manager rebuilds it after a backoff; unlike <see cref="Faulted"/> it is not an immediate respawn.</summary>
+    public Action? RebuildRequested;
+
+    /// <summary>Fires once (message-loop thread) when frames have flowed past the session's initial frame, ending any rebuild backoff.</summary>
+    public Action? Recovered;
+
     private readonly StreamAssignment _assignment;
     private readonly string _serviceOrigin;
     private readonly string _pairedToken;
@@ -70,6 +77,11 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private IntPtr _controller;
     private IntPtr _coreWebView2;
     private long _navCompletedToken;
+    private IntPtr _processFailedHandler;
+    private long _processFailedToken;
+    private int _processFailedLogged;
+    private int _flowingTicks;
+    private bool _recoveredReported;
 
     private D3DDevice? _d3d;
     private WgcCapture? _capture;
@@ -296,6 +308,9 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         _navCompletedHandler = WebView2Callbacks.CreateNavigationCompletedHandler(&OnNavigationCompletedStatic);
         Wv2.Wv2_add_NavigationCompleted(_coreWebView2, _navCompletedHandler, out _navCompletedToken);
 
+        _processFailedHandler = WebView2Callbacks.CreateProcessFailedHandler(&OnProcessFailedStatic);
+        Wv2.Wv2_add_ProcessFailed(_coreWebView2, _processFailedHandler, out _processFailedToken);
+
         // Touch emulation settles before the page loads, so it boots reporting touch support as it
         // would on a touchscreen. Its completion navigates, failed or not; a completion that never
         // arrives is bounded by the fallback timer, so CDP never keeps the page from loading.
@@ -327,6 +342,46 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
             Wv2.NavCompletedArgs_get_IsSuccess(args, out success);
         FindByNavHandler(self)?.OnNavigationCompleted(success);
         return WebView2Native.S_OK;
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnProcessFailedStatic(IntPtr self, IntPtr sender, IntPtr args)
+    {
+        var kind = -1;
+        if (args != IntPtr.Zero && WebView2Native.Succeeded(Wv2.ProcessFailedArgs_get_Kind(args, out var read)))
+            kind = read;
+        FindByProcessFailedHandler(self)?.OnProcessFailed(kind);
+        return WebView2Native.S_OK;
+    }
+
+    // Only the failure kind is read; the page is not recovered here, the capture watchdog escalates when frames stop.
+    private void OnProcessFailed(int kind)
+    {
+        if (_disposed) return;
+        var count = Interlocked.Increment(ref _processFailedLogged);
+        if (count <= 5)
+            Log.Warn($"stream-host {SessionId}: webview process failed kind={kind} (x{count}); {DescribeWindowState()}");
+    }
+
+    // Why a host that is up stops presenting: a hidden, minimized or DWM-cloaked window, or a controller that
+    // is invisible or has collapsed bounds, all starve the compositor without any error.
+    private string DescribeWindowState()
+    {
+        try
+        {
+            var hwnd = Hwnd;
+            var cloaked = 0;
+            Native.DwmGetWindowAttribute(hwnd, Native.DWMWA_CLOAKED, out cloaked, sizeof(int));
+            var window = $"window visible={Native.IsWindowVisible(hwnd)} iconic={Native.IsIconic(hwnd)} cloaked={cloaked}";
+            if (_controller == IntPtr.Zero) return $"{window} controller=none";
+            var visible = WebView2Native.Succeeded(Wv2.Ctrl_get_IsVisible(_controller, out var v)) ? v.ToString() : "?";
+            var bounds = WebView2Native.Succeeded(Wv2.Ctrl_get_Bounds(_controller, out var b)) ? $"{b.Left},{b.Top} {b.Width}x{b.Height}" : "?";
+            return $"{window} controller visible={visible} bounds={bounds}";
+        }
+        catch (Exception ex)
+        {
+            return $"window state unavailable: {ex.GetType().Name}";
+        }
     }
 
     private void OnNavigationCompleted(bool success)
@@ -616,8 +671,9 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     }
 
     // WGC on an off-screen window can silently stop delivering frames; recreating item+pool+session on the
-    // same HWND re-hooks it. Never reload the page (kills capture permanently). Zero frames is also a static
-    // page, so the probe forces a repaint and a restart needs that repaint to reach no WGC frame.
+    // same HWND re-hooks it. Never reload the page in place (kills capture permanently). Zero frames is also a static
+    // page, so the probe forces a repaint and a restart needs that repaint to reach no WGC frame. Only when
+    // those in-place restarts keep yielding nothing does the host rebuild its window and WebView2 from scratch.
     private void OnWatchdogTick()
     {
         if (_disposed || _capture is null) return;
@@ -631,6 +687,18 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         _framesAtLastTick = pumped;
         var atCeiling = _watchdog.ZeroTicks + 1 >= StreamWatchdogPolicy.CeilingZeroTicks;
         var action = _watchdog.Tick(delta);
+        if (delta > 0)
+        {
+            if (++_flowingTicks >= StreamRebuildBackoff.RecoveredFlowingTicks && !_recoveredReported)
+            {
+                _recoveredReported = true;
+                try { Recovered?.Invoke(); } catch { }
+            }
+        }
+        else
+        {
+            _flowingTicks = 0;
+        }
         // Frames, a timeout or a restart ended the probe; its completion, if it ever comes, is dropped.
         if (!_watchdog.ProbeInFlight)
         {
@@ -649,12 +717,18 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
                         ? "forced repaint produced no WGC frame; repaint restarts pause until frames return"
                         : "forced repaint produced no WGC frame");
                 break;
+            case WatchdogAction.Rebuild:
+                Log.Warn($"stream-host {SessionId}: {StreamWatchdogPolicy.MaxStuckRestarts} WGC recreates yielded no frames, rebuilding the stream host; {DescribeWindowState()}");
+                var callback = RebuildRequested;
+                Dispose();
+                try { callback?.Invoke(); } catch { }
+                break;
         }
     }
 
     private void RequestRestart(string reason)
     {
-        Log.Warn($"stream-host {SessionId}: {reason}, recreating WGC session");
+        Log.Warn($"stream-host {SessionId}: {reason}, recreating WGC session; {DescribeWindowState()}");
         Interlocked.Exchange(ref _restartRequested, 1);
     }
 
@@ -749,6 +823,8 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         {
             if (_navCompletedHandler != IntPtr.Zero)
                 Wv2.Wv2_remove_NavigationCompleted(_coreWebView2, _navCompletedToken);
+            if (_processFailedHandler != IntPtr.Zero)
+                Wv2.Wv2_remove_ProcessFailed(_coreWebView2, _processFailedToken);
             Wv2.Release(_coreWebView2);
             _coreWebView2 = IntPtr.Zero;
         }
@@ -766,6 +842,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         ReleaseHandler(ref _envCreatedHandler);
         ReleaseHandler(ref _ctrlCreatedHandler);
         ReleaseHandler(ref _navCompletedHandler);
+        ReleaseHandler(ref _processFailedHandler);
         ReleaseHandler(ref _probeHandler);
         ReleaseHandler(ref _cdpEmulationHandler);
         ReleaseHandler(ref _cdpTouchHandler);
@@ -811,6 +888,13 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     {
         foreach (var kv in _instances)
             if (kv.Value._probeHandler == h) return kv.Value;
+        return null;
+    }
+
+    private static StreamPanelHost? FindByProcessFailedHandler(IntPtr h)
+    {
+        foreach (var kv in _instances)
+            if (kv.Value._processFailedHandler == h) return kv.Value;
         return null;
     }
 

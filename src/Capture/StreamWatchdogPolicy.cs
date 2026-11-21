@@ -5,6 +5,8 @@ internal enum WatchdogAction
     None,
     Probe,
     Restart,
+    /// <summary>Recreating the WGC session on the same window keeps failing; tear down the whole host (window and WebView2) and build a fresh one.</summary>
+    Rebuild,
 }
 
 /// <summary>Restarts the WGC session when a forced page repaint (probe) yields no WGC frame; the zero-frame ceiling bounds a probe that never answers.</summary>
@@ -17,6 +19,9 @@ internal sealed class StreamWatchdogPolicy
     // Repaint-driven restarts in a row that never brought back a frame past the new session's initial one;
     // at the cap a repaint with no frame no longer restarts.
     public const int MaxRepaintRestarts = 3;
+    // WGC restarts of any kind in a row that never brought back a frame past the new session's initial one;
+    // at the cap the next restart escalates to a full host rebuild.
+    public const int MaxStuckRestarts = 3;
 
     private int _zeroTicks;
     private int _probeFailures;
@@ -25,6 +30,7 @@ internal sealed class StreamWatchdogPolicy
     // Zero-frame ticks seen since the in-flight probe was answered; null while unanswered or idle.
     private int? _ticksSinceAnswer;
     private int _repaintRestarts;
+    private int _stuckRestarts;
     private bool _awaitingInitialFrame;
 
     public int ZeroTicks => _zeroTicks;
@@ -39,7 +45,11 @@ internal sealed class StreamWatchdogPolicy
         if (framesDelta > 0)
         {
             if (_awaitingInitialFrame) _awaitingInitialFrame = false;
-            else _repaintRestarts = 0;
+            else
+            {
+                _repaintRestarts = 0;
+                _stuckRestarts = 0;
+            }
             _zeroTicks = 0;
             ClearProbe();
             _probeFailures = 0;
@@ -55,9 +65,8 @@ internal sealed class StreamWatchdogPolicy
                 if (seen >= 1)
                 {
                     if (!RepaintRestartsExhausted) return Restarted(repaint: true);
-                    // Capped: keep probing so a later probe frame can reset the cap; the ceiling still restarts.
-                    ClearProbe();
-                    return WatchdogAction.None;
+                    // Capped and the repaint still reached no WGC frame: recreating the session on this window has failed.
+                    return Rebuilt();
                 }
                 _ticksSinceAnswer = seen + 1;
             }
@@ -99,11 +108,24 @@ internal sealed class StreamWatchdogPolicy
 
     private WatchdogAction Restarted(bool repaint)
     {
+        if (_stuckRestarts >= MaxStuckRestarts) return Rebuilt();
+        _stuckRestarts++;
         if (repaint) _repaintRestarts++;
         _awaitingInitialFrame = true;
         _zeroTicks = 0;
         ClearProbe();
         _probeFailures = 0;
         return WatchdogAction.Restart;
+    }
+
+    private WatchdogAction Rebuilt()
+    {
+        _repaintRestarts = 0;
+        _stuckRestarts = 0;
+        _awaitingInitialFrame = false;
+        _zeroTicks = 0;
+        ClearProbe();
+        _probeFailures = 0;
+        return WatchdogAction.Rebuild;
     }
 }

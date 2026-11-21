@@ -59,6 +59,24 @@ internal static unsafe class Wv2
         return fn(ctrl, visible ? 1 : 0);
     }
 
+    public static int Ctrl_get_IsVisible(IntPtr ctrl, out bool visible)
+    {
+        int v = 0;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, int*, int>)Slot(ctrl, WebView2Vtable.Ctrl_get_IsVisible);
+        var hr = fn(ctrl, &v);
+        visible = v != 0;
+        return hr;
+    }
+
+    public static int Ctrl_get_Bounds(IntPtr ctrl, out Win32.Native.RECT bounds)
+    {
+        Win32.Native.RECT r = default;
+        var fn = (delegate* unmanaged[Stdcall]<IntPtr, Win32.Native.RECT*, int>)Slot(ctrl, WebView2Vtable.Ctrl_get_Bounds);
+        var hr = fn(ctrl, &r);
+        bounds = r;
+        return hr;
+    }
+
     public static int Ctrl_put_Bounds(IntPtr ctrl, Win32.Native.RECT bounds)
     {
         var fn = (delegate* unmanaged[Stdcall]<IntPtr, Win32.Native.RECT, int>)Slot(ctrl, WebView2Vtable.Ctrl_put_Bounds);
