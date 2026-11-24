@@ -29,7 +29,7 @@ internal sealed class StreamHostManager
     public bool HasPendingRebuilds => _rebuilds.PendingCount > 0;
 
     /// <summary>The user session unlocked: drop the backoff and let the next reconcile respawn pending rebuilds at once.</summary>
-public void OnSessionUnlocked() => _rebuilds.OnUnlocked();
+    public void OnSessionUnlocked() => _rebuilds.OnUnlocked();
 
     public void Reconcile(IReadOnlyList<StreamAssignment> assignments, string pairedToken)
     {
