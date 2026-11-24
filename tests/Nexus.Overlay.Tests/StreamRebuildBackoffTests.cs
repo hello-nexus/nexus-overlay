@@ -201,10 +201,43 @@ public class StreamRenderModeTests
     }
 
     [Fact]
-    public void An_empty_marker_path_is_not_persisted()
+    public void An_unknown_runtime_part_keeps_a_matching_build_marker()
     {
+        var dir = Path.Combine(Path.GetTempPath(), "nexus-rm-" + Guid.NewGuid().ToString("N"));
+        var marker = Path.Combine(dir, "marker");
+        try
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(marker, "10|120");
+            Assert.True(new StreamRenderMode(marker, "10|").Software);
+            Assert.True(File.Exists(marker));
+            Assert.False(new StreamRenderMode(marker, "11|").Software);
+            Assert.False(File.Exists(marker));
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void A_known_runtime_major_change_deletes_the_marker()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "nexus-rm-" + Guid.NewGuid().ToString("N"));
+        var marker = Path.Combine(dir, "marker");
+        try
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(marker, "10|120");
+            Assert.False(new StreamRenderMode(marker, "10|121").Software);
+            Assert.False(File.Exists(marker));
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void An_empty_marker_path_writes_no_file()
+    {
+        var before = Directory.GetFileSystemEntries(Directory.GetCurrentDirectory()).Length;
         var mode = new StreamRenderMode("", "v1");
         Assert.True(mode.OnRebuilt(1));
-        Assert.True(mode.Software);
+        Assert.Equal(before, Directory.GetFileSystemEntries(Directory.GetCurrentDirectory()).Length);
     }
 }

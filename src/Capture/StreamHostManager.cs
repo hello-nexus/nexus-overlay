@@ -19,13 +19,21 @@ internal sealed class StreamHostManager
     private readonly StreamRebuildTracker _rebuilds = new();
     private readonly StreamRenderMode _renderMode = new(StreamRenderMode.DefaultMarkerPath(), MarkerStamp());
 
-    // Overlay build (exe write time) plus the WebView2 runtime: an update of either re-tries GPU compositing once.
+    // Overlay build (exe write time) plus the WebView2 runtime major: a new build or a major runtime change re-tries GPU compositing once.
     private static string MarkerStamp()
     {
         long build = 0;
         try { build = File.GetLastWriteTimeUtc(Environment.ProcessPath ?? "").Ticks; }
         catch (Exception) { }
-        return $"{build}|{WebView2RuntimeInstaller.InstalledVersion()}";
+        var runtime = "";
+        try
+        {
+            var v = WebView2RuntimeInstaller.InstalledVersion();
+            var dot = v?.IndexOf('.') ?? -1;
+            runtime = v is null ? "" : dot > 0 ? v[..dot] : v;
+        }
+        catch (Exception) { }
+        return $"{build}|{runtime}";
     }
 
     public StreamHostManager(string serviceOrigin)

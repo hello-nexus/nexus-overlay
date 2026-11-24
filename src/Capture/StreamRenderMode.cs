@@ -4,11 +4,11 @@ using System.IO;
 namespace Nexus.Overlay.Capture;
 
 /// <summary>
-/// Fallback ladder for a stream host whose WGC capture stays dead: the first time the host asks for a rebuild
-/// (its WGC recreates yielded no frames) the stream browser switches to software compositing (--disable-gpu),
-/// skipping the GPU host-rebuild step. The decision is latched for the process and, when a marker path is given,
-/// remembered across overlay restarts by that file. The marker carries a stamp of the overlay build and the
-/// WebView2 runtime; a marker with a different stamp is deleted so GPU compositing is tried again once.
+/// Software compositing decision for the stream browser: when a stream host's WGC recreates yield no frames
+/// (the host asks for a rebuild), the browser switches to software compositing (--disable-gpu). The decision is
+/// latched for the process and, when a marker path is given, remembered across overlay restarts by that file.
+/// The marker holds a stamp "build|runtime"; a marker whose stamp differs is deleted so GPU compositing is tried
+/// again once. An empty runtime part on either side is unknown and only the build part is compared.
 /// One instance per stream host manager.
 /// </summary>
 internal sealed class StreamRenderMode
@@ -28,7 +28,7 @@ internal sealed class StreamRenderMode
         try
         {
             if (!File.Exists(_markerPath)) return;
-            if (File.ReadAllText(_markerPath).Trim() == _stamp)
+            if (StampMatches(File.ReadAllText(_markerPath).Trim(), _stamp))
             {
                 Software = true;
                 StaleProfileDeletable = false;
@@ -36,6 +36,15 @@ internal sealed class StreamRenderMode
             else File.Delete(_markerPath);
         }
         catch (Exception ex) { Log.Warn($"stream-hosts could not read software compositing marker: {ex.Message}"); }
+    }
+
+    private static bool StampMatches(string written, string current)
+    {
+        if (written == current) return true;
+        var w = written.Split('|');
+        var c = current.Split('|');
+        if (w.Length != 2 || c.Length != 2) return false;
+        return w[0] == c[0] && (w[1].Length == 0 || c[1].Length == 0);
     }
 
     /// <summary>Marker file under the per-user Nexus folder; delete it to give GPU compositing another chance.</summary>
