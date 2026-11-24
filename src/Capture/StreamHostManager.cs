@@ -16,7 +16,7 @@ internal sealed class StreamHostManager
     private readonly string _serviceOrigin;
     private readonly Dictionary<string, StreamPanelHost> _hosts = new(StringComparer.Ordinal);
     private readonly StreamRebuildTracker _rebuilds = new();
-    private readonly StreamRenderMode _renderMode = new();
+    private readonly StreamRenderMode _renderMode = new(StreamRenderMode.DefaultMarkerPath());
 
     public StreamHostManager(string serviceOrigin)
     {
@@ -64,7 +64,6 @@ internal sealed class StreamHostManager
         }
         _hosts.Clear();
         _rebuilds.Clear();
-        _renderMode.Reset();
     }
 
     private void SpawnHost(StreamAssignment assignment, string pairedToken)
@@ -85,7 +84,7 @@ internal sealed class StreamHostManager
                 if (!_hosts.Remove(host.SessionId, out _)) return;
                 var delay = _rebuilds.OnRebuilt(host.SessionId, Environment.TickCount64);
                 if (_renderMode.OnRebuilt(_rebuilds.RebuildCount(host.SessionId)))
-                    Log.Warn($"stream-hosts session={host.SessionId}: rebuilt host still produced no frames, switching stream browser to software compositing (--disable-gpu) until all stream hosts are closed");
+                    Log.Warn($"stream-hosts session={host.SessionId}: rebuilt host still produced no frames, switching stream browser to software compositing (--disable-gpu) and remembering it across restarts");
                 Log.Warn($"stream-hosts rebuild session={host.SessionId}, respawn in {delay / 1000}s");
             };
             host.BrowserExited = () =>
@@ -96,7 +95,7 @@ internal sealed class StreamHostManager
             };
             host.Recovered = () =>
             {
-                if (_rebuilds.OnRecovered(host.SessionId)) Log.Info($"stream-hosts recovered session={host.SessionId}");
+                if (_rebuilds.OnRecovered(host.SessionId, PanelMonitorGuard.IsSessionLocked)) Log.Info($"stream-hosts recovered session={host.SessionId}");
             };
             _hosts[assignment.SessionId] = host;
             _rebuilds.OnSpawned(assignment.SessionId);

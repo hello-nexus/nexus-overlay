@@ -39,9 +39,10 @@ internal sealed class StreamRebuildTracker
     /// <summary>The respawn ran; the rebuild count stays until frames flow again.</summary>
     public void OnSpawned(string sessionId) => _notBefore.Remove(sessionId);
 
-    /// <summary>Frames flowed past the initial one: forget the session's history. True when it had any.</summary>
-    public bool OnRecovered(string sessionId)
+    /// <summary>Frames flowed past the initial one: forget the session's history. True when it had any. A locked session composes nothing real, so its frames prove nothing and the history stays.</summary>
+    public bool OnRecovered(string sessionId, bool sessionLocked = false)
     {
+        if (sessionLocked) return false;
         _notBefore.Remove(sessionId);
         return _rebuilds.Remove(sessionId);
     }

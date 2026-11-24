@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using Nexus.Overlay.Capture;
 using Xunit;
 
@@ -88,10 +90,9 @@ public class StreamRenderModeTests
 {
     [Theory]
     [InlineData(0, false)]
-    [InlineData(1, false)]
+    [InlineData(1, true)]
     [InlineData(2, true)]
-    [InlineData(5, true)]
-    public void Software_compositing_starts_at_the_second_consecutive_rebuild(int rebuilds, bool software)
+    public void Software_compositing_starts_at_the_first_failed_rebuild(int rebuilds, bool software)
     {
         Assert.Equal(software, StreamRenderMode.RequiresSoftware(rebuilds));
     }
@@ -101,26 +102,34 @@ public class StreamRenderModeTests
     {
         var t = new StreamRebuildTracker();
         t.OnRebuilt("s", 0);
-        Assert.False(StreamRenderMode.RequiresSoftware(t.RebuildCount("s")));
-        t.OnRebuilt("s", 0);
         Assert.True(StreamRenderMode.RequiresSoftware(t.RebuildCount("s")));
         t.OnRecovered("s");
         Assert.False(StreamRenderMode.RequiresSoftware(t.RebuildCount("s")));
     }
 
     [Fact]
-    public void Software_mode_latches_through_lower_counts_and_clears_on_reset()
+    public void A_recovery_while_the_session_is_locked_keeps_the_rebuild_count()
+    {
+        var t = new StreamRebuildTracker();
+        t.OnRebuilt("s", 0);
+        Assert.False(t.OnRecovered("s", sessionLocked: true));
+        Assert.Equal(1, t.RebuildCount("s"));
+        Assert.True(t.OnRecovered("s", sessionLocked: false));
+        Assert.Equal(0, t.RebuildCount("s"));
+    }
+
+    [Fact]
+    public void Software_mode_latches_and_stays_on()
     {
         var mode = new StreamRenderMode();
-        Assert.False(mode.OnRebuilt(1));
+        Assert.False(mode.OnRebuilt(0));
         Assert.False(mode.Software);
-        Assert.True(mode.OnRebuilt(2));
+        Assert.True(mode.OnRebuilt(1));
         Assert.True(mode.Software);
-        Assert.False(mode.OnRebuilt(3));
-        Assert.False(mode.OnRebuilt(1));
+        Assert.False(mode.OnRebuilt(2));
+        Assert.False(mode.OnRebuilt(0));
         Assert.True(mode.Software);
-        mode.Reset();
-        Assert.False(mode.Software);
+        Assert.False(mode.StaleProfileDeletable);
     }
 
     [Fact]
@@ -129,23 +138,30 @@ public class StreamRenderModeTests
         var t = new StreamRebuildTracker();
         var mode = new StreamRenderMode();
         t.OnBrowserExited("s", 0);
-        Assert.False(StreamRenderMode.RequiresSoftware(t.RebuildCount("s")));
-        t.OnRebuilt("s", 0);
         Assert.True(StreamRenderMode.RequiresSoftware(t.RebuildCount("s")));
         Assert.True(mode.OnRebuilt(t.RebuildCount("s")));
     }
 
     [Fact]
-    public void The_stale_profile_stays_undeletable_after_a_software_episode_even_after_reset()
+    public void The_software_decision_is_persisted_and_the_next_instance_starts_in_software()
     {
-        var mode = new StreamRenderMode();
-        Assert.True(mode.StaleProfileDeletable);
-        mode.OnRebuilt(1);
-        Assert.True(mode.StaleProfileDeletable);
-        mode.OnRebuilt(2);
-        Assert.False(mode.StaleProfileDeletable);
-        mode.Reset();
-        Assert.False(mode.Software);
-        Assert.False(mode.StaleProfileDeletable);
+        var dir = Path.Combine(Path.GetTempPath(), "nexus-rm-" + Guid.NewGuid().ToString("N"));
+        var marker = Path.Combine(dir, "sub", "marker");
+        try
+        {
+            var first = new StreamRenderMode(marker);
+            Assert.False(first.Software);
+            Assert.True(first.OnRebuilt(1));
+            Assert.True(File.Exists(marker));
+
+            var second = new StreamRenderMode(marker);
+            Assert.True(second.Software);
+            Assert.False(second.StaleProfileDeletable);
+            Assert.False(second.OnRebuilt(1));
+
+            File.Delete(marker);
+            Assert.False(new StreamRenderMode(marker).Software);
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
     }
 }
