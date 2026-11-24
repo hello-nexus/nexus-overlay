@@ -149,19 +149,62 @@ public class StreamRenderModeTests
         var marker = Path.Combine(dir, "sub", "marker");
         try
         {
-            var first = new StreamRenderMode(marker);
+            var first = new StreamRenderMode(marker, "v1");
             Assert.False(first.Software);
             Assert.True(first.OnRebuilt(1));
             Assert.True(File.Exists(marker));
 
-            var second = new StreamRenderMode(marker);
+            var second = new StreamRenderMode(marker, "v1");
             Assert.True(second.Software);
             Assert.False(second.StaleProfileDeletable);
             Assert.False(second.OnRebuilt(1));
 
             File.Delete(marker);
-            Assert.False(new StreamRenderMode(marker).Software);
+            Assert.False(new StreamRenderMode(marker, "v1").Software);
         }
         finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+
+    [Theory]
+    [InlineData("v1", "v2")]
+    [InlineData("", "v1")]
+    [InlineData("v1", "")]
+    public void A_marker_with_another_stamp_is_deleted_and_not_software(string written, string current)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "nexus-rm-" + Guid.NewGuid().ToString("N"));
+        var marker = Path.Combine(dir, "marker");
+        try
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(marker, written);
+            var mode = new StreamRenderMode(marker, current);
+            Assert.False(mode.Software);
+            Assert.True(mode.StaleProfileDeletable);
+            Assert.False(File.Exists(marker));
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void A_marker_with_the_same_stamp_keeps_software()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "nexus-rm-" + Guid.NewGuid().ToString("N"));
+        var marker = Path.Combine(dir, "marker");
+        try
+        {
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(marker, "v1");
+            Assert.True(new StreamRenderMode(marker, "v1").Software);
+            Assert.True(File.Exists(marker));
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void An_empty_marker_path_is_not_persisted()
+    {
+        var mode = new StreamRenderMode("", "v1");
+        Assert.True(mode.OnRebuilt(1));
+        Assert.True(mode.Software);
     }
 }

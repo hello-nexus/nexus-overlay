@@ -139,7 +139,7 @@ internal static unsafe class WebView2RuntimeInstaller
     }
 
     /// <summary>Runtime version the loader resolves now, or null while it still finds none.</summary>
-    private static string? InstalledVersion()
+    internal static string? InstalledVersion()
     {
         var hr = WebView2Native.GetAvailableCoreWebView2BrowserVersionString(null, out var versionInfo);
         if (WebView2Native.Failed(hr) || versionInfo == IntPtr.Zero) return null;

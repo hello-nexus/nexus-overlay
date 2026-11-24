@@ -4,9 +4,11 @@ using System.IO;
 namespace Nexus.Overlay.Capture;
 
 /// <summary>
-/// Fallback ladder for a stream host whose WGC capture stays dead: the first rebuilt host that still yields
-/// no frames switches the stream browser to software compositing (--disable-gpu). The decision is latched for
-/// the process and, when a marker path is given, remembered across overlay restarts by that file.
+/// Fallback ladder for a stream host whose WGC capture stays dead: the first time the host asks for a rebuild
+/// (its WGC recreates yielded no frames) the stream browser switches to software compositing (--disable-gpu),
+/// skipping the GPU host-rebuild step. The decision is latched for the process and, when a marker path is given,
+/// remembered across overlay restarts by that file. The marker carries a stamp of the overlay build and the
+/// WebView2 runtime; a marker with a different stamp is deleted so GPU compositing is tried again once.
 /// One instance per stream host manager.
 /// </summary>
 internal sealed class StreamRenderMode
@@ -16,20 +18,32 @@ internal sealed class StreamRenderMode
 
     private readonly string? _markerPath;
 
-    public StreamRenderMode(string? markerPath = null)
+    private readonly string _stamp;
+
+    public StreamRenderMode(string? markerPath = null, string stamp = "")
     {
-        _markerPath = markerPath;
-        if (markerPath is not null && File.Exists(markerPath))
+        _markerPath = string.IsNullOrEmpty(markerPath) ? null : markerPath;
+        _stamp = stamp;
+        if (_markerPath is null) return;
+        try
         {
-            Software = true;
-            StaleProfileDeletable = false;
+            if (!File.Exists(_markerPath)) return;
+            if (File.ReadAllText(_markerPath).Trim() == _stamp)
+            {
+                Software = true;
+                StaleProfileDeletable = false;
+            }
+            else File.Delete(_markerPath);
         }
+        catch (Exception ex) { Log.Warn($"stream-hosts could not read software compositing marker: {ex.Message}"); }
     }
 
     /// <summary>Marker file under the per-user Nexus folder; delete it to give GPU compositing another chance.</summary>
-    public static string DefaultMarkerPath() => Path.Combine(
-        UserDataPaths.NexusRoot(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)),
-        "stream-software-compositing");
+    public static string? DefaultMarkerPath()
+    {
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        return string.IsNullOrEmpty(local) ? null : Path.Combine(UserDataPaths.NexusRoot(local), "stream-software-compositing");
+    }
 
     /// <summary>Software compositing is on for every stream host built from now on.</summary>
     public bool Software { get; private set; }
@@ -51,7 +65,7 @@ internal sealed class StreamRenderMode
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(_markerPath)!);
-                File.WriteAllText(_markerPath, "");
+                File.WriteAllText(_markerPath, _stamp);
             }
             catch (Exception ex) { Log.Warn($"stream-hosts could not persist software compositing: {ex.Message}"); }
         }

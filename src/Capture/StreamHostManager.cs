@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 namespace Nexus.Overlay.Capture;
@@ -16,7 +17,16 @@ internal sealed class StreamHostManager
     private readonly string _serviceOrigin;
     private readonly Dictionary<string, StreamPanelHost> _hosts = new(StringComparer.Ordinal);
     private readonly StreamRebuildTracker _rebuilds = new();
-    private readonly StreamRenderMode _renderMode = new(StreamRenderMode.DefaultMarkerPath());
+    private readonly StreamRenderMode _renderMode = new(StreamRenderMode.DefaultMarkerPath(), MarkerStamp());
+
+    // Overlay build (exe write time) plus the WebView2 runtime: an update of either re-tries GPU compositing once.
+    private static string MarkerStamp()
+    {
+        long build = 0;
+        try { build = File.GetLastWriteTimeUtc(Environment.ProcessPath ?? "").Ticks; }
+        catch (Exception) { }
+        return $"{build}|{WebView2RuntimeInstaller.InstalledVersion()}";
+    }
 
     public StreamHostManager(string serviceOrigin)
     {
@@ -84,7 +94,7 @@ internal sealed class StreamHostManager
                 if (!_hosts.Remove(host.SessionId, out _)) return;
                 var delay = _rebuilds.OnRebuilt(host.SessionId, Environment.TickCount64);
                 if (_renderMode.OnRebuilt(_rebuilds.RebuildCount(host.SessionId)))
-                    Log.Warn($"stream-hosts session={host.SessionId}: rebuilt host still produced no frames, switching stream browser to software compositing (--disable-gpu) and remembering it across restarts");
+                    Log.Warn($"stream-hosts session={host.SessionId}: WGC recreates yielded no frames, switching stream browser to software compositing (--disable-gpu) and remembering it across restarts");
                 Log.Warn($"stream-hosts rebuild session={host.SessionId}, respawn in {delay / 1000}s");
             };
             host.BrowserExited = () =>
