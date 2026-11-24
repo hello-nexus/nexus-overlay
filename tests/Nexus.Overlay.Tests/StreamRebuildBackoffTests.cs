@@ -107,4 +107,31 @@ public class StreamRenderModeTests
         t.OnRecovered("s");
         Assert.False(StreamRenderMode.RequiresSoftware(t.RebuildCount("s")));
     }
+
+    [Fact]
+    public void Software_mode_latches_through_lower_counts_and_clears_on_reset()
+    {
+        var mode = new StreamRenderMode();
+        Assert.False(mode.OnRebuilt(1));
+        Assert.False(mode.Software);
+        Assert.True(mode.OnRebuilt(2));
+        Assert.True(mode.Software);
+        Assert.False(mode.OnRebuilt(3));
+        Assert.False(mode.OnRebuilt(1));
+        Assert.True(mode.Software);
+        mode.Reset();
+        Assert.False(mode.Software);
+    }
+
+    [Fact]
+    public void A_browser_exit_then_one_failed_rebuild_escalates_to_software()
+    {
+        var t = new StreamRebuildTracker();
+        var mode = new StreamRenderMode();
+        t.OnBrowserExited("s", 0);
+        Assert.False(StreamRenderMode.RequiresSoftware(t.RebuildCount("s")));
+        t.OnRebuilt("s", 0);
+        Assert.True(StreamRenderMode.RequiresSoftware(t.RebuildCount("s")));
+        Assert.True(mode.OnRebuilt(t.RebuildCount("s")));
+    }
 }

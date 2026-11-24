@@ -128,9 +128,12 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private int _emulationFailureLogged;
     private int _touchFailureLogged;
     private bool _taskbarTabPending;
+    private readonly bool _software;
+    private static int _staleSoftwareProfileLogged;
 
-    public StreamPanelHost(StreamAssignment assignment, string serviceOrigin, string pairedToken)
+    public StreamPanelHost(StreamAssignment assignment, string serviceOrigin, string pairedToken, bool software)
     {
+        _software = software;
         _instanceId = Interlocked.Increment(ref _nextInstanceId);
         _instances[_instanceId] = this;
         _assignment = assignment;
@@ -221,12 +224,13 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     {
         // Browser arguments only apply when the browser process launches for a user-data folder, so software
         // compositing gets its own folder; a still-running GPU-mode browser cannot swallow the new arguments.
-        var software = StreamRenderMode.Software;
+        var software = _software;
         var userDataDir = UserDataPaths.Profile(software ? "StreamWebView2-sw" : "StreamWebView2", ProfileMigration.UiState);
         var browserArgs = software
             ? Wv2EnvironmentOptions.EffectiveBrowserArguments + " --disable-gpu"
             : Wv2EnvironmentOptions.EffectiveBrowserArguments;
         try { Directory.CreateDirectory(userDataDir); } catch { }
+        if (!software) DeleteStaleSoftwareProfile(userDataDir);
 
         Log.Info($"stream-host {SessionId}: env create mode={(software ? "software" : "gpu")} args='{browserArgs}' userDataDir='{RedactLocalAppData(userDataDir)}'");
         _envOptions = Wv2EnvironmentOptions.Create(browserArgs);
@@ -242,6 +246,28 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
                 PostFault();
             }
         }
+    }
+
+    // Off the message loop: a profile folder can hold many files. The GPU profile path is never touched.
+    private static void DeleteStaleSoftwareProfile(string gpuUserDataDir)
+    {
+        var parent = Path.GetDirectoryName(gpuUserDataDir);
+        if (parent is null) return;
+        var swDir = Path.Combine(parent, "StreamWebView2-sw");
+        if (string.Equals(swDir, gpuUserDataDir, StringComparison.OrdinalIgnoreCase)) return;
+        _ = System.Threading.Tasks.Task.Run(() =>
+        {
+            try
+            {
+                if (!Directory.Exists(swDir)) return;
+                Directory.Delete(swDir, recursive: true);
+                if (Interlocked.Exchange(ref _staleSoftwareProfileLogged, 1) == 0)
+                {
+                    Log.Info($"stream-host: removed stale software profile '{RedactLocalAppData(swDir)}'");
+                }
+            }
+            catch { }
+        });
     }
 
     [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
