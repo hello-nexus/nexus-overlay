@@ -29,6 +29,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private static readonly UIntPtr TIMER_PAINT_POLL = new(11);
     private static readonly UIntPtr TIMER_NAV_RETRY = new(12);
     private static readonly UIntPtr TIMER_LEASE = new(13);
+    private static readonly UIntPtr TIMER_STYLE_CHECK = new(17);
     private const uint LeaseCheckIntervalMs = 1_000;
     private const int WebErrorOperationCanceled = 14;
     // Watchdog policy shared by both kiosk owners (Program's Y70 branch and
@@ -55,6 +56,34 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     // between WebView2 attach and first paint; the SPA paints every visible
     // background itself (the desktop-wallpaper mode is an in-page image, so
     // the page is never transparent).
+    // A first paint says the compositor ran, not that the entry stylesheet
+    // applied: a stylesheet that failed to load or came back from the HTTP
+    // cache empty still paints, with the serif default font and raw controls.
+    // The check runs on the built bundle only (a /assets/ script is present)
+    // and asks for stylesheet rules rather than a font, because skins and
+    // themes legitimately change the font. The entry stylesheet holds
+    // thousands of rules, so a floor catches an empty or truncated response.
+    // Recovery is one plain reload, then one HTTP cache clear plus reload,
+    // then stop; the counter lives on the window, so it never loops.
+    private const int StyledMinRules = 200;
+    private const uint StyleCheckDelayMs = 3_000;
+    private const int StyleStageDone = 3;
+    private static readonly string StyleProbeScript =
+        "(function(){try{var L=[].slice.call(document.querySelectorAll('link[rel=stylesheet]')),a=0,n=0,P=[];"
+        + "L.forEach(function(l){var p='',r=-1;try{p=new URL(l.href).pathname}catch(e){}"
+        + "try{r=l.sheet?l.sheet.cssRules.length:-1}catch(e){r=-2}"
+        + "if(p.indexOf('/assets/')===0){a++;if(r>0)n+=r}"
+        + "P.push(p+'|sheet='+(l.sheet?1:0)+'|rules='+r)});"
+        + "var built=!!document.querySelector('script[src*=\"/assets/\"]');"
+        + "var C=performance.getEntriesByType('resource').filter(function(e){return /\\.css(\\?|$)/.test(e.name)}).map(function(e){"
+        + "var p='';try{p=new URL(e.name).pathname}catch(x){}"
+        + "return p+'|xfer='+e.transferSize+'|enc='+e.encodedBodySize+'|dec='+e.decodedBodySize"
+        + "+'|status='+(e.responseStatus===undefined?'na':e.responseStatus)+'|ms='+Math.round(e.duration)});"
+        + "var f='';try{f=getComputedStyle(document.body).fontFamily.replace(/\\s+/g,' ')}catch(e){}"
+        + "return 'styled='+(!built?'na':(n>=" + StyledMinRules + "?'1':'0'))+' appLinks='+a+' appRules='+n"
+        + "+' sheets='+document.styleSheets.length+' font='+f+' links=['+P.join(';')+'] css=['+C.join(';')+']'"
+        + "}catch(e){return 'styled=err '+e.message}})()";
+    private const string ClearCacheMethod = "Network.clearBrowserCache";
     private const uint DefaultBgOpaqueBlack = 0x000000FFu;
     // Alpha 0: WebView2 composites the page over whatever is behind the HWND,
     // so a page that paints no background shows the live desktop. Hit-testing
@@ -148,6 +177,10 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     private IntPtr _navStartingHandler;
     private IntPtr _navCompletedHandler;
     private IntPtr _execScriptHandler;
+    private IntPtr _styleScriptHandler;
+    private IntPtr _clearCacheHandler;
+    private int _styleStage;
+    private bool _stylePending;
     private IntPtr _newWindowHandler;
     private IntPtr _permissionHandler;
     private IntPtr _processFailedHandler;
@@ -709,6 +742,12 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
                     ProbePaint();
                     return IntPtr.Zero;
                 }
+                if (wParam == (IntPtr)(long)TIMER_STYLE_CHECK.ToUInt64())
+                {
+                    Native.KillTimer(hwnd, TIMER_STYLE_CHECK);
+                    RunStyleCheck();
+                    return IntPtr.Zero;
+                }
                 if (wParam == (IntPtr)(long)TIMER_LEASE.ToUInt64())
                 {
                     CheckLease();
@@ -893,6 +932,7 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
         {
             owner._navRetries = 0;
             owner.StartPaintConfirmationPoll();
+            if (owner._stylePending) owner.ScheduleStyleCheck();
         }
         else if (status != WebErrorOperationCanceled && !owner._disposed && owner.Hwnd != IntPtr.Zero)
         {
@@ -959,7 +999,95 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             owner.HasConfirmedContent = true;
             Native.KillTimer(owner.Hwnd, TIMER_PAINT_POLL);
             Log.Info($"panel-kiosk first paint confirmed {owner.AgeMs} ms after create");
+            owner.ScheduleStyleCheck();
         }
+        return WebView2Native.S_OK;
+    }
+
+    private void ScheduleStyleCheck()
+    {
+        if (_disposed || Hwnd == IntPtr.Zero || _styleStage >= StyleStageDone) return;
+        _stylePending = true;
+        Native.SetTimer(Hwnd, TIMER_STYLE_CHECK, StyleCheckDelayMs, IntPtr.Zero);
+    }
+
+    private void RunStyleCheck()
+    {
+        if (_disposed || _coreWebView2 == IntPtr.Zero || !_stylePending) return;
+        _stylePending = false;
+        if (_styleScriptHandler == IntPtr.Zero)
+        {
+            _styleScriptHandler = WebView2Callbacks.CreateExecuteScriptCompletedHandler(&OnStyleScriptCompletedStatic);
+        }
+        Wv2.Wv2_ExecuteScript(_coreWebView2, StyleProbeScript, _styleScriptHandler);
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnStyleScriptCompletedStatic(IntPtr self, int errorCode, IntPtr resultJsonPtr)
+    {
+        var owner = FindByStyleScriptHandler(self);
+        if (owner is null || owner._disposed) return WebView2Native.S_OK;
+        try
+        {
+            if (WebView2Native.Failed(errorCode) || resultJsonPtr == IntPtr.Zero)
+            {
+                Log.Warn($"panel-kiosk style-check script failed hr=0x{errorCode:X8}");
+                return WebView2Native.S_OK;
+            }
+            var json = Marshal.PtrToStringUni(resultJsonPtr) ?? "";
+            string line;
+            using (var doc = System.Text.Json.JsonDocument.Parse(json))
+            {
+                line = doc.RootElement.ValueKind == System.Text.Json.JsonValueKind.String
+                    ? doc.RootElement.GetString() ?? ""
+                    : json;
+            }
+            Log.Info($"panel-kiosk style-check stage={owner._styleStage} {line}");
+            if (line.StartsWith("styled=0", StringComparison.Ordinal)) owner.RecoverStyles();
+            else if (owner._styleStage > 0) Log.Info($"panel-kiosk style-check recovered at stage={owner._styleStage}");
+        }
+        catch (Exception ex) { Log.Error($"panel-kiosk style-check: {ex.Message}"); }
+        return WebView2Native.S_OK;
+    }
+
+    private void RecoverStyles()
+    {
+        var stage = _styleStage++;
+        if (stage == 0)
+        {
+            Log.Warn("panel-kiosk entry stylesheet not applied; reloading");
+            _stylePending = true;
+            Wv2.Wv2_Reload(_coreWebView2);
+        }
+        else if (stage == 1)
+        {
+            Log.Warn("panel-kiosk entry stylesheet still not applied after reload; clearing HTTP cache");
+            if (_clearCacheHandler == IntPtr.Zero)
+            {
+                _clearCacheHandler = WebView2Callbacks.CreateCallDevToolsProtocolMethodCompletedHandler(&OnClearCacheCompletedStatic);
+            }
+            var hr = Wv2.Wv2_CallDevToolsProtocolMethod(_coreWebView2, ClearCacheMethod, "{}", _clearCacheHandler);
+            if (WebView2Native.Failed(hr))
+            {
+                Log.Warn($"panel-kiosk cache clear refused hr=0x{hr:X8}; reloading anyway");
+                _stylePending = true;
+                Wv2.Wv2_Reload(_coreWebView2);
+            }
+        }
+        else
+        {
+            Log.Warn("panel-kiosk entry stylesheet still not applied after cache clear; giving up");
+        }
+    }
+
+    [UnmanagedCallersOnly(CallConvs = new[] { typeof(CallConvStdcall) })]
+    private static int OnClearCacheCompletedStatic(IntPtr self, int errorCode, IntPtr resultJsonPtr)
+    {
+        var owner = FindByClearCacheHandler(self);
+        if (owner is null || owner._disposed || owner._coreWebView2 == IntPtr.Zero) return WebView2Native.S_OK;
+        Log.Info($"panel-kiosk cache clear completed hr=0x{errorCode:X8}; reloading");
+        owner._stylePending = true;
+        Wv2.Wv2_Reload(owner._coreWebView2);
         return WebView2Native.S_OK;
     }
 
@@ -1051,6 +1179,10 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
     { foreach (var kv in _instances) if (kv.Value._navCompletedHandler == h) return kv.Value; return null; }
     private static PanelKioskWindow? FindByExecScriptHandler(IntPtr h)
     { foreach (var kv in _instances) if (kv.Value._execScriptHandler == h) return kv.Value; return null; }
+    private static PanelKioskWindow? FindByStyleScriptHandler(IntPtr h)
+    { foreach (var kv in _instances) if (kv.Value._styleScriptHandler == h) return kv.Value; return null; }
+    private static PanelKioskWindow? FindByClearCacheHandler(IntPtr h)
+    { foreach (var kv in _instances) if (kv.Value._clearCacheHandler == h) return kv.Value; return null; }
     private static PanelKioskWindow? FindByNewWindowHandler(IntPtr h)
     { foreach (var kv in _instances) if (kv.Value._newWindowHandler == h) return kv.Value; return null; }
     private static PanelKioskWindow? FindByProcessFailedHandler(IntPtr h)
@@ -1105,6 +1237,8 @@ internal sealed unsafe class PanelKioskWindow : IWin32WindowOwner, IDisposable
             if (_navStartingHandler != IntPtr.Zero) { Wv2.Release(_navStartingHandler); _navStartingHandler = IntPtr.Zero; }
             if (_navCompletedHandler != IntPtr.Zero) { Wv2.Release(_navCompletedHandler); _navCompletedHandler = IntPtr.Zero; }
             if (_execScriptHandler != IntPtr.Zero) { Wv2.Release(_execScriptHandler); _execScriptHandler = IntPtr.Zero; }
+            if (_styleScriptHandler != IntPtr.Zero) { Wv2.Release(_styleScriptHandler); _styleScriptHandler = IntPtr.Zero; }
+            if (_clearCacheHandler != IntPtr.Zero) { Wv2.Release(_clearCacheHandler); _clearCacheHandler = IntPtr.Zero; }
             if (_newWindowHandler != IntPtr.Zero) { Wv2.Release(_newWindowHandler); _newWindowHandler = IntPtr.Zero; }
             if (_permissionHandler != IntPtr.Zero) { Wv2.Release(_permissionHandler); _permissionHandler = IntPtr.Zero; }
             if (_processFailedHandler != IntPtr.Zero) { Wv2.Release(_processFailedHandler); _processFailedHandler = IntPtr.Zero; }
