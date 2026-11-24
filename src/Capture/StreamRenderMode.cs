@@ -3,7 +3,7 @@ namespace Nexus.Overlay.Capture;
 /// <summary>
 /// Fallback ladder for a stream host whose WGC capture stays dead: the first rebuild keeps GPU compositing,
 /// a rebuilt host that still yields no frames switches the stream browser to software compositing
-/// (--disable-gpu), and that mode then holds until the session unlocks. One instance per stream host manager.
+/// (--disable-gpu), and that mode then holds until all hosts are closed. One instance per stream host manager.
 /// </summary>
 internal sealed class StreamRenderMode
 {
@@ -13,6 +13,9 @@ internal sealed class StreamRenderMode
     /// <summary>Software compositing is on for every stream host built from now on, until <see cref="Reset"/>.</summary>
     public bool Software { get; private set; }
 
+    /// <summary>False once this manager has used software compositing, even after <see cref="Reset"/>: a software browser may still be alive on the -sw profile.</summary>
+    public bool StaleProfileDeletable { get; private set; } = true;
+
     /// <summary>True when this consecutive rebuild count calls for the software mode.</summary>
     public static bool RequiresSoftware(int consecutiveRebuilds) => consecutiveRebuilds >= SoftwareAtRebuild;
 
@@ -21,9 +24,10 @@ internal sealed class StreamRenderMode
     {
         if (Software || !RequiresSoftware(consecutiveRebuilds)) return false;
         Software = true;
+        StaleProfileDeletable = false;
         return true;
     }
 
-    /// <summary>The session unlocked: composition resumes, so the GPU mode gets another chance.</summary>
+    /// <summary>All hosts were torn down: the GPU mode gets another chance.</summary>
     public void Reset() => Software = false;
 }

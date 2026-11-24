@@ -29,11 +29,7 @@ internal sealed class StreamHostManager
     public bool HasPendingRebuilds => _rebuilds.PendingCount > 0;
 
     /// <summary>The user session unlocked: drop the backoff and let the next reconcile respawn pending rebuilds at once.</summary>
-    public void OnSessionUnlocked()
-    {
-        _rebuilds.OnUnlocked();
-        _renderMode.Reset();
-    }
+public void OnSessionUnlocked() => _rebuilds.OnUnlocked();
 
     public void Reconcile(IReadOnlyList<StreamAssignment> assignments, string pairedToken)
     {
@@ -75,7 +71,7 @@ internal sealed class StreamHostManager
     {
         try
         {
-            var host = new StreamPanelHost(assignment, _serviceOrigin, pairedToken, _renderMode.Software);
+            var host = new StreamPanelHost(assignment, _serviceOrigin, pairedToken, _renderMode.Software, _renderMode.StaleProfileDeletable);
             // A faulted host is dropped immediately; the session stays desired
             // server-side, so the next reconcile respawns a fresh one (whose
             // new ingest connection supersedes any half-open predecessor).
@@ -89,7 +85,7 @@ internal sealed class StreamHostManager
                 if (!_hosts.Remove(host.SessionId, out _)) return;
                 var delay = _rebuilds.OnRebuilt(host.SessionId, Environment.TickCount64);
                 if (_renderMode.OnRebuilt(_rebuilds.RebuildCount(host.SessionId)))
-                    Log.Warn($"stream-hosts session={host.SessionId}: rebuilt host still produced no frames, switching stream browser to software compositing (--disable-gpu) until the session unlocks");
+                    Log.Warn($"stream-hosts session={host.SessionId}: rebuilt host still produced no frames, switching stream browser to software compositing (--disable-gpu) until all stream hosts are closed");
                 Log.Warn($"stream-hosts rebuild session={host.SessionId}, respawn in {delay / 1000}s");
             };
             host.BrowserExited = () =>

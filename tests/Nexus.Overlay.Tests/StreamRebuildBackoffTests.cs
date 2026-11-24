@@ -134,4 +134,18 @@ public class StreamRenderModeTests
         Assert.True(StreamRenderMode.RequiresSoftware(t.RebuildCount("s")));
         Assert.True(mode.OnRebuilt(t.RebuildCount("s")));
     }
+
+    [Fact]
+    public void The_stale_profile_stays_undeletable_after_a_software_episode_even_after_reset()
+    {
+        var mode = new StreamRenderMode();
+        Assert.True(mode.StaleProfileDeletable);
+        mode.OnRebuilt(1);
+        Assert.True(mode.StaleProfileDeletable);
+        mode.OnRebuilt(2);
+        Assert.False(mode.StaleProfileDeletable);
+        mode.Reset();
+        Assert.False(mode.Software);
+        Assert.False(mode.StaleProfileDeletable);
+    }
 }

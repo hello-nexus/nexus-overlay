@@ -129,11 +129,12 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private int _touchFailureLogged;
     private bool _taskbarTabPending;
     private readonly bool _software;
-    private static int _staleSoftwareProfileLogged;
+    private readonly bool _deleteStaleSoftwareProfile;
 
-    public StreamPanelHost(StreamAssignment assignment, string serviceOrigin, string pairedToken, bool software)
+    public StreamPanelHost(StreamAssignment assignment, string serviceOrigin, string pairedToken, bool software, bool deleteStaleSoftwareProfile)
     {
         _software = software;
+        _deleteStaleSoftwareProfile = deleteStaleSoftwareProfile;
         _instanceId = Interlocked.Increment(ref _nextInstanceId);
         _instances[_instanceId] = this;
         _assignment = assignment;
@@ -230,7 +231,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
             ? Wv2EnvironmentOptions.EffectiveBrowserArguments + " --disable-gpu"
             : Wv2EnvironmentOptions.EffectiveBrowserArguments;
         try { Directory.CreateDirectory(userDataDir); } catch { }
-        if (!software) DeleteStaleSoftwareProfile(userDataDir);
+        if (!software && _deleteStaleSoftwareProfile) DeleteStaleSoftwareProfile(userDataDir);
 
         Log.Info($"stream-host {SessionId}: env create mode={(software ? "software" : "gpu")} args='{browserArgs}' userDataDir='{RedactLocalAppData(userDataDir)}'");
         _envOptions = Wv2EnvironmentOptions.Create(browserArgs);
@@ -248,7 +249,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         }
     }
 
-    // Off the message loop: a profile folder can hold many files. The GPU profile path is never touched.
+    // Off the message loop: a profile folder can hold many files.
     private static void DeleteStaleSoftwareProfile(string gpuUserDataDir)
     {
         var parent = Path.GetDirectoryName(gpuUserDataDir);
@@ -261,10 +262,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
             {
                 if (!Directory.Exists(swDir)) return;
                 Directory.Delete(swDir, recursive: true);
-                if (Interlocked.Exchange(ref _staleSoftwareProfileLogged, 1) == 0)
-                {
-                    Log.Info($"stream-host: removed stale software profile '{RedactLocalAppData(swDir)}'");
-                }
+                Log.Info($"stream-host: removed stale software profile '{RedactLocalAppData(swDir)}'");
             }
             catch { }
         });
