@@ -35,6 +35,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private const int OffscreenOrigin = -4000;
     private const uint TIMER_CAPTURE_WATCHDOG = 1;
     private const uint WatchdogIntervalMs = 5000;
+    private const uint FastWatchdogIntervalMs = 1000;
     // Bounds the wait for the touch-emulation completion that starts the navigation.
     private const uint TIMER_NAVIGATE_FALLBACK = 2;
     private const uint NavigateFallbackMs = 2000;
@@ -59,6 +60,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     /// <summary>Fires once (message-loop thread) after the host disposed itself because the WGC capture stayed dead through every
     /// in-place recovery. The manager rebuilds it after a backoff; unlike <see cref="Faulted"/> it is not an immediate respawn.</summary>
     public Action? RebuildRequested;
+    public Action? SoftwareRebuildRequested;
 
     /// <summary>Fires once (message-loop thread) after the host disposed itself because the WebView2 browser process exited.</summary>
     public Action? BrowserExited;
@@ -109,7 +111,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private long _lastFrameTimeTicks;
     private long _captureGapCount;
     private int _restartRequested;
-    private readonly StreamWatchdogPolicy _watchdog = new();
+    private readonly StreamWatchdogPolicy _watchdog;
     // One handler per probe: an abandoned probe's late completion finds no host.
     private IntPtr _probeHandler;
     private int _probeFrameExpected;
@@ -129,11 +131,13 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
     private int _touchFailureLogged;
     private bool _taskbarTabPending;
     private readonly bool _software;
+    private bool _fastTimer;
     private readonly bool _deleteStaleSoftwareProfile;
 
     public StreamPanelHost(StreamAssignment assignment, string serviceOrigin, string pairedToken, bool software, bool deleteStaleSoftwareProfile)
     {
         _software = software;
+        _watchdog = new StreamWatchdogPolicy(fastDetect: !software);
         _deleteStaleSoftwareProfile = deleteStaleSoftwareProfile;
         _instanceId = Interlocked.Increment(ref _nextInstanceId);
         _instances[_instanceId] = this;
@@ -835,6 +839,12 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
                 Log.Warn($"stream-host {SessionId}: no frames this tick; {DescribeWindowState()}");
             }
         }
+        var fast = _watchdog.FastDetectWindow;
+        if (fast != _fastTimer)
+        {
+            _fastTimer = fast;
+            Native.SetTimer(Hwnd, (nuint)TIMER_CAPTURE_WATCHDOG, fast ? FastWatchdogIntervalMs : WatchdogIntervalMs, IntPtr.Zero);
+        }
         // Frames, a timeout or a restart ended the probe; its completion, if it ever comes, is dropped.
         if (!_watchdog.ProbeInFlight)
         {
@@ -852,6 +862,12 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
                     : _watchdog.RepaintRestartsExhausted
                         ? "forced repaint produced no WGC frame; repaint restarts pause until frames return"
                         : "forced repaint produced no WGC frame");
+                break;
+            case WatchdogAction.RebuildSoftware:
+                Log.Warn($"stream-host {SessionId}: only the initial frame was delivered and a forced repaint produced no WGC frame, rebuilding in software compositing; {DescribeWindowState()}");
+                var softwareCallback = SoftwareRebuildRequested;
+                Dispose();
+                try { softwareCallback?.Invoke(); } catch { }
                 break;
             case WatchdogAction.Rebuild:
                 Log.Warn($"stream-host {SessionId}: {StreamWatchdogPolicy.MaxStuckRestarts} WGC recreates yielded no frames, rebuilding the stream host; {DescribeWindowState()}");

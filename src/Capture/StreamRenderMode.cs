@@ -16,14 +16,22 @@ internal sealed class StreamRenderMode
     /// <summary>Rebuilds in a row (no frames in between) at which software compositing takes over.</summary>
     public const int SoftwareAtRebuild = 1;
 
+    /// <summary>WebView2 158 regression: the off-screen stream host gets no WGC frames after the first, so stream hosts start in software compositing.</summary>
+    public const int SoftwareFromRuntimeMajor = 158;
+
     private readonly string? _markerPath;
 
     private readonly string _stamp;
 
-    public StreamRenderMode(string? markerPath = null, string stamp = "")
+    public StreamRenderMode(string? markerPath = null, string stamp = "", int? runtimeMajor = null)
     {
         _markerPath = string.IsNullOrEmpty(markerPath) ? null : markerPath;
         _stamp = stamp;
+        if (RuntimeRequiresSoftware(runtimeMajor))
+        {
+            Software = true;
+            StaleProfileDeletable = false;
+        }
         if (_markerPath is null) return;
         try
         {
@@ -63,10 +71,16 @@ internal sealed class StreamRenderMode
     /// <summary>True when this consecutive rebuild count calls for the software mode.</summary>
     public static bool RequiresSoftware(int consecutiveRebuilds) => consecutiveRebuilds >= SoftwareAtRebuild;
 
+    /// <summary>True when the installed runtime major is known and at or past the regression; an unknown runtime stays on GPU.</summary>
+    public static bool RuntimeRequiresSoftware(int? runtimeMajor) => runtimeMajor is { } major && major >= SoftwareFromRuntimeMajor;
+
     /// <summary>Applies the ladder after a rebuild; true when this call switched the mode.</summary>
-    public bool OnRebuilt(int consecutiveRebuilds)
+    public bool OnRebuilt(int consecutiveRebuilds) => RequiresSoftware(consecutiveRebuilds) && ForceSoftware();
+
+    /// <summary>Latches software compositing and persists the marker; true when this call switched the mode.</summary>
+    public bool ForceSoftware()
     {
-        if (Software || !RequiresSoftware(consecutiveRebuilds)) return false;
+        if (Software) return false;
         Software = true;
         StaleProfileDeletable = false;
         if (_markerPath is not null)

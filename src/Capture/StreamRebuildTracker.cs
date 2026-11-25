@@ -24,6 +24,9 @@ internal sealed class StreamRebuildTracker
         return delay;
     }
 
+    /// <summary>Records a rebuild that respawns at once (software fallback): no backoff and no count, but the session stays pending so the process does not idle-exit.</summary>
+    public void OnRebuiltImmediately(string sessionId, long nowMs) => _notBefore[sessionId] = nowMs;
+
     /// <summary>Records a browser process exit and returns the delay before the respawn: none for the first, then the rebuild backoff for repeats without a recovery in between.</summary>
     public long OnBrowserExited(string sessionId, long nowMs)
     {

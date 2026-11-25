@@ -17,7 +17,7 @@ internal sealed class StreamHostManager
     private readonly string _serviceOrigin;
     private readonly Dictionary<string, StreamPanelHost> _hosts = new(StringComparer.Ordinal);
     private readonly StreamRebuildTracker _rebuilds = new();
-    private readonly StreamRenderMode _renderMode = new(StreamRenderMode.DefaultMarkerPath(), MarkerStamp());
+    private readonly StreamRenderMode _renderMode;
 
     // Overlay build (exe write time) plus the WebView2 runtime major: a new build or a major runtime change re-tries GPU compositing once.
     private static string MarkerStamp()
@@ -25,20 +25,27 @@ internal sealed class StreamHostManager
         long build = 0;
         try { build = File.GetLastWriteTimeUtc(Environment.ProcessPath ?? "").Ticks; }
         catch (Exception) { }
-        var runtime = "";
+        return $"{build}|{RuntimeMajorText()}";
+    }
+
+    private static string RuntimeMajorText()
+    {
         try
         {
             var v = WebView2RuntimeInstaller.InstalledVersion();
             var dot = v?.IndexOf('.') ?? -1;
-            runtime = v is null ? "" : dot > 0 ? v[..dot] : v;
+            return v is null ? "" : dot > 0 ? v[..dot] : v;
         }
-        catch (Exception) { }
-        return $"{build}|{runtime}";
+        catch (Exception) { return ""; }
     }
 
     public StreamHostManager(string serviceOrigin)
     {
         _serviceOrigin = serviceOrigin;
+        _renderMode = new StreamRenderMode(
+            StreamRenderMode.DefaultMarkerPath(),
+            MarkerStamp(),
+            int.TryParse(RuntimeMajorText(), out var major) ? major : null);
     }
 
     public int Count => _hosts.Count;
@@ -104,6 +111,14 @@ internal sealed class StreamHostManager
                 if (_renderMode.OnRebuilt(_rebuilds.RebuildCount(host.SessionId)))
                     Log.Warn($"stream-hosts session={host.SessionId}: WGC recreates yielded no frames, switching stream browser to software compositing (--disable-gpu) and remembering it across restarts");
                 Log.Warn($"stream-hosts rebuild session={host.SessionId}, respawn in {delay / 1000}s");
+            };
+            host.SoftwareRebuildRequested = () =>
+            {
+                if (!_hosts.Remove(host.SessionId, out _)) return;
+                _rebuilds.OnRebuiltImmediately(host.SessionId, Environment.TickCount64);
+                if (_renderMode.ForceSoftware())
+                    Log.Warn($"stream-hosts session={host.SessionId}: host delivered only its initial frame, switching stream browser to software compositing (--disable-gpu) and remembering it across restarts");
+                Log.Warn($"stream-hosts fast software rebuild session={host.SessionId}, respawn at once");
             };
             host.BrowserExited = () =>
             {

@@ -304,6 +304,87 @@ public class StreamWatchdogPolicyTests
         }
     }
 
+    [Fact]
+    public void Never_framed_past_the_initial_frame_escalates_to_software_on_the_first_unanswered_repaint()
+    {
+        var p = new StreamWatchdogPolicy(fastDetect: true);
+        Assert.False(p.FastDetectWindow);
+        Assert.Equal(WatchdogAction.None, p.Tick(1));
+        Assert.True(p.FastDetectWindow);
+        Assert.Equal(WatchdogAction.Probe, p.Tick(0)); // first silent tick probes at once
+        p.OnProbe();
+        Assert.Equal(WatchdogAction.None, p.Tick(0));
+        Assert.Equal(WatchdogAction.RebuildSoftware, p.Tick(0));
+        Assert.False(p.ProbeInFlight);
+    }
+
+    [Fact]
+    public void Fast_detect_off_keeps_the_old_ladder_for_the_same_sequence()
+    {
+        var p = new StreamWatchdogPolicy();
+        p.Tick(1);
+        Assert.False(p.FastDetectWindow);
+        Assert.Equal(WatchdogAction.None, p.Tick(0));
+        Assert.Equal(WatchdogAction.Probe, p.Tick(0));
+        p.OnProbe();
+        Assert.Equal(WatchdogAction.None, p.Tick(0));
+        Assert.Equal(WatchdogAction.Restart, p.Tick(0));
+    }
+
+    [Fact]
+    public void Repaint_that_yields_a_frame_in_the_fast_window_is_not_black()
+    {
+        var p = new StreamWatchdogPolicy(fastDetect: true);
+        p.Tick(1);
+        Assert.Equal(WatchdogAction.Probe, p.Tick(0));
+        p.OnProbe();
+        Assert.Equal(WatchdogAction.None, p.Tick(1));
+        Assert.False(p.FastDetectWindow);
+        for (var i = 0; i < 200; i++) Assert.NotEqual(WatchdogAction.RebuildSoftware, p.Tick(0));
+    }
+
+    [Fact]
+    public void A_host_that_framed_then_stalled_uses_the_old_ladder()
+    {
+        var p = new StreamWatchdogPolicy(fastDetect: true);
+        p.Tick(30);
+        Assert.False(p.FastDetectWindow);
+        Assert.Equal(WatchdogAction.None, p.Tick(0));
+        Assert.Equal(WatchdogAction.Probe, p.Tick(0));
+        p.OnProbe();
+        Assert.Equal(WatchdogAction.None, p.Tick(0));
+        Assert.Equal(WatchdogAction.Restart, p.Tick(0));
+        p.Tick(1); // the new session's initial frame
+        for (var i = 1; i < StreamWatchdogPolicy.MaxRepaintRestarts; i++)
+        {
+            Assert.Equal(WatchdogAction.Restart, FreezeOnce(p));
+            p.Tick(1);
+        }
+        Assert.Equal(WatchdogAction.Rebuild, FreezeOnce(p));
+    }
+
+    [Fact]
+    public void A_locked_session_never_escalates_in_the_fast_window()
+    {
+        var p = new StreamWatchdogPolicy(fastDetect: true);
+        p.Tick(1, sessionLocked: true);
+        Assert.Equal(WatchdogAction.Probe, p.Tick(0, sessionLocked: true));
+        p.OnProbe();
+        p.Tick(0, sessionLocked: true);
+        Assert.Equal(WatchdogAction.None, p.Tick(0, sessionLocked: true));
+        Assert.False(p.ProbeInFlight);
+        for (var i = 0; i < 8; i++) Assert.NotEqual(WatchdogAction.RebuildSoftware, p.Tick(0, sessionLocked: true));
+    }
+
+    [Fact]
+    public void The_fast_window_closes_after_its_zero_tick_bound()
+    {
+        var p = new StreamWatchdogPolicy(fastDetect: true);
+        p.Tick(1);
+        for (var i = 0; i < StreamWatchdogPolicy.FastDetectMaxZeroTicks; i++) p.Tick(0, sessionLocked: true);
+        Assert.False(p.FastDetectWindow);
+    }
+
     private static WatchdogAction TickToNextProbe(StreamWatchdogPolicy p)
     {
         for (var i = 0; i < StreamWatchdogPolicy.ProbeEveryZeroTicks; i++)

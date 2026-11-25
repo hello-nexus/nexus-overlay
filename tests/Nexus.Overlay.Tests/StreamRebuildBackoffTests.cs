@@ -118,6 +118,64 @@ public class StreamRenderModeTests
         Assert.Equal(0, t.RebuildCount("s"));
     }
 
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(157, false)]
+    [InlineData(158, true)]
+    [InlineData(159, true)]
+    public void The_runtime_gate_starts_stream_hosts_in_software_from_the_regression_major(int? major, bool software)
+    {
+        Assert.Equal(software, StreamRenderMode.RuntimeRequiresSoftware(major));
+        var mode = new StreamRenderMode(null, "v1", major);
+        Assert.Equal(software, mode.Software);
+        Assert.Equal(!software, mode.StaleProfileDeletable);
+    }
+
+    [Fact]
+    public void The_gate_does_not_touch_the_marker_logic()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "nexus-rm-" + Guid.NewGuid().ToString("N"));
+        var marker = Path.Combine(dir, "marker");
+        try
+        {
+            var gated = new StreamRenderMode(marker, "1|158", 158);
+            Assert.True(gated.Software);
+            Assert.False(gated.OnRebuilt(1));
+            Assert.False(gated.ForceSoftware());
+            Assert.False(File.Exists(marker));
+
+            // A runtime below the gate writes and honors the marker as before.
+            var gpu = new StreamRenderMode(marker, "1|157", 157);
+            Assert.False(gpu.Software);
+            Assert.True(gpu.ForceSoftware());
+            Assert.Equal("1|157", File.ReadAllText(marker));
+            Assert.True(new StreamRenderMode(marker, "1|157", 157).Software);
+            Assert.False(new StreamRenderMode(marker, "1|156", 156).Software);
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void A_fast_software_rebuild_persists_the_marker_and_respawns_without_backoff()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "nexus-rm-" + Guid.NewGuid().ToString("N"));
+        var marker = Path.Combine(dir, "marker");
+        try
+        {
+            var mode = new StreamRenderMode(marker, "v1", 157);
+            var t = new StreamRebuildTracker();
+            t.OnRebuiltImmediately("s", 5_000);
+            Assert.True(mode.ForceSoftware());
+            Assert.True(File.Exists(marker));
+            Assert.False(t.IsBlocked("s", 5_000));
+            Assert.Equal(1, t.PendingCount);
+            Assert.Equal(0, t.RebuildCount("s"));
+            t.OnSpawned("s");
+            Assert.Equal(0, t.PendingCount);
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+
     [Fact]
     public void Software_mode_latches_and_stays_on()
     {

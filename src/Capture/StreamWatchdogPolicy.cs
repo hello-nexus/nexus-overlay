@@ -7,6 +7,8 @@ internal enum WatchdogAction
     Restart,
     /// <summary>Recreating the WGC session on the same window keeps failing; tear down the whole host (window and WebView2) and build a fresh one.</summary>
     Rebuild,
+    /// <summary>The host painted its initial frame and a forced repaint produced no second one: rebuild at once in software compositing, without backoff.</summary>
+    RebuildSoftware,
 }
 
 /// <summary>Restarts the WGC session when a forced page repaint (probe) yields no WGC frame; the zero-frame ceiling bounds a probe that never answers.</summary>
@@ -23,6 +25,11 @@ internal sealed class StreamWatchdogPolicy
     // at the cap the next restart escalates to a full host rebuild.
     public const int MaxStuckRestarts = 3;
 
+    // Zero-frame ticks of a fast-detect window after which the window closes, so a stalled probe cannot keep the fast tick forever.
+    public const int FastDetectMaxZeroTicks = 10;
+
+    private readonly bool _fastDetect;
+    private long _totalFrames;
     private int _zeroTicks;
     private int _probeFailures;
     private bool _probeInFlight;
@@ -35,6 +42,15 @@ internal sealed class StreamWatchdogPolicy
     private bool _locked;
     private bool _awaitingInitialFrame;
 
+    /// <param name="fastDetect">True for a GPU-composited host: a host that never got past its initial frame escalates to a software rebuild on its first unanswered repaint.</param>
+    public StreamWatchdogPolicy(bool fastDetect = false)
+    {
+        _fastDetect = fastDetect;
+    }
+
+    /// <summary>True while a fast-detect host has delivered exactly its initial frame; the host ticks faster meanwhile.</summary>
+    public bool FastDetectWindow => _fastDetect && _totalFrames == 1 && _zeroTicks < FastDetectMaxZeroTicks;
+
     public int ZeroTicks => _zeroTicks;
     public bool ProbeBroken => _probeFailures >= MaxProbeFailures;
     public bool RepaintRestartsExhausted => _repaintRestarts >= MaxRepaintRestarts;
@@ -45,8 +61,10 @@ internal sealed class StreamWatchdogPolicy
     public WatchdogAction Tick(long framesDelta, bool sessionLocked = false)
     {
         _locked = sessionLocked;
+        var fastWindow = FastDetectWindow;
         if (framesDelta > 0)
         {
+            _totalFrames += framesDelta;
             if (_awaitingInitialFrame) _awaitingInitialFrame = false;
             else
             {
@@ -67,6 +85,16 @@ internal sealed class StreamWatchdogPolicy
             {
                 if (seen >= 1)
                 {
+                    if (fastWindow)
+                    {
+                        if (_locked)
+                        {
+                            ClearProbe();
+                            return WatchdogAction.None;
+                        }
+                        Rebuilt();
+                        return WatchdogAction.RebuildSoftware;
+                    }
                     if (!RepaintRestartsExhausted) return Restarted(repaint: true);
                     // Capped and the repaint still reached no WGC frame: recreating the session on this window has failed.
                     if (_locked)
@@ -85,7 +113,7 @@ internal sealed class StreamWatchdogPolicy
             return WatchdogAction.None;
         }
         if (ProbeBroken) return WatchdogAction.None;
-        if (_zeroTicks % ProbeEveryZeroTicks != 0) return WatchdogAction.None;
+        if (!fastWindow && _zeroTicks % ProbeEveryZeroTicks != 0) return WatchdogAction.None;
         _probeInFlight = true;
         _inFlightTicks = 0;
         return WatchdogAction.Probe;
