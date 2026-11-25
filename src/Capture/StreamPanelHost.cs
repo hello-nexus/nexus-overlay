@@ -232,7 +232,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         var software = _software;
         var userDataDir = UserDataPaths.Profile(software ? "StreamWebView2-sw" : "StreamWebView2", ProfileMigration.UiState);
         var browserArgs = software
-            ? Wv2EnvironmentOptions.EffectiveBrowserArguments + " --disable-gpu"
+            ? Wv2EnvironmentOptions.EffectiveBrowserArguments + " --disable-gpu-compositing"
             : Wv2EnvironmentOptions.EffectiveBrowserArguments;
         try { Directory.CreateDirectory(userDataDir); } catch { }
         if (!software && _deleteStaleSoftwareProfile) DeleteStaleSoftwareProfile(userDataDir);

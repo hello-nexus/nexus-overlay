@@ -114,7 +114,7 @@ internal sealed class StreamHostManager
                 if (!_hosts.Remove(host.SessionId, out _)) return;
                 var delay = _rebuilds.OnRebuilt(host.SessionId, Environment.TickCount64);
                 if (_renderMode.OnRebuilt(_rebuilds.RebuildCount(host.SessionId)))
-                    Log.Warn($"stream-hosts session={host.SessionId}: WGC recreates yielded no frames, switching stream browser to software compositing (--disable-gpu) and remembering it across restarts");
+                    Log.Warn($"stream-hosts session={host.SessionId}: WGC recreates yielded no frames, switching stream browser to software compositing (--disable-gpu-compositing) and remembering it across restarts");
                 Log.Warn($"stream-hosts rebuild session={host.SessionId}, respawn in {delay / 1000}s");
             };
             host.SoftwareRebuildRequested = () =>
@@ -122,7 +122,7 @@ internal sealed class StreamHostManager
                 if (!_hosts.Remove(host.SessionId, out _)) return;
                 _rebuilds.OnRebuiltImmediately(host.SessionId, Environment.TickCount64);
                 if (_renderMode.ForceSoftware())
-                    Log.Warn($"stream-hosts session={host.SessionId}: host delivered only its initial frame, switching stream browser to software compositing (--disable-gpu) and remembering it across restarts");
+                    Log.Warn($"stream-hosts session={host.SessionId}: host delivered only its initial frame, switching stream browser to software compositing (--disable-gpu-compositing) and remembering it across restarts");
                 Log.Warn($"stream-hosts fast software rebuild session={host.SessionId}, respawning now");
                 // Same thread as the message loop: respawn here rather than waiting for the next prefs poll.
                 if (_desired.TryGetValue(host.SessionId, out var current)) SpawnHost(current, _pairedToken);

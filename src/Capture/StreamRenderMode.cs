@@ -4,7 +4,8 @@ using System.IO;
 namespace Nexus.Overlay.Capture;
 
 /// <summary>
-/// Software compositing decision for the stream browser: it starts in software compositing (--disable-gpu) when the
+/// Software compositing decision for the stream browser: it starts in software compositing (--disable-gpu-compositing:
+/// the page and WebGL still render on the GPU, only compositing moves to the CPU) when the
 /// installed WebView2 runtime major is at or past <see cref="SoftwareFromRuntimeMajor"/>, and otherwise switches
 /// when a stream host's WGC recreates yield no frames (the host asks for a rebuild) or a host never gets past its
 /// initial frame. The decision is latched for the process and, when a marker path is given, remembered across
