@@ -4,9 +4,11 @@ using System.IO;
 namespace Nexus.Overlay.Capture;
 
 /// <summary>
-/// Software compositing decision for the stream browser: when a stream host's WGC recreates yield no frames
-/// (the host asks for a rebuild), the browser switches to software compositing (--disable-gpu). The decision is
-/// latched for the process and, when a marker path is given, remembered across overlay restarts by that file.
+/// Software compositing decision for the stream browser: it starts in software compositing (--disable-gpu) when the
+/// installed WebView2 runtime major is at or past <see cref="SoftwareFromRuntimeMajor"/>, and otherwise switches
+/// when a stream host's WGC recreates yield no frames (the host asks for a rebuild) or a host never gets past its
+/// initial frame. The decision is latched for the process and, when a marker path is given, remembered across
+/// overlay restarts by that file; the runtime gate itself never writes the marker.
 /// The marker holds a stamp "build|runtime"; a marker whose stamp differs is deleted so GPU compositing is tried
 /// again once. An empty runtime part on either side is unknown and only the build part is compared.
 /// One instance per stream host manager.
@@ -16,7 +18,7 @@ internal sealed class StreamRenderMode
     /// <summary>Rebuilds in a row (no frames in between) at which software compositing takes over.</summary>
     public const int SoftwareAtRebuild = 1;
 
-    /// <summary>WebView2 158 regression: the off-screen stream host gets no WGC frames after the first, so stream hosts start in software compositing.</summary>
+    /// <summary>First WebView2 runtime major with the regression: the off-screen stream host gets no WGC frames after the first, so stream hosts start in software compositing.</summary>
     public const int SoftwareFromRuntimeMajor = 158;
 
     private readonly string? _markerPath;

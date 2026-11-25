@@ -18,14 +18,16 @@ internal sealed class StreamHostManager
     private readonly Dictionary<string, StreamPanelHost> _hosts = new(StringComparer.Ordinal);
     private readonly StreamRebuildTracker _rebuilds = new();
     private readonly StreamRenderMode _renderMode;
+    private Dictionary<string, StreamAssignment> _desired = new(StringComparer.Ordinal);
+    private string _pairedToken = "";
 
     // Overlay build (exe write time) plus the WebView2 runtime major: a new build or a major runtime change re-tries GPU compositing once.
-    private static string MarkerStamp()
+    private static string MarkerStamp(string runtime)
     {
         long build = 0;
         try { build = File.GetLastWriteTimeUtc(Environment.ProcessPath ?? "").Ticks; }
         catch (Exception) { }
-        return $"{build}|{RuntimeMajorText()}";
+        return $"{build}|{runtime}";
     }
 
     private static string RuntimeMajorText()
@@ -42,10 +44,11 @@ internal sealed class StreamHostManager
     public StreamHostManager(string serviceOrigin)
     {
         _serviceOrigin = serviceOrigin;
+        var runtime = RuntimeMajorText();
         _renderMode = new StreamRenderMode(
             StreamRenderMode.DefaultMarkerPath(),
-            MarkerStamp(),
-            int.TryParse(RuntimeMajorText(), out var major) ? major : null);
+            MarkerStamp(runtime),
+            int.TryParse(runtime, out var major) ? major : null);
     }
 
     public int Count => _hosts.Count;
@@ -65,6 +68,8 @@ internal sealed class StreamHostManager
                 desired[assignment.SessionId] = assignment;
         }
 
+        _desired = desired;
+        _pairedToken = pairedToken;
         _rebuilds.Prune(desired.Keys);
 
         var (spawn, close) = StreamHostPlan.Compute(desired.Keys.ToList(), _hosts.Keys.ToList());
@@ -118,7 +123,9 @@ internal sealed class StreamHostManager
                 _rebuilds.OnRebuiltImmediately(host.SessionId, Environment.TickCount64);
                 if (_renderMode.ForceSoftware())
                     Log.Warn($"stream-hosts session={host.SessionId}: host delivered only its initial frame, switching stream browser to software compositing (--disable-gpu) and remembering it across restarts");
-                Log.Warn($"stream-hosts fast software rebuild session={host.SessionId}, respawn at once");
+                Log.Warn($"stream-hosts fast software rebuild session={host.SessionId}, respawning now");
+                // Same thread as the message loop: respawn here rather than waiting for the next prefs poll.
+                if (_desired.TryGetValue(host.SessionId, out var assignment)) SpawnHost(assignment, _pairedToken);
             };
             host.BrowserExited = () =>
             {

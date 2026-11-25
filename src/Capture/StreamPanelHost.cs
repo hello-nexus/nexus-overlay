@@ -647,7 +647,8 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         };
         _pumpThread.Start();
 
-        Native.SetTimer(Hwnd, (nuint)TIMER_CAPTURE_WATCHDOG, WatchdogIntervalMs, IntPtr.Zero);
+        _fastTimer = _watchdog.FastDetectWindow;
+        Native.SetTimer(Hwnd, (nuint)TIMER_CAPTURE_WATCHDOG, _fastTimer ? FastWatchdogIntervalMs : WatchdogIntervalMs, IntPtr.Zero);
         Log.Info($"stream-host {SessionId}: engine started");
     }
 

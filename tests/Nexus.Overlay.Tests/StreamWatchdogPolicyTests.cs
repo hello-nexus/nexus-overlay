@@ -304,18 +304,46 @@ public class StreamWatchdogPolicyTests
         }
     }
 
+    // One answered repaint with no WGC frame, graded after the fast grace ticks; returns the verdict action.
+    private static WatchdogAction AnsweredMiss(StreamWatchdogPolicy p)
+    {
+        p.OnProbe();
+        for (var i = 0; i < StreamWatchdogPolicy.FastDetectGraceTicks; i++) Assert.Equal(WatchdogAction.None, p.Tick(0));
+        return p.Tick(0);
+    }
+
     [Fact]
-    public void Never_framed_past_the_initial_frame_escalates_to_software_on_the_first_unanswered_repaint()
+    public void A_fast_detect_host_waits_for_its_initial_frame_without_probing()
     {
         var p = new StreamWatchdogPolicy(fastDetect: true);
-        Assert.False(p.FastDetectWindow);
+        Assert.True(p.FastDetectWindow);
+        for (var i = 0; i < 20; i++) Assert.Equal(WatchdogAction.None, p.Tick(0));
+        Assert.False(p.ProbeInFlight);
+    }
+
+    [Fact]
+    public void Two_answered_repaints_without_a_frame_escalate_to_software()
+    {
+        var p = new StreamWatchdogPolicy(fastDetect: true);
         Assert.Equal(WatchdogAction.None, p.Tick(1));
         Assert.True(p.FastDetectWindow);
         Assert.Equal(WatchdogAction.Probe, p.Tick(0)); // first silent tick probes at once
-        p.OnProbe();
-        Assert.Equal(WatchdogAction.None, p.Tick(0));
-        Assert.Equal(WatchdogAction.RebuildSoftware, p.Tick(0));
+        Assert.Equal(WatchdogAction.Probe, AnsweredMiss(p)); // first miss asks again
+        Assert.Equal(WatchdogAction.RebuildSoftware, AnsweredMiss(p));
         Assert.False(p.ProbeInFlight);
+    }
+
+    [Fact]
+    public void A_single_miss_then_a_frame_stays_on_gpu_and_the_window_closes()
+    {
+        var p = new StreamWatchdogPolicy(fastDetect: true);
+        p.Tick(1);
+        Assert.Equal(WatchdogAction.Probe, p.Tick(0));
+        Assert.Equal(WatchdogAction.Probe, AnsweredMiss(p));
+        p.OnProbe();
+        Assert.Equal(WatchdogAction.None, p.Tick(1));
+        Assert.False(p.FastDetectWindow);
+        for (var i = 0; i < 200; i++) Assert.NotEqual(WatchdogAction.RebuildSoftware, p.Tick(i % 7 == 0 ? 1 : 0));
     }
 
     [Fact]
@@ -332,15 +360,53 @@ public class StreamWatchdogPolicyTests
     }
 
     [Fact]
-    public void Repaint_that_yields_a_frame_in_the_fast_window_is_not_black()
+    public void Probe_timeouts_in_the_fast_window_never_latch_probe_broken_and_the_ladder_starts_armed()
     {
         var p = new StreamWatchdogPolicy(fastDetect: true);
         p.Tick(1);
-        Assert.Equal(WatchdogAction.Probe, p.Tick(0));
+        for (var timeout = 0; timeout < StreamWatchdogPolicy.MaxProbeFailures + 2; timeout++)
+        {
+            Assert.Equal(WatchdogAction.Probe, p.Tick(0));
+            for (var i = 0; i < StreamWatchdogPolicy.ProbeTimeoutTicks - 1; i++) Assert.Equal(WatchdogAction.None, p.Tick(0));
+            Assert.Equal(WatchdogAction.None, p.Tick(0)); // timeout tick
+            Assert.False(p.ProbeBroken);
+        }
+        // Drive the window to its bound: the ladder is then fully armed.
+        while (p.FastDetectWindow) p.Tick(0);
+        Assert.False(p.ProbeBroken);
+        Assert.False(p.ProbeInFlight);
+        Assert.Equal(WatchdogAction.Probe, TickToNextProbe(p));
+    }
+
+    [Fact]
+    public void A_probe_timeout_outside_the_window_still_counts()
+    {
+        var p = new StreamWatchdogPolicy();
+        p.Tick(30);
+        for (var i = 0; i < StreamWatchdogPolicy.MaxProbeFailures; i++)
+        {
+            Assert.Equal(WatchdogAction.Probe, TickToNextProbe(p));
+            p.OnProbeFailed();
+        }
+        Assert.True(p.ProbeBroken);
+    }
+
+    [Fact]
+    public void A_restart_never_reopens_the_fast_window()
+    {
+        var p = new StreamWatchdogPolicy(fastDetect: true);
+        p.Tick(1);
+        while (p.FastDetectWindow) p.Tick(0);
+        Assert.Equal(WatchdogAction.Probe, TickToNextProbe(p));
         p.OnProbe();
-        Assert.Equal(WatchdogAction.None, p.Tick(1));
+        p.Tick(0);
+        Assert.Equal(WatchdogAction.Restart, p.Tick(0));
         Assert.False(p.FastDetectWindow);
-        for (var i = 0; i < 200; i++) Assert.NotEqual(WatchdogAction.RebuildSoftware, p.Tick(0));
+        p.Tick(1); // restart's initial frame
+        Assert.False(p.FastDetectWindow);
+        Assert.Equal(WatchdogAction.None, p.Tick(0));
+        Assert.Equal(WatchdogAction.Probe, p.Tick(0)); // old cadence: every second zero tick
+        Assert.False(p.FastDetectWindow);
     }
 
     [Fact]
@@ -364,25 +430,29 @@ public class StreamWatchdogPolicyTests
     }
 
     [Fact]
-    public void A_locked_session_never_escalates_in_the_fast_window()
+    public void A_locked_session_neither_probes_in_the_window_nor_uses_the_fast_tick()
     {
         var p = new StreamWatchdogPolicy(fastDetect: true);
         p.Tick(1, sessionLocked: true);
+        Assert.False(p.FastDetectWindow);
+        // Old cadence while locked: nothing on the first silent tick, a probe on the second.
+        Assert.Equal(WatchdogAction.None, p.Tick(0, sessionLocked: true));
         Assert.Equal(WatchdogAction.Probe, p.Tick(0, sessionLocked: true));
         p.OnProbe();
         p.Tick(0, sessionLocked: true);
-        Assert.Equal(WatchdogAction.None, p.Tick(0, sessionLocked: true));
-        Assert.False(p.ProbeInFlight);
-        for (var i = 0; i < 8; i++) Assert.NotEqual(WatchdogAction.RebuildSoftware, p.Tick(0, sessionLocked: true));
+        for (var i = 0; i < 30; i++) Assert.NotEqual(WatchdogAction.RebuildSoftware, p.Tick(0, sessionLocked: true));
     }
 
     [Fact]
-    public void The_fast_window_closes_after_its_zero_tick_bound()
+    public void Locked_ticks_do_not_consume_the_window_and_it_resumes_on_unlock()
     {
         var p = new StreamWatchdogPolicy(fastDetect: true);
-        p.Tick(1);
-        for (var i = 0; i < StreamWatchdogPolicy.FastDetectMaxZeroTicks; i++) p.Tick(0, sessionLocked: true);
+        p.Tick(1, sessionLocked: true);
+        for (var i = 0; i < StreamWatchdogPolicy.FastDetectMaxTicks * 2; i++) p.Tick(0, sessionLocked: true);
         Assert.False(p.FastDetectWindow);
+        Assert.False(p.ProbeBroken);
+        p.Tick(0);
+        Assert.True(p.FastDetectWindow);
     }
 
     private static WatchdogAction TickToNextProbe(StreamWatchdogPolicy p)
