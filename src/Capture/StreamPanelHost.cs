@@ -647,7 +647,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
         };
         _pumpThread.Start();
 
-        _fastTimer = _watchdog.FastDetectWindow;
+        _fastTimer = _watchdog.FastDetectWindow && !PanelMonitorGuard.IsSessionLocked;
         Native.SetTimer(Hwnd, (nuint)TIMER_CAPTURE_WATCHDOG, _fastTimer ? FastWatchdogIntervalMs : WatchdogIntervalMs, IntPtr.Zero);
         Log.Info($"stream-host {SessionId}: engine started");
     }
@@ -865,7 +865,7 @@ internal sealed unsafe class StreamPanelHost : IWin32WindowOwner, IDisposable
                         : "forced repaint produced no WGC frame");
                 break;
             case WatchdogAction.RebuildSoftware:
-                Log.Warn($"stream-host {SessionId}: only the initial frame was delivered and a forced repaint produced no WGC frame, rebuilding in software compositing; {DescribeWindowState()}");
+                Log.Warn($"stream-host {SessionId}: only the initial frame was delivered and repeated forced repaints produced no WGC frame, rebuilding in software compositing; {DescribeWindowState()}");
                 var softwareCallback = SoftwareRebuildRequested;
                 Dispose();
                 try { softwareCallback?.Invoke(); } catch { }

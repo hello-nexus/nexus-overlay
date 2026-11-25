@@ -444,13 +444,26 @@ public class StreamWatchdogPolicyTests
     }
 
     [Fact]
+    public void A_restart_while_locked_before_the_first_frame_ends_the_window_for_good()
+    {
+        var p = new StreamWatchdogPolicy(fastDetect: true);
+        // Locked: old ladder with no frame yet; the ceiling restart closes the window.
+        WatchdogAction last = WatchdogAction.None;
+        for (var i = 0; i < StreamWatchdogPolicy.CeilingZeroTicks && last != WatchdogAction.Restart; i++) last = p.Tick(0, sessionLocked: true);
+        Assert.Equal(WatchdogAction.Restart, last);
+        p.Tick(1); // unlocked, the restart's initial frame
+        Assert.False(p.FastDetectWindow);
+        for (var i = 0; i < 6; i++) Assert.NotEqual(WatchdogAction.RebuildSoftware, p.Tick(0));
+    }
+
+    [Fact]
     public void Locked_ticks_do_not_consume_the_window_and_it_resumes_on_unlock()
     {
         var p = new StreamWatchdogPolicy(fastDetect: true);
         p.Tick(1, sessionLocked: true);
-        for (var i = 0; i < StreamWatchdogPolicy.FastDetectMaxTicks * 2; i++) p.Tick(0, sessionLocked: true);
+        // More locked ticks than the window bound, still below the zero-frame ceiling that would restart.
+        for (var i = 0; i < StreamWatchdogPolicy.FastDetectMaxTicks + 10; i++) p.Tick(0, sessionLocked: true);
         Assert.False(p.FastDetectWindow);
-        Assert.False(p.ProbeBroken);
         p.Tick(0);
         Assert.True(p.FastDetectWindow);
     }

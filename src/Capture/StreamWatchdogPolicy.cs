@@ -7,7 +7,7 @@ internal enum WatchdogAction
     Restart,
     /// <summary>Recreating the WGC session on the same window keeps failing; tear down the whole host (window and WebView2) and build a fresh one.</summary>
     Rebuild,
-    /// <summary>The host painted its initial frame and a forced repaint produced no second one: rebuild at once in software compositing, without backoff.</summary>
+    /// <summary>The host painted its initial frame and repeated forced repaints produced no second one: rebuild at once in software compositing, without backoff.</summary>
     RebuildSoftware,
 }
 
@@ -29,7 +29,7 @@ internal sealed class StreamWatchdogPolicy
     public const int FastDetectMaxTicks = 30;
     // Answered repaints in a row that yielded no WGC frame before a fast-detect host escalates to software.
     public const int FastDetectMisses = 2;
-    // Ticks a fast-detect repaint's frame gets after the answer; at the fast tick this is at least two seconds of wall time.
+    // Ticks a fast-detect repaint's frame gets after the answer; the grace spans more than one full fast interval after the answer, so a repaint's frame is never judged on a partial tick.
     public const int FastDetectGraceTicks = 2;
 
     private bool _windowOpen;
@@ -48,7 +48,7 @@ internal sealed class StreamWatchdogPolicy
     private bool _locked;
     private bool _awaitingInitialFrame;
 
-    /// <param name="fastDetect">True for a GPU-composited host: a host that never got past its initial frame escalates to a software rebuild on its first unanswered repaint.</param>
+    /// <param name="fastDetect">True for a GPU-composited host: a host that never got past its initial frame escalates to a software rebuild after <see cref="FastDetectMisses"/> answered repaints in a row that yield no frame.</param>
     public StreamWatchdogPolicy(bool fastDetect = false)
     {
         _windowOpen = fastDetect;
@@ -184,6 +184,8 @@ internal sealed class StreamWatchdogPolicy
             _probeFailures = 0;
             return WatchdogAction.None;
         }
+        // A restart (for example while locked, before the first frame) ends the one-shot fast window for good.
+        _windowOpen = false;
         _stuckRestarts++;
         if (repaint) _repaintRestarts++;
         _awaitingInitialFrame = true;

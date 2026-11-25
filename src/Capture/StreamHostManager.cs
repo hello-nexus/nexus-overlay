@@ -125,7 +125,7 @@ internal sealed class StreamHostManager
                     Log.Warn($"stream-hosts session={host.SessionId}: host delivered only its initial frame, switching stream browser to software compositing (--disable-gpu) and remembering it across restarts");
                 Log.Warn($"stream-hosts fast software rebuild session={host.SessionId}, respawning now");
                 // Same thread as the message loop: respawn here rather than waiting for the next prefs poll.
-                if (_desired.TryGetValue(host.SessionId, out var assignment)) SpawnHost(assignment, _pairedToken);
+                if (_desired.TryGetValue(host.SessionId, out var current)) SpawnHost(current, _pairedToken);
             };
             host.BrowserExited = () =>
             {
